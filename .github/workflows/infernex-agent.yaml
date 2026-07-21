@@ -1,0 +1,9 @@
+name: InferNex Agent
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/infernex-agent.yaml"
+      - "component/InferNex-Agent/**"
+      - "component/InferNex-Bridge/api/**"
+      - "component/InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexservices.yaml"
