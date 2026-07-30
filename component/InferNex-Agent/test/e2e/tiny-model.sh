@@ -117,6 +117,18 @@ mcp_call() {
       "http://127.0.0.1:${agent_local_port}/mcp"
 }
 
+assert_mcp_result() {
+  local label="$1"
+  local expression="$2"
+  local payload="$3"
+  if jq -e "${expression}" <<<"${payload}" >/dev/null; then
+    return 0
+  fi
+  echo "${label} assertion failed; MCP response follows:" >&2
+  jq . <<<"${payload}" >&2 || printf '%s\n' "${payload}" >&2
+  return 1
+}
+
 request="$(
   jq -nc \
     --arg namespace "${model_namespace}" \
@@ -125,11 +137,11 @@ request="$(
     '{namespace:$namespace,name:$name,catalogId:$catalogId,confirm:true}'
 )"
 deploy_result="$(mcp_call infernex_deploy_model "${request}")"
-jq -e '
+assert_mcp_result "initial deployment" '
   .result.structuredContent.operation == "created" and
   .result.structuredContent.catalogId == "smollm2-135m-q4" and
   .result.structuredContent.resourceKind == "InferNexService"
-' <<<"${deploy_result}" >/dev/null
+' "${deploy_result}"
 
 for _ in $(seq 1 60); do
   if kubectl -n "${model_namespace}" get \
@@ -186,16 +198,25 @@ jq -c '{
   completionTokens:.usage.completion_tokens
 }' <<<"${inference_result}"
 
-inspect_result="$(
-  mcp_call infernex_inspect_service "$(
-    jq -nc --arg namespace "${model_namespace}" --arg name "${model_name}" \
-      '{namespace:$namespace,name:$name}'
-  )"
+inspect_request="$(
+  jq -nc --arg namespace "${model_namespace}" --arg name "${model_name}" \
+    '{namespace:$namespace,name:$name}'
 )"
-jq -e '
+inspect_result=""
+for _ in $(seq 1 30); do
+  inspect_result="$(mcp_call infernex_inspect_service "${inspect_request}")"
+  if jq -e '
+    .result.structuredContent.service.ready == true and
+    .result.structuredContent.service.model.name == "SmolLM2-135M-Instruct"
+  ' <<<"${inspect_result}" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+assert_mcp_result "Agent service inspection" '
   .result.structuredContent.service.ready == true and
   .result.structuredContent.service.model.name == "SmolLM2-135M-Instruct"
-' <<<"${inspect_result}" >/dev/null
+' "${inspect_result}"
 
 topology_result="$(
   mcp_call infernex_get_topology "$(
@@ -203,7 +224,7 @@ topology_result="$(
       '{namespace:$namespace,name:$name}'
   )"
 )"
-jq -e '
+assert_mcp_result "Agent topology observation" '
   any(
     .result.structuredContent.workloads[];
     .kind == "Deployment" and
@@ -212,17 +233,17 @@ jq -e '
     .ready == 1
   ) and
   any(.result.structuredContent.pods[]; .ready == true)
-' <<<"${topology_result}" >/dev/null
+' "${topology_result}"
 
 second_deploy_result="$(mcp_call infernex_deploy_model "${request}")"
-jq -e '
+assert_mcp_result "idempotent deployment" '
   .result.structuredContent.operation == "already-exists"
-' <<<"${second_deploy_result}" >/dev/null
+' "${second_deploy_result}"
 
 delete_result="$(mcp_call infernex_delete_model "${request}")"
-jq -e '
+assert_mcp_result "catalog deletion" '
   .result.structuredContent.operation == "deleted"
-' <<<"${delete_result}" >/dev/null
+' "${delete_result}"
 
 wait_for_absent() {
   local resource="$1"
