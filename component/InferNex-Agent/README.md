@@ -215,6 +215,40 @@ the canonical CRD types from `InferNex-Bridge`:
 make docker-build
 ```
 
+## Offline bundle
+
+For an existing air-gapped InferNex cluster, build a self-contained Agent
+bundle on a connected Linux host:
+
+```bash
+./scripts/offline/build-bundle.sh \
+  --architecture amd64 \
+  --agent-image docker.io/library/infernex-agent:0.3.0 \
+  --output-dir ./dist
+```
+
+The bundle contains only the Agent image, Helm chart, content checksums, and
+install/verification commands. It does not reinstall InferNex Bridge, NPU
+drivers, gateways, model weights, or inference workloads. Optional images
+used by approved recovery profiles can be supplied through `--extra-images`.
+
+On the offline master/control-plane node:
+
+```bash
+sha256sum --check infernex-agent-offline-0.3.0-linux-amd64.tar.gz.sha256
+tar -xzf infernex-agent-offline-0.3.0-linux-amd64.tar.gz
+cd infernex-agent-offline-0.3.0-linux-amd64
+
+./bin/install-agent.sh \
+  --target-node master-01 \
+  --target-namespace kserve \
+  --dashboard-cidr 10.20.0.0/16 \
+  --runtime ctr
+```
+
+See the complete Chinese guide:
+[offline build and existing-cluster installation](docs/offline-install-zh.md).
+
 ## Deployment
 
 The Helm chart defaults to namespace-scoped, read-only RBAC and does not

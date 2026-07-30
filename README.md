@@ -58,6 +58,7 @@ internal. See
 
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
+- [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
 - [InferNex English documentation](README-en.md)
 - [InferNex 中文文档](README-zh.md)
 

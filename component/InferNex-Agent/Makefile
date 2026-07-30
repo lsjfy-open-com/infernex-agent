@@ -2,6 +2,8 @@
 IMG ?= cr.openfuyao.cn/openfuyao/infernex-agent:latest
 VERSION ?= 0.3.0-dev
 CONTAINER_TOOL ?= docker
+OFFLINE_ARCH ?= amd64
+OFFLINE_OUTPUT_DIR ?= ./dist
 
 .PHONY: all
 all: test build
@@ -37,3 +39,12 @@ docker-build:
 .PHONY: docker-push
 docker-push:
 	$(CONTAINER_TOOL) push $(IMG)
+
+.PHONY: offline-bundle
+offline-bundle:
+	bash ./scripts/offline/build-bundle.sh \
+		--version $(VERSION) \
+		--architecture $(OFFLINE_ARCH) \
+		--agent-image $(IMG) \
+		--container-tool $(CONTAINER_TOOL) \
+		--output-dir $(OFFLINE_OUTPUT_DIR)

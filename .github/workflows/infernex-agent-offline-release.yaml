@@ -1,0 +1,121 @@
+name: InferNex Agent offline bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: SemVer version embedded in the image and chart
+        required: true
+        default: "0.3.0"
+        type: string
+      publish_prerelease:
+        description: Publish both architectures as a GitHub prerelease
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build linux/${{ matrix.architecture }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.2.0
+
+      - name: Build architecture-specific image archive
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker buildx build \
+            --platform "linux/${ARCHITECTURE}" \
+            --build-arg "VERSION=${VERSION}" \
+            --file component/InferNex-Agent/Dockerfile \
+            --tag "docker.io/library/infernex-agent:${VERSION}" \
+            --output "type=docker,dest=${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar" \
+            component
+
+      - name: Assemble and verify bundle
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          component/InferNex-Agent/scripts/offline/build-bundle.sh \
+            --version "${VERSION}" \
+            --architecture "${ARCHITECTURE}" \
+            --agent-image "docker.io/library/infernex-agent:${VERSION}" \
+            --image-archive "${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar" \
+            --output-dir "${RUNNER_TEMP}/offline-dist"
+          mkdir -p "${RUNNER_TEMP}/verify"
+          tar -xzf \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
+            -C "${RUNNER_TEMP}/verify"
+          "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
+            --checksums-only
+
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: infernex-agent-offline-${{ inputs.version }}-linux-${{ matrix.architecture }}
+          path: |
+            ${{ runner.temp }}/offline-dist/*.tar.gz
+            ${{ runner.temp }}/offline-dist/*.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  prerelease:
+    if: ${{ inputs.publish_prerelease }}
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download architecture bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: infernex-agent-offline-${{ inputs.version }}-linux-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "infernex-agent-v${VERSION}" \
+            release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --prerelease \
+            --title "InferNex Agent v${VERSION}" \
+            --notes "Offline deployment bundles for existing InferNex clusters. Verify the architecture-specific outer SHA256 before extraction."
