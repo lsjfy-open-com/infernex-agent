@@ -1,0 +1,25 @@
+# InferNex Agent management/control-plane node profile.
+#
+# Replace 0.0.0.0/0 with the internal operations network before production use.
+# The dashboard contains no Secret objects or environment variables, but it
+# does expose service health, topology, Kubernetes event evidence, and model
+# analysis.
+
+placement:
+  controlPlaneOnly: true
+
+dashboard:
+  enabled: true
+  service:
+    type: NodePort
+    port: 8081
+    nodePort: 30081
+    externalTrafficPolicy: Local
+
+networkPolicy:
+  dashboardAllowedCIDRs:
+    - 0.0.0.0/0
+
+supervisor:
+  enabled: true
+  scanInterval: 60s

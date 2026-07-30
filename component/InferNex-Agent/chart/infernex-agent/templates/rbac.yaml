@@ -1,6 +1,6 @@
 {{- $root := . }}
-{{- if and .Values.rbac.clusterWide .Values.tools.deployment.enabled }}
-{{- fail "tools.deployment.enabled requires namespace-scoped RBAC; set rbac.clusterWide=false and list targetNamespaces" }}
+{{- if and .Values.rbac.clusterWide (or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled) }}
+{{- fail "deployment and auto-remediation require namespace-scoped RBAC; set rbac.clusterWide=false and list targetNamespaces" }}
 {{- end }}
 {{- if .Values.rbac.clusterWide }}
 apiVersion: rbac.authorization.k8s.io/v1
@@ -60,10 +60,14 @@ rules:
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs: ["get", "list"]
-  {{- if $root.Values.tools.deployment.enabled }}
+  {{- if or $root.Values.tools.deployment.enabled $root.Values.supervisor.remediation.enabled }}
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
-    verbs: ["create", "delete"]
+    verbs:
+      - create
+      {{- if $root.Values.tools.deployment.enabled }}
+      - delete
+      {{- end }}
   {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
@@ -94,4 +98,34 @@ subjects:
     name: {{ include "infernex-agent.serviceAccountName" $root }}
     namespace: {{ $root.Release.Namespace }}
 {{- end }}
+{{- end }}
+{{- if .Values.supervisor.remediation.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-recovery-profiles
+  namespace: {{ .Values.supervisor.remediation.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexserviceconfigs"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-recovery-profiles
+  namespace: {{ .Values.supervisor.remediation.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "infernex-agent.fullname" . }}-recovery-profiles
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "infernex-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}

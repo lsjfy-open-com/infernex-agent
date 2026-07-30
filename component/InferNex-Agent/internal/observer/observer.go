@@ -32,15 +32,18 @@ import (
 )
 
 const (
-	ownerLabel          = "infernex.io/owner"
-	componentLabel      = "infernex.io/component"
-	maxServices         = 200
-	maxPods             = 200
-	defaultEventMinutes = 60
-	maxEventMinutes     = 24 * 60
-	defaultEventLimit   = 50
-	maxEventLimit       = 200
-	maxEventNoteRunes   = 512
+	ownerLabel                = "infernex.io/owner"
+	componentLabel            = "infernex.io/component"
+	maxServices               = 200
+	maxPods                   = 200
+	defaultEventMinutes       = 60
+	maxEventMinutes           = 24 * 60
+	defaultEventLimit         = 50
+	maxEventLimit             = 200
+	maxEventNoteRunes         = 512
+	autoRecoveryAnnotation    = "agent.infernex.io/auto-recovery"
+	recoveryProfileAnnotation = "agent.infernex.io/recovery-profile"
+	recoveryNameAnnotation    = "agent.infernex.io/recovery-name"
 )
 
 type KubernetesObserver struct {
@@ -376,6 +379,19 @@ func summarizeService(service *infernexv1alpha1.InferNexService) ServiceSummary 
 		summary.Model = &ModelSummary{
 			Name: service.Spec.Model.Name,
 			URI:  sanitizedURI(service.Spec.Model.URI),
+		}
+	}
+	recoveryEnabled := strings.EqualFold(
+		strings.TrimSpace(service.Annotations[autoRecoveryAnnotation]),
+		"true",
+	)
+	recoveryProfile := strings.TrimSpace(service.Annotations[recoveryProfileAnnotation])
+	recoveryName := strings.TrimSpace(service.Annotations[recoveryNameAnnotation])
+	if recoveryEnabled || recoveryProfile != "" || recoveryName != "" {
+		summary.Recovery = &RecoverySummary{
+			Enabled: recoveryEnabled,
+			Profile: recoveryProfile,
+			Name:    recoveryName,
 		}
 	}
 	summary.Components = summarizeComponents(service.Status.Components)

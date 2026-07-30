@@ -73,12 +73,50 @@ jobs:
             --set 'rbac.targetNamespaces[0]=models' \
             --set tools.deployment.enabled=true \
             >/dev/null
+          master_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --values ./chart/infernex-agent/values-master-node.yaml \
+              --set 'rbac.targetNamespaces[0]=models'
+          )"
+          grep -q 'nodePort: 30081' <<<"${master_render}"
+          grep -q 'node-role.kubernetes.io/control-plane' <<<"${master_render}"
+          grep -q -- '--scan-namespaces=models' <<<"${master_render}"
+          grep -q 'name: infernex-agent-dashboard' <<<"${master_render}"
+          openai_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=models' \
+              --set supervisor.analysis.openAI.baseURL=http://model.internal:8000/v1 \
+              --set supervisor.analysis.openAI.model=ops-model \
+              --set supervisor.analysis.openAI.existingSecret=infernex-openai
+          )"
+          grep -q -- '--openai-model=ops-model' <<<"${openai_render}"
+          grep -q 'name: INFERNEX_OPENAI_API_KEY' <<<"${openai_render}"
+          remediation_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=models' \
+              --set supervisor.remediation.enabled=true \
+              --set supervisor.remediation.templateNamespace=infernex-bridge-system
+          )"
+          grep -q -- '--enable-auto-recovery' <<<"${remediation_render}"
+          grep -q 'name: infernex-agent-recovery-profiles' <<<"${remediation_render}"
+          grep -q 'resources:.*infernexserviceconfigs' <<<"${remediation_render}"
           if helm template infernex-agent ./chart/infernex-agent \
             --namespace infernex-system \
             --set rbac.clusterWide=true \
             --set tools.deployment.enabled=true \
             >/dev/null 2>&1; then
             echo "cluster-wide mutation render unexpectedly succeeded"
+            exit 1
+          fi
+          if helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set rbac.clusterWide=true \
+            --set supervisor.remediation.enabled=true \
+            >/dev/null 2>&1; then
+            echo "cluster-wide auto-remediation render unexpectedly succeeded"
             exit 1
           fi
 

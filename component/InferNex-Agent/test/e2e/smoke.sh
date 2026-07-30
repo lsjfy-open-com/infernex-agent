@@ -13,6 +13,7 @@ release_name="infernex-agent"
 image_repository="${AGENT_IMAGE_REPOSITORY:-infernex-agent}"
 image_tag="${AGENT_IMAGE_TAG:-e2e}"
 local_port="${AGENT_LOCAL_PORT:-18080}"
+dashboard_local_port="${AGENT_DASHBOARD_LOCAL_PORT:-18081}"
 
 kubectl apply -f "${fixture_file}"
 
@@ -22,7 +23,8 @@ helm upgrade --install "${release_name}" "${chart_dir}" \
   --set "image.repository=${image_repository}" \
   --set "image.tag=${image_tag}" \
   --set "image.pullPolicy=Never" \
-  --set "rbac.targetNamespaces[0]=${model_namespace}"
+  --set "rbac.targetNamespaces[0]=${model_namespace}" \
+  --set "supervisor.scanInterval=5s"
 
 kubectl -n "${agent_namespace}" rollout status \
   "deployment/${release_name}" \
@@ -63,13 +65,19 @@ test "$(kubectl auth can-i get secrets --as="${service_account}" -n "${model_nam
 test "$(kubectl auth can-i create deployments --as="${service_account}" -n "${model_namespace}")" = "no"
 
 port_forward_log="$(mktemp)"
+dashboard_port_forward_log="$(mktemp)"
 kubectl -n "${agent_namespace}" port-forward \
   "service/${release_name}" "${local_port}:8080" \
   >"${port_forward_log}" 2>&1 &
 port_forward_pid=$!
+kubectl -n "${agent_namespace}" port-forward \
+  "service/${release_name}-dashboard" "${dashboard_local_port}:8081" \
+  >"${dashboard_port_forward_log}" 2>&1 &
+dashboard_port_forward_pid=$!
 cleanup() {
   kill "${port_forward_pid}" >/dev/null 2>&1 || true
-  rm -f "${port_forward_log}"
+  kill "${dashboard_port_forward_pid}" >/dev/null 2>&1 || true
+  rm -f "${port_forward_log}" "${dashboard_port_forward_log}"
 }
 trap cleanup EXIT
 
@@ -84,6 +92,25 @@ if ! curl --fail --silent --show-error \
   cat "${port_forward_log}"
   exit 1
 fi
+for _ in $(seq 1 30); do
+  if curl --fail --silent \
+    "http://127.0.0.1:${dashboard_local_port}/readyz" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+dashboard_snapshot="$(
+  curl --fail --silent --show-error \
+    "http://127.0.0.1:${dashboard_local_port}/api/v1/snapshot"
+)"
+jq -e '
+  .ready == true and
+  any(.namespaces[]; .name == "models") and
+  any(.namespaces[].services[]; .detail.service.name == "smoke")
+' <<<"${dashboard_snapshot}" >/dev/null
+curl --fail --silent --show-error \
+  "http://127.0.0.1:${dashboard_local_port}/" |
+  grep -q "InferNex"
 
 mcp_call() {
   local tool_name="$1"

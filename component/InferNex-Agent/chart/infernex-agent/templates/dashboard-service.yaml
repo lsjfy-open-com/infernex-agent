@@ -1,0 +1,24 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-dashboard
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  {{- if and .Values.dashboard.service.externalTrafficPolicy (or (eq .Values.dashboard.service.type "NodePort") (eq .Values.dashboard.service.type "LoadBalancer")) }}
+  externalTrafficPolicy: {{ .Values.dashboard.service.externalTrafficPolicy }}
+  {{- end }}
+  selector:
+    {{- include "infernex-agent.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: dashboard
+      port: {{ .Values.dashboard.service.port }}
+      targetPort: dashboard
+      protocol: TCP
+      {{- if and (eq .Values.dashboard.service.type "NodePort") .Values.dashboard.service.nodePort }}
+      nodePort: {{ .Values.dashboard.service.nodePort }}
+      {{- end }}
+{{- end }}

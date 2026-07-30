@@ -4,8 +4,11 @@
 
 InferNex Agent is an InferNex control-plane component on a management node. It
 is not part of the inference request data path. The component is a typed MCP
-server and uses kubectl-ai as a replaceable agent runtime. Observation is the
-default; a fixed deployment catalog is an explicit, namespace-scoped opt-in.
+server with an optional continuous supervisor and read-only dashboard.
+kubectl-ai remains a replaceable interactive runtime; the supervisor uses only
+a narrow OpenAI-compatible analysis client for unattended advisory runs.
+Observation is the default; a fixed deployment catalog is an explicit,
+namespace-scoped opt-in.
 
 ```text
 Operator
@@ -26,6 +29,25 @@ InferNexService desired state + status
    +-- PD Orchestrator / Eagle-Eye
 ```
 
+The unattended path reuses the same observer boundary:
+
+```text
+Periodic namespace scan
+   |
+   v
+Normalized status + topology + related Events
+   |
+   +-- deterministic issue classifier
+   |
+   +-- optional OpenAI-compatible advisory analysis
+   |
+   v
+Immutable in-memory snapshot
+   |
+   +-- read-only Web dashboard :8081
+   +-- read-only JSON API /api/v1/snapshot
+```
+
 ## Reuse boundary
 
 | Capability | Owner | Agent behavior |
@@ -37,6 +59,8 @@ InferNexService desired state + status
 | Routing and cache state | Hermes / Cache Indexer | Add domain adapters when their stable APIs are available |
 | Hardware and network diagnosis | Eagle-Eye / infernex-checker | Invoke or translate existing reports; do not duplicate checks |
 | Scaling and PD orchestration | PD Orchestrator | Add bounded plans against its stable API |
+| Continuous scheduling and evidence cache | Agent supervisor | Reuse the typed observer; never give the model a Kubernetes credential |
+| Read-only operational display | Agent dashboard | Render only normalized supervisor snapshots on a separate Service |
 
 The Agent does not expose `kubectl`, shell execution, Secrets, full Pod specs,
 or raw Kubernetes object traversal. This prevents the LLM tool contract from
@@ -155,6 +179,41 @@ When deployment is enabled:
 The HTTP MCP transport itself is not an authentication boundary. Cross-network
 or multi-tenant exposure requires an authenticated gateway or service mesh in
 front of `/mcp`.
+
+The dashboard is also not an authentication boundary. Its separate Service is
+ClusterIP by default. The management-node values expose only the dashboard
+through a NodePort for internal use; source CIDRs should be restricted by
+NetworkPolicy or an authenticated reverse proxy.
+
+## Supervisor analysis boundary
+
+The supervisor runs deterministic collection and issue classification whether
+or not a model is configured. Model calls occur only for services with issues,
+and unchanged normalized evidence reuses the previous analysis.
+
+The model receives service identity and readiness, base-template names,
+component summaries, workload readiness, bounded Pod state, bounded Event
+metadata, and deterministic issues. It does not receive Event notes, node
+names, model URI credentials/query parameters, environment variables, Secret
+objects, Kubernetes tokens, full Pod specs, or generic Kubernetes access.
+
+Model output is advisory text. It cannot invoke a mutating tool from the
+supervisor. Catalog deployment remains a separate explicit MCP operation with
+the existing confirmation, ownership, catalog, and RBAC checks.
+
+Optional automatic recovery is deterministic and independent of model output.
+It requires all of the following:
+
+1. namespace-scoped mutation RBAC;
+2. an Agent-wide recovery switch;
+3. a source `InferNexService` opt-in annotation;
+4. an exact `InferNexServiceConfig` name on the source;
+5. an operator approval label on that config; and
+6. consecutive critical scans after Bridge has observed the desired generation.
+
+The action creates a distinct Agent-owned `InferNexService` with one approved
+`baseRef`. It refuses collisions and drift, never overwrites the source, and
+does not switch traffic. Bridge still owns all workload reconciliation.
 
 ## Mutation roadmap
 
