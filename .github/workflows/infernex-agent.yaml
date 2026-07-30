@@ -27,7 +27,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       KIND_NODE_IMAGE: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
     defaults:
@@ -68,6 +68,19 @@ jobs:
             --namespace infernex-system \
             --set rbac.clusterWide=true \
             >/dev/null
+          helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set 'rbac.targetNamespaces[0]=models' \
+            --set tools.deployment.enabled=true \
+            >/dev/null
+          if helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set rbac.clusterWide=true \
+            --set tools.deployment.enabled=true \
+            >/dev/null 2>&1; then
+            echo "cluster-wide mutation render unexpectedly succeeded"
+            exit 1
+          fi
 
       - name: Install Kind
         run: go install sigs.k8s.io/kind@v0.31.0
@@ -79,7 +92,7 @@ jobs:
             --image "${KIND_NODE_IMAGE}" \
             --wait 120s
 
-      - name: Build and load Agent image
+      - name: Build and load control-plane images
         run: |
           docker build \
             --build-arg VERSION=e2e \
@@ -87,6 +100,10 @@ jobs:
             --tag infernex-agent:e2e \
             component
           kind load docker-image infernex-agent:e2e --name infernex-agent
+          docker build \
+            --tag infernex-bridge:e2e \
+            component/InferNex-Bridge
+          kind load docker-image infernex-bridge:e2e --name infernex-agent
 
       - name: Install test CRDs
         working-directory: component/InferNex-Agent
@@ -102,12 +119,19 @@ jobs:
       - name: Run Kind smoke test
         run: bash component/InferNex-Agent/test/e2e/smoke.sh
 
+      - name: Run real tiny-model deployment and inference test
+        run: bash component/InferNex-Agent/test/e2e/tiny-model.sh
+
       - name: Collect diagnostics
         if: failure()
         run: |
           kubectl get all -A -o wide || true
+          kubectl get infernexservices -A -o yaml || true
           kubectl get events -A --sort-by=.lastTimestamp || true
           kubectl -n infernex-system logs deployment/infernex-agent || true
+          kubectl -n infernex-bridge-system logs deployment/infernex-bridge || true
+          kubectl -n models logs deployment/kind-smollm-engine-aggregate \
+            --all-containers --prefix || true
 
       - name: Delete Kind cluster
         if: always()

@@ -18,14 +18,21 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
-const instructions = `Use these tools for InferNex-specific observation.
-Every call is read-only and namespace-scoped. Prefer
+const readOnlyInstructions = `Use these tools for InferNex-specific observation.
+Observation calls are read-only and namespace-scoped. Prefer
 infernex_inspect_service for control-plane status and infernex_get_topology
 for the actual managed workloads and pods. Use infernex_get_events for recent
 causal evidence. Do not infer a successful rollout from desired state alone.`
+
+const deploymentInstructions = `
+Catalog deployment is explicitly enabled. It only accepts a fixed catalogId,
+namespace, and name; it never accepts arbitrary images, commands, URLs, or
+Kubernetes objects. Deployment and deletion both require confirm=true. Inspect
+the resulting service and topology before reporting a successful rollout.`
 
 type namespaceInput struct {
 	Namespace string `json:"namespace" jsonschema:"Kubernetes namespace containing the InferNexService resources"`
@@ -43,10 +50,37 @@ type eventInput struct {
 	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum event records; defaults to 50 and must not exceed 200"`
 }
 
-func New(domainObserver observer.Observer, version string) *mcp.Server {
+type deploymentInput struct {
+	Namespace string `json:"namespace" jsonschema:"Kubernetes namespace approved by the Agent RBAC scope"`
+	Name      string `json:"name" jsonschema:"DNS-compatible name for the InferNexService instance"`
+	CatalogID string `json:"catalogId" jsonschema:"Fixed deployment catalog identifier; currently smollm2-135m-q4"`
+	Confirm   bool   `json:"confirm" jsonschema:"Must be true after reviewing namespace, name, and catalogId"`
+}
+
+type serverOptions struct {
+	deployer deployer.Deployer
+}
+
+type Option func(*serverOptions)
+
+func WithDeployer(domainDeployer deployer.Deployer) Option {
+	return func(options *serverOptions) {
+		options.deployer = domainDeployer
+	}
+}
+
+func New(domainObserver observer.Observer, version string, optionFunctions ...Option) *mcp.Server {
+	options := serverOptions{}
+	for _, option := range optionFunctions {
+		option(&options)
+	}
+	serverInstructions := readOnlyInstructions
+	if options.deployer != nil {
+		serverInstructions += deploymentInstructions
+	}
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "infernex-agent", Version: version},
-		&mcp.ServerOptions{Instructions: instructions},
+		&mcp.ServerOptions{Instructions: serverInstructions},
 	)
 
 	readOnly := func(title string) *mcp.ToolAnnotations {
@@ -102,6 +136,49 @@ func New(domainObserver observer.Observer, version string) *mcp.Server {
 		)
 		return nil, output, err
 	})
+
+	if options.deployer != nil {
+		mutating := func(title string, destructive bool) *mcp.ToolAnnotations {
+			openWorld := true
+			return &mcp.ToolAnnotations{
+				Title:           title,
+				ReadOnlyHint:    false,
+				IdempotentHint:  true,
+				DestructiveHint: &destructive,
+				OpenWorldHint:   &openWorld,
+			}
+		}
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "infernex_deploy_model",
+			Description: "Create one Agent-owned InferNexService from the fixed CPU test-model catalog. " +
+				"Arbitrary workload fields are not accepted.",
+			Annotations: mutating("Deploy catalog model", false),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentInput) (*mcp.CallToolResult, deployer.Result, error) {
+			output, err := options.deployer.Deploy(ctx, deployer.Request{
+				Namespace: input.Namespace,
+				Name:      input.Name,
+				CatalogID: input.CatalogID,
+				Confirm:   input.Confirm,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name: "infernex_delete_model",
+			Description: "Delete one Agent-owned catalog InferNexService. " +
+				"Resources not owned by this Agent catalog are refused.",
+			Annotations: mutating("Delete catalog model", true),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentInput) (*mcp.CallToolResult, deployer.Result, error) {
+			output, err := options.deployer.Delete(ctx, deployer.Request{
+				Namespace: input.Namespace,
+				Name:      input.Name,
+				CatalogID: input.CatalogID,
+				Confirm:   input.Confirm,
+			})
+			return nil, output, err
+		})
+	}
 
 	return server
 }

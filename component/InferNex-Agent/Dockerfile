@@ -13,7 +13,7 @@
 FROM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=0.1.0-dev
+ARG VERSION=0.2.0-dev
 
 WORKDIR /workspace
 COPY InferNex-Bridge/go.mod InferNex-Bridge/go.sum ./InferNex-Bridge/

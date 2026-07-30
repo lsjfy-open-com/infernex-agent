@@ -1,4 +1,7 @@
 {{- $root := . }}
+{{- if and .Values.rbac.clusterWide .Values.tools.deployment.enabled }}
+{{- fail "tools.deployment.enabled requires namespace-scoped RBAC; set rbac.clusterWide=false and list targetNamespaces" }}
+{{- end }}
 {{- if .Values.rbac.clusterWide }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -57,6 +60,11 @@ rules:
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs: ["get", "list"]
+  {{- if $root.Values.tools.deployment.enabled }}
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexservices"]
+    verbs: ["create", "delete"]
+  {{- end }}
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
     verbs: ["list"]

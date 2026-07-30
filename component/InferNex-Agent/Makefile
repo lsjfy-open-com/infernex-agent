@@ -1,6 +1,6 @@
 # Image URL to use for build and push targets.
 IMG ?= cr.openfuyao.cn/openfuyao/infernex-agent:latest
-VERSION ?= 0.1.0-dev
+VERSION ?= 0.2.0-dev
 CONTAINER_TOOL ?= docker
 
 .PHONY: all
