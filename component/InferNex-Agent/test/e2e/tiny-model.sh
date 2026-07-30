@@ -35,6 +35,7 @@ kubectl apply --server-side \
   -f "${gateway_crds_dir}/inference-extension-manifests.yaml"
 kubectl wait --for=condition=Established \
   crd/llminferenceservices.serving.kserve.io \
+  crd/envoyproxies.gateway.envoyproxy.io \
   crd/httproutes.gateway.networking.k8s.io \
   crd/inferencepools.inference.networking.k8s.io \
   --timeout=60s
