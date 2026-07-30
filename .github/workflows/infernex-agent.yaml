@@ -7,6 +7,14 @@ on:
       - "component/InferNex-Agent/**"
       - "component/InferNex-Bridge/api/**"
       - "component/InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexservices.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/infernex-agent.yaml"
+      - "component/InferNex-Agent/**"
+      - "component/InferNex-Bridge/api/**"
+      - "component/InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexservices.yaml"
   workflow_dispatch:
 
 permissions:

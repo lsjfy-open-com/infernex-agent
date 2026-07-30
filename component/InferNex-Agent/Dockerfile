@@ -1,0 +1,37 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# openFuyao is licensed under Mulan PSL v2.
+# You can use this software according to the terms and conditions of the Mulan PSL v2.
+# You may obtain a copy of Mulan PSL v2 at:
+#          http://license.coscl.org.cn/MulanPSL2
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+# EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+# MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+# See the Mulan PSL v2 for more details.
+
+# Build with component/ as the Docker context so the local InferNex-Bridge API
+# module can be reused instead of copying CRD types.
+FROM golang:1.25 AS builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG VERSION=0.1.0-dev
+
+WORKDIR /workspace
+COPY InferNex-Bridge/go.mod InferNex-Bridge/go.sum ./InferNex-Bridge/
+COPY InferNex-Bridge/api ./InferNex-Bridge/api
+COPY InferNex-Agent/go.mod InferNex-Agent/go.sum ./InferNex-Agent/
+
+WORKDIR /workspace/InferNex-Agent
+RUN go mod download
+
+COPY InferNex-Agent ./
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
+    go build -trimpath \
+    -ldflags="-s -w -X main.version=${VERSION}" \
+    -o /out/infernex-agent ./cmd/infernex-agent
+
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /out/infernex-agent /infernex-agent
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/infernex-agent"]
