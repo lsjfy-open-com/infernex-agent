@@ -58,6 +58,12 @@ func TestDeployCreatesOnlyCatalogInferNexServiceAndIsIdempotent(t *testing.T) {
 		t.Fatalf("unexpected created service: %#v", created)
 	}
 	podSpec := created.Spec.Engine.Template.Spec
+	if len(created.Spec.Engine.Template.Labels) != 0 {
+		t.Fatalf(
+			"catalog PodTemplate labels are pruned by the InferNexService CRD: %#v",
+			created.Spec.Engine.Template.Labels,
+		)
+	}
 	if len(podSpec.Containers) != 1 ||
 		podSpec.Containers[0].Image != serverImage ||
 		len(podSpec.InitContainers) != 1 ||

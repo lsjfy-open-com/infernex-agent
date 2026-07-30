@@ -65,9 +65,6 @@ func tinyModelService(namespace string, name string) *infernexv1alpha1.InferNexS
 				InferenceEngineWorkloadSpec: infernexv1alpha1.InferenceEngineWorkloadSpec{
 					Replicas: &replicas,
 					Template: &corev1.PodTemplateSpec{
-						ObjectMeta: metav1.ObjectMeta{
-							Labels: map[string]string{catalogLabel: TinyModelCatalogID},
-						},
 						Spec: corev1.PodSpec{
 							AutomountServiceAccountToken: ptr.To(false),
 							SecurityContext: &corev1.PodSecurityContext{
