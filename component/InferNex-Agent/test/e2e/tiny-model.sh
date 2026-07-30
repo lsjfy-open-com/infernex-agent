@@ -7,6 +7,7 @@ agent_dir="${repo_root}/component/InferNex-Agent"
 agent_chart="${agent_dir}/chart/infernex-agent"
 bridge_chart="${repo_root}/component/InferNex-Bridge/chart/infernex-bridge"
 prerequisite_crds="${agent_dir}/test/e2e/prerequisite-crds.yaml"
+gateway_crds_dir="${repo_root}/charts/infernex/charts/inference-gateway-crds/crds"
 
 agent_namespace="${AGENT_NAMESPACE:-infernex-system}"
 bridge_namespace="${BRIDGE_NAMESPACE:-infernex-bridge-system}"
@@ -29,8 +30,13 @@ kubectl -n "${model_namespace}" delete \
   --ignore-not-found
 
 kubectl apply --server-side -f "${prerequisite_crds}"
+kubectl apply --server-side \
+  -f "${gateway_crds_dir}/gateway-api-standard-install.yaml" \
+  -f "${gateway_crds_dir}/inference-extension-manifests.yaml"
 kubectl wait --for=condition=Established \
   crd/llminferenceservices.serving.kserve.io \
+  crd/httproutes.gateway.networking.k8s.io \
+  crd/inferencepools.inference.networking.k8s.io \
   --timeout=60s
 
 helm upgrade --install "${bridge_release_name}" "${bridge_chart}" \
@@ -124,6 +130,15 @@ jq -e '
   .result.structuredContent.resourceKind == "InferNexService"
 ' <<<"${deploy_result}" >/dev/null
 
+for _ in $(seq 1 60); do
+  if kubectl -n "${model_namespace}" get \
+    "deployment/${model_name}-engine-aggregate" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+kubectl -n "${model_namespace}" get \
+  "deployment/${model_name}-engine-aggregate" >/dev/null
 kubectl -n "${model_namespace}" rollout status \
   "deployment/${model_name}-engine-aggregate" \
   --timeout=360s
