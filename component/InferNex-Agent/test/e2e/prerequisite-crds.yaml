@@ -18,6 +18,13 @@ spec:
         openAPIV3Schema:
           type: object
           x-kubernetes-preserve-unknown-fields: true
+    - name: v1alpha2
+      served: true
+      storage: false
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
 ---
 # Bridge's gateway cleanup path resolves EnvoyProxy even when routing is
 # disabled. The tiny-model test never creates one; this discovery-only CRD
@@ -38,13 +45,6 @@ spec:
     - name: v1alpha1
       served: true
       storage: true
-      schema:
-        openAPIV3Schema:
-          type: object
-          x-kubernetes-preserve-unknown-fields: true
-    - name: v1alpha2
-      served: true
-      storage: false
       schema:
         openAPIV3Schema:
           type: object
