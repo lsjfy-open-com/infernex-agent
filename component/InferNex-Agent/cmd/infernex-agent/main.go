@@ -31,17 +31,19 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
-var version = "0.1.0-dev"
+var version = "0.2.0-dev"
 
 type options struct {
-	transport  string
-	listen     string
-	kubeconfig string
+	transport        string
+	listen           string
+	kubeconfig       string
+	enableDeployment bool
 }
 
 func main() {
@@ -56,6 +58,12 @@ func run() error {
 	flag.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
 	flag.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
 	flag.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
+	flag.BoolVar(
+		&opts.enableDeployment,
+		"enable-deployment",
+		false,
+		"Enable constrained catalog deploy/delete tools; disabled by default",
+	)
 	flag.Parse()
 
 	restConfig, err := kube.Config(opts.kubeconfig)
@@ -80,7 +88,11 @@ func run() error {
 	}
 
 	domainObserver := observer.New(kubeClient)
-	server := mcpserver.New(domainObserver, version)
+	serverOptions := make([]mcpserver.Option, 0, 1)
+	if opts.enableDeployment {
+		serverOptions = append(serverOptions, mcpserver.WithDeployer(deployer.New(kubeClient)))
+	}
+	server := mcpserver.New(domainObserver, version, serverOptions...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -22,10 +22,33 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
 type stubObserver struct{}
+
+type stubDeployer struct{}
+
+func (stubDeployer) Deploy(_ context.Context, request deployer.Request) (deployer.Result, error) {
+	return deployer.Result{
+		Namespace:    request.Namespace,
+		Name:         request.Name,
+		CatalogID:    request.CatalogID,
+		Operation:    "created",
+		ResourceKind: "InferNexService",
+	}, nil
+}
+
+func (stubDeployer) Delete(_ context.Context, request deployer.Request) (deployer.Result, error) {
+	return deployer.Result{
+		Namespace:    request.Namespace,
+		Name:         request.Name,
+		CatalogID:    request.CatalogID,
+		Operation:    "deleted",
+		ResourceKind: "InferNexService",
+	}, nil
+}
 
 func (stubObserver) ListServices(_ context.Context, namespace string) (observer.ServiceList, error) {
 	return observer.ServiceList{
@@ -165,6 +188,80 @@ func TestServerPublishesOnlyReadOnlyDomainTools(t *testing.T) {
 		eventEvidence.SinceMinutes != 60 ||
 		eventEvidence.Events == nil {
 		t.Fatalf("structured event result = %#v", eventEvidence)
+	}
+}
+
+func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	server := New(stubObserver{}, "test", WithDeployer(stubDeployer{}))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(list.Tools) != 6 {
+		t.Fatalf("tool count = %d, want 6", len(list.Tools))
+	}
+	tools := make(map[string]*mcp.Tool, len(list.Tools))
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	deployTool := tools["infernex_deploy_model"]
+	deleteTool := tools["infernex_delete_model"]
+	if deployTool == nil || deleteTool == nil {
+		t.Fatalf("deployment tools missing: %#v", tools)
+	}
+	if deployTool.Annotations == nil ||
+		deployTool.Annotations.ReadOnlyHint ||
+		!deployTool.Annotations.IdempotentHint ||
+		deployTool.Annotations.DestructiveHint == nil ||
+		*deployTool.Annotations.DestructiveHint {
+		t.Fatalf("unsafe deploy annotations: %#v", deployTool.Annotations)
+	}
+	if deleteTool.Annotations == nil ||
+		deleteTool.Annotations.DestructiveHint == nil ||
+		!*deleteTool.Annotations.DestructiveHint {
+		t.Fatalf("unsafe delete annotations: %#v", deleteTool.Annotations)
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_deploy_model",
+		Arguments: map[string]any{
+			"namespace": "models",
+			"name":      "tiny",
+			"catalogId": deployer.TinyModelCatalogID,
+			"confirm":   true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("call deploy tool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("deploy tool returned MCP error: %#v", result.Content)
+	}
+	payload, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal deploy result: %v", err)
+	}
+	var deployment deployer.Result
+	if err := json.Unmarshal(payload, &deployment); err != nil {
+		t.Fatalf("unmarshal deploy result: %v", err)
+	}
+	if deployment.Operation != "created" || deployment.Name != "tiny" {
+		t.Fatalf("deploy result = %#v", deployment)
 	}
 }
 

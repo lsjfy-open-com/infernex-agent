@@ -25,6 +25,13 @@ rbac:
   # Empty means only the Helm release namespace.
   targetNamespaces: []
 
+tools:
+  deployment:
+    # Catalog deployment is deliberately opt-in. When enabled, the Agent can
+    # only create/delete InferNexService resources in targetNamespaces; it
+    # still cannot submit arbitrary Kubernetes objects.
+    enabled: false
+
 networkPolicy:
   enabled: true
   # Additional namespaces that host an authorized MCP client.

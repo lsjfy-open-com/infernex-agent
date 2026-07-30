@@ -40,6 +40,9 @@ spec:
           args:
             - --transport=streamable-http
             - --listen-address=:8080
+            {{- if .Values.tools.deployment.enabled }}
+            - --enable-deployment
+            {{- end }}
           ports:
             - name: mcp
               containerPort: 8080
