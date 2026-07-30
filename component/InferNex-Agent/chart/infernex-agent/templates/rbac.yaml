@@ -1,0 +1,89 @@
+{{- $root := . }}
+{{- if .Values.rbac.clusterWide }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexservices"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["list"]
+  - apiGroups: ["leaderworkerset.x-k8s.io"]
+    resources: ["leaderworkersets"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "infernex-agent.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "infernex-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+{{- $targetNamespaces := .Values.rbac.targetNamespaces }}
+{{- if not $targetNamespaces }}
+{{- $targetNamespaces = list .Release.Namespace }}
+{{- end }}
+{{- range $index, $namespace := $targetNamespaces }}
+{{- if $index }}
+---
+{{- end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "infernex-agent.fullname" $root }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "infernex-agent.labels" $root | nindent 4 }}
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexservices"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "daemonsets"]
+    verbs: ["list"]
+  - apiGroups: ["leaderworkerset.x-k8s.io"]
+    resources: ["leaderworkersets"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "infernex-agent.fullname" $root }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "infernex-agent.labels" $root | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "infernex-agent.fullname" $root }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "infernex-agent.serviceAccountName" $root }}
+    namespace: {{ $root.Release.Namespace }}
+{{- end }}
+{{- end }}

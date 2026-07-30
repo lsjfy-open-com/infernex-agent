@@ -1,0 +1,58 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: cr.openfuyao.cn/openfuyao/infernex-agent
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+service:
+  type: ClusterIP
+  port: 8080
+
+rbac:
+  # Cluster-wide observation is deliberately opt-in.
+  clusterWide: false
+  # Empty means only the Helm release namespace.
+  targetNamespaces: []
+
+networkPolicy:
+  enabled: true
+  # Additional namespaces that host an authorized MCP client.
+  additionalNamespaceNames: []
+
+resources:
+  limits:
+    cpu: 250m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 32Mi
+
+podAnnotations: {}
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true

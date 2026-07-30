@@ -181,6 +181,7 @@
 
 - **InferNex-Checker**：InferNex 前置校验工具，在 install 前检查硬件、K8s 集群及配置环境，提前发现部署风险。
 - **InferNex-Bridge**：InferNex 接入 KServe 的适配层，支持 `LLMInferenceService` / `InferNexService` 双 CRD 声明式部署 InferNex，详见 [组件 README](component/InferNex-Bridge/README.md)。
+- **InferNex Agent**：面向 MCP 兼容 Agent Runtime 的只读、类型化 InferNex 领域工具层；复用 `InferNexService` 与 Bridge 状态，不额外暴露一套通用 Kubernetes 控制面，详见 [组件 README](component/InferNex-Agent/README.md)。
 
 ## Roadmap
  - [26-06] Hermes-router 智能路由支持基于实例资源饱和状态的感知与调度、PD 分离架构下的实例间二级调度。
