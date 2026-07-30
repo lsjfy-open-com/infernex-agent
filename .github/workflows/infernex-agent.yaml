@@ -7,3 +7,100 @@ on:
       - "component/InferNex-Agent/**"
       - "component/InferNex-Bridge/api/**"
       - "component/InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexservices.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infernex-agent-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      KIND_NODE_IMAGE: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: component/InferNex-Agent/go.sum
+
+      - name: Test and vet
+        working-directory: component/InferNex-Agent
+        run: |
+          go test -race ./...
+          go vet ./...
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.2.0
+
+      - name: Lint and render Helm chart
+        working-directory: component/InferNex-Agent
+        run: |
+          helm lint ./chart/infernex-agent
+          helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set 'rbac.targetNamespaces[0]=model-a' \
+            --set 'rbac.targetNamespaces[1]=model-b' \
+            >/dev/null
+          helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set rbac.clusterWide=true \
+            >/dev/null
+
+      - name: Install Kind
+        run: go install sigs.k8s.io/kind@v0.31.0
+
+      - name: Create Kind cluster
+        run: |
+          kind create cluster \
+            --name infernex-agent \
+            --image "${KIND_NODE_IMAGE}" \
+            --wait 120s
+
+      - name: Build and load Agent image
+        run: |
+          docker build \
+            --build-arg VERSION=e2e \
+            --file component/InferNex-Agent/Dockerfile \
+            --tag infernex-agent:e2e \
+            component
+          kind load docker-image infernex-agent:e2e --name infernex-agent
+
+      - name: Install test CRDs
+        working-directory: component/InferNex-Agent
+        run: |
+          kubectl apply --server-side -f ../InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexservices.yaml
+          lws_dir="$(go list -m -f '{{.Dir}}' sigs.k8s.io/lws)"
+          kubectl apply --server-side -f "${lws_dir}/config/crd/bases/leaderworkerset.x-k8s.io_leaderworkersets.yaml"
+          kubectl wait --for=condition=Established \
+            crd/infernexservices.infernex.infernex.io \
+            crd/leaderworkersets.leaderworkerset.x-k8s.io \
+            --timeout=60s
+
+      - name: Run Kind smoke test
+        run: bash component/InferNex-Agent/test/e2e/smoke.sh
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          kubectl get all -A -o wide || true
+          kubectl get events -A --sort-by=.lastTimestamp || true
+          kubectl -n infernex-system logs deployment/infernex-agent || true
+
+      - name: Delete Kind cluster
+        if: always()
+        run: kind delete cluster --name infernex-agent
