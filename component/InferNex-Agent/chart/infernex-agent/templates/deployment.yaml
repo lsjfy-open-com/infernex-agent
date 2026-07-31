@@ -90,6 +90,10 @@ spec:
             {{- end }}
             {{- if .Values.tools.deployment.enabled }}
             - --enable-deployment
+            - --deployment-readiness-timeout={{ .Values.changeSafety.deploymentReadinessTimeout }}
+            {{- end }}
+            {{- if or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled }}
+            - --state-dir={{ .Values.changeSafety.stateDir }}
             {{- end }}
           ports:
             - name: mcp
@@ -128,6 +132,8 @@ spec:
             - name: kube-api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
+            - name: agent-state
+              mountPath: {{ .Values.changeSafety.stateDir }}
       volumes:
         - name: kube-api-access
           projected:
@@ -147,6 +153,13 @@ spec:
                       fieldRef:
                         apiVersion: v1
                         fieldPath: metadata.namespace
+        - name: agent-state
+          {{- if .Values.changeSafety.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-state" (include "infernex-agent.fullname" .)) .Values.changeSafety.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -19,6 +19,7 @@ Usage:
 
 Options:
   --purge-credentials  Also remove /etc/infernex-agent
+  --purge-state        Also remove change records and installation recovery points
   --purge-user         Also remove the infernex-agent system user
   -h, --help           Show this help
 
@@ -28,11 +29,16 @@ EOF
 }
 
 purge_credentials="false"
+purge_state="false"
 purge_user="false"
 while (($#)); do
   case "$1" in
     --purge-credentials)
       purge_credentials="true"
+      shift
+      ;;
+    --purge-state)
+      purge_state="true"
       shift
       ;;
     --purge-user)
@@ -51,6 +57,9 @@ done
 
 [[ ${EUID} -eq 0 ]] || bundle_die "uninstall-host.sh must run as root"
 bundle_require_command systemctl
+if [[ "$purge_user" == "true" && "$purge_state" != "true" ]]; then
+  bundle_die "--purge-user requires --purge-state so retained files do not have an orphaned owner"
+fi
 
 systemctl disable --now infernex-agent.service >/dev/null 2>&1 || true
 rm -f -- /etc/systemd/system/infernex-agent.service
@@ -67,7 +76,11 @@ safe_remove_tree() {
 }
 
 safe_remove_tree /opt/infernex-agent
-safe_remove_tree /var/lib/infernex-agent
+if [[ "$purge_state" == "true" ]]; then
+  safe_remove_tree /var/lib/infernex-agent
+else
+  bundle_warn "change records and recovery points retained in /var/lib/infernex-agent"
+fi
 if [[ "$purge_credentials" == "true" ]]; then
   safe_remove_tree /etc/infernex-agent
 else

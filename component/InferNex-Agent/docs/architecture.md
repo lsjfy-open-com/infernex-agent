@@ -258,6 +258,23 @@ The action creates a distinct Agent-owned `InferNexService` with one approved
 `baseRef`. It refuses collisions and drift, never overwrites the source, and
 does not switch traffic. Bridge still owns all workload reconciliation.
 
+## Implemented change-safety slice
+
+The fixed catalog now has a durable, bounded rollback contract:
+
+1. append a `planned` event containing the exact pre-change state;
+2. create only an Agent-owned `InferNexService` carrying the same change ID;
+3. append `applied` before returning control to the caller;
+4. monitor `Ready`, `observedGeneration`, `Degraded`, and a fixed deadline;
+5. commit when ready, or delete only the object with matching ownership and
+   change ID to restore the pre-create state;
+6. resume `planned` and `applied` events after process restart.
+
+Host installation captures a checksummed namespace-scoped source snapshot
+before replacing files and restores it together with host configuration when
+installation fails. This slice does not restore arbitrary Kubernetes objects,
+operator changes, persistent model data, or traffic.
+
 ## Mutation roadmap
 
 Do not add generic write tools. Mutations should use a two-step contract:

@@ -16,6 +16,7 @@ When catalog deployment is explicitly enabled, it also publishes:
 
 - `infernex_deploy_model`
 - `infernex_delete_model`
+- `infernex_get_change` (read-only change/rollback status)
 
 The output is deliberately normalized. It includes InferNex status, managed
 Deployment/DaemonSet/LeaderWorkerSet readiness, and compact Pod evidence. It
@@ -29,6 +30,28 @@ They accept only `namespace`, `name`, the fixed `catalogId`, and
 arbitrary object. The Agent creates only an `InferNexService`; InferNex Bridge
 continues to own workload and Service reconciliation, readiness, and garbage
 collection.
+
+## Change safety and rollback
+
+Catalog writes are protected by a durable change journal. Before creating a
+service, the Agent persists the pre-change state and assigns an opaque
+`changeId`. It then observes InferNex status in the background. A new service
+that does not reach `Ready` before `--deployment-readiness-timeout` (10 minutes
+by default), or reports `Degraded` for the observed generation, is deleted
+only after both Agent ownership and the exact `changeId` are verified. This
+restores the pre-deployment state, which was "resource absent".
+
+Use `infernex_get_change` to distinguish `committed`, `rolled-back`,
+`rollback-failed`, and `apply-failed`. Pending changes resume after an Agent
+restart.
+
+The host installer also creates a checksummed pre-install recovery point under
+`/var/lib/infernex-agent/backups/` before replacing any Agent files. If
+installation or verification fails, it restores the previous host files,
+systemd state, and Agent-managed cluster source resources automatically.
+
+See [change safety, backup, and rollback](docs/change-safety-zh.md) for the
+restore CLI, persistence requirements, guarantees, and boundaries.
 
 ## Continuous supervisor and dashboard
 
@@ -284,6 +307,7 @@ Product documentation:
 
 - [Product guide and acceptance](docs/product-guide-zh.md)
 - [Product design and failure semantics](docs/product-design-zh.md)
+- [Change safety, backup, and rollback](docs/change-safety-zh.md)
 - [Model configuration lifecycle](docs/model-configuration-zh.md)
 - [Security and capability boundaries](docs/security-boundaries-zh.md)
 - [Operations runbook](docs/operations-runbook-zh.md)
@@ -376,6 +400,11 @@ rbac:
 tools:
   deployment:
     enabled: true
+
+changeSafety:
+  persistence:
+    enabled: true
+    existingClaim: infernex-agent-state
 ```
 
 ```bash
@@ -401,8 +430,10 @@ Example MCP arguments:
 }
 ```
 
-Use the same arguments with `infernex_delete_model`; deletion is refused unless
-the existing service carries the Agent catalog ownership labels.
+Use the returned `changeId` with `infernex_get_change` until its status is
+`committed` or `rolled-back`. Use the same deployment arguments with
+`infernex_delete_model`; deletion is refused unless the existing service
+carries the Agent catalog ownership labels.
 
 See [docs/architecture.md](docs/architecture.md) for component boundaries and
 the broader mutation roadmap.

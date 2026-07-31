@@ -61,6 +61,7 @@ type Remediation struct {
 	Profile      string `json:"profile,omitempty"`
 	Namespace    string `json:"namespace,omitempty"`
 	Name         string `json:"name,omitempty"`
+	ChangeID     string `json:"changeId,omitempty"`
 	FailureScans int    `json:"failureScans"`
 	Message      string `json:"message,omitempty"`
 	Error        string `json:"error,omitempty"`

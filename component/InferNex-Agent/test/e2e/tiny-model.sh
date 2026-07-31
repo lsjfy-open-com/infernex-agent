@@ -77,12 +77,17 @@ agent_forward_log="$(mktemp)"
 model_forward_log="$(mktemp)"
 agent_forward_pid=""
 model_forward_pid=""
+bridge_paused="false"
 cleanup() {
   if [[ -n "${model_forward_pid}" ]]; then
     kill "${model_forward_pid}" >/dev/null 2>&1 || true
   fi
   if [[ -n "${agent_forward_pid}" ]]; then
     kill "${agent_forward_pid}" >/dev/null 2>&1 || true
+  fi
+  if [[ "${bridge_paused}" == "true" ]]; then
+    kubectl -n "${bridge_namespace}" scale \
+      "deployment/${bridge_release_name}" --replicas=1 >/dev/null 2>&1 || true
   fi
   rm -f "${agent_forward_log}" "${model_forward_log}"
 }
@@ -139,6 +144,8 @@ request="$(
 deploy_result="$(mcp_call infernex_deploy_model "${request}")"
 assert_mcp_result "initial deployment" '
   .result.structuredContent.operation == "created" and
+  (.result.structuredContent.changeId | type == "string" and length == 32) and
+  .result.structuredContent.changeStatus == "applied" and
   .result.structuredContent.catalogId == "smollm2-135m-q4" and
   .result.structuredContent.resourceKind == "InferNexService"
 ' "${deploy_result}"
@@ -159,6 +166,25 @@ kubectl -n "${model_namespace}" wait \
   --for=jsonpath='{.status.ready}'=true \
   "infernexservice/${model_name}" \
   --timeout=120s
+
+change_id="$(jq -r '.result.structuredContent.changeId' <<<"${deploy_result}")"
+change_result=""
+for _ in $(seq 1 30); do
+  change_result="$(
+    mcp_call infernex_get_change "$(
+      jq -nc --arg changeId "${change_id}" '{changeId:$changeId}'
+    )"
+  )"
+  if jq -e '.result.structuredContent.status == "committed"' \
+    <<<"${change_result}" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+assert_mcp_result "deployment change commit" '
+  (.result.structuredContent.id | type == "string" and length == 32) and
+  .result.structuredContent.status == "committed"
+' "${change_result}"
 
 kubectl -n "${model_namespace}" port-forward \
   "service/${model_name}-engine-aggregate" "${model_local_port}:8080" \
@@ -239,6 +265,81 @@ second_deploy_result="$(mcp_call infernex_deploy_model "${request}")"
 assert_mcp_result "idempotent deployment" '
   .result.structuredContent.operation == "already-exists"
 ' "${second_deploy_result}"
+
+# Exercise the real automatic rollback path without waiting for a deadline.
+# Pause Bridge so it cannot overwrite the injected status, create a separate
+# catalog object, then report Degraded for its observed generation.
+rollback_name="${model_name}-rollback-probe"
+rollback_request="$(
+  jq -nc \
+    --arg namespace "${model_namespace}" \
+    --arg name "${rollback_name}" \
+    --arg catalogId "${catalog_id}" \
+    '{namespace:$namespace,name:$name,catalogId:$catalogId,confirm:true}'
+)"
+kubectl -n "${bridge_namespace}" scale \
+  "deployment/${bridge_release_name}" --replicas=0
+bridge_paused="true"
+kubectl -n "${bridge_namespace}" wait \
+  --for=delete \
+  pod \
+  --selector="app.kubernetes.io/instance=${bridge_release_name}" \
+  --timeout=60s >/dev/null 2>&1 || true
+rollback_deploy_result="$(mcp_call infernex_deploy_model "${rollback_request}")"
+rollback_change_id="$(
+  jq -r '.result.structuredContent.changeId' <<<"${rollback_deploy_result}"
+)"
+rollback_generation="$(
+  kubectl -n "${model_namespace}" get "infernexservice/${rollback_name}" \
+    -o jsonpath='{.metadata.generation}'
+)"
+kubectl -n "${model_namespace}" patch \
+  "infernexservice/${rollback_name}" \
+  --subresource=status \
+  --type=merge \
+  -p "$(
+    jq -nc \
+      --argjson generation "${rollback_generation}" \
+      '{
+        status:{
+          observedGeneration:$generation,
+          ready:false,
+          conditions:[{
+            type:"Degraded",
+            status:"True",
+            reason:"KindRollbackInjection",
+            message:"Intentional CI rollback verification",
+            lastTransitionTime:(now | todate)
+          }]
+        }
+      }'
+  )"
+
+rollback_change_result=""
+for _ in $(seq 1 30); do
+  rollback_change_result="$(
+    mcp_call infernex_get_change "$(
+      jq -nc --arg changeId "${rollback_change_id}" '{changeId:$changeId}'
+    )"
+  )"
+  if jq -e '.result.structuredContent.status == "rolled-back"' \
+    <<<"${rollback_change_result}" >/dev/null; then
+    break
+  fi
+  sleep 1
+done
+assert_mcp_result "degraded deployment rollback" '
+  .result.structuredContent.status == "rolled-back"
+' "${rollback_change_result}"
+test -z "$(
+  kubectl -n "${model_namespace}" get \
+    "infernexservice/${rollback_name}" --ignore-not-found -o name
+)"
+kubectl -n "${bridge_namespace}" scale \
+  "deployment/${bridge_release_name}" --replicas=1
+kubectl -n "${bridge_namespace}" rollout status \
+  "deployment/${bridge_release_name}" --timeout=120s
+bridge_paused="false"
 
 delete_result="$(mcp_call infernex_delete_model "${request}")"
 assert_mcp_result "catalog deletion" '

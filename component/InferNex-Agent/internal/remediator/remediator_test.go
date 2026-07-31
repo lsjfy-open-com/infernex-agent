@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 )
 
 func TestEnsureRecoveryUsesOnlyApprovedProfileAndIsIdempotent(t *testing.T) {
@@ -43,7 +44,12 @@ func TestEnsureRecoveryUsesOnlyApprovedProfileAndIsIdempotent(t *testing.T) {
 		},
 	}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(profile).Build()
-	domainRemediator, err := New(kubeClient, "infernex-bridge-system")
+	store := changesafety.NewMemoryStore()
+	domainRemediator, err := New(
+		kubeClient,
+		"infernex-bridge-system",
+		WithStore(store),
+	)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -56,7 +62,9 @@ func TestEnsureRecoveryUsesOnlyApprovedProfileAndIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EnsureRecovery returned error: %v", err)
 	}
-	if first.Action != "created" || first.Name != "qwen-pd-recovery" {
+	if first.Action != "created" ||
+		first.Name != "qwen-pd-recovery" ||
+		first.ChangeID == "" {
 		t.Fatalf("first result = %#v", first)
 	}
 	created := &infernexv1alpha1.InferNexService{}
@@ -69,8 +77,18 @@ func TestEnsureRecoveryUsesOnlyApprovedProfileAndIsIdempotent(t *testing.T) {
 	}
 	if len(created.Spec.BaseRefs) != 1 ||
 		created.Spec.BaseRefs[0].Name != "qwen-pd-recovery-v1" ||
-		created.Labels[managedLabel] != "true" {
+		created.Labels[managedLabel] != "true" ||
+		created.Labels[managedByLabel] != "infernex-agent" ||
+		created.Annotations[changeIDAnnotation] != first.ChangeID {
 		t.Fatalf("recovery service = %#v", created)
+	}
+	record, err := store.Latest(first.ChangeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != changesafety.StatusCommitted ||
+		record.Action != "create-recovery" {
+		t.Fatalf("recovery change record = %#v", record)
 	}
 
 	second, err := domainRemediator.EnsureRecovery(context.Background(), request)
@@ -79,6 +97,9 @@ func TestEnsureRecoveryUsesOnlyApprovedProfileAndIsIdempotent(t *testing.T) {
 	}
 	if second.Action != "unchanged" {
 		t.Fatalf("second result = %#v", second)
+	}
+	if second.ChangeID != first.ChangeID {
+		t.Fatalf("idempotent changeId = %q, want %q", second.ChangeID, first.ChangeID)
 	}
 }
 

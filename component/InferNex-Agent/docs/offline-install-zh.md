@@ -235,7 +235,33 @@ Helm values、命令行参数或 Dashboard。若 Secret 已由内部密钥系统
 不配置模型时，持续扫描、规则分析、Dashboard 和受控恢复仍可离线运行；
 只是不生成模型补充建议。
 
-### 5.4 多 master 或使用内网镜像仓库
+### 5.4 启用带持久回退的目录部署
+
+写能力默认关闭。启用后，离线安装器会同时创建或挂载状态 PVC；如果集群没有
+默认 StorageClass，应显式指定：
+
+```bash
+./bin/install-agent.sh \
+  --target-node master-01 \
+  --target-namespace kserve \
+  --dashboard-cidr 10.20.0.0/16 \
+  --runtime ctr \
+  --enable-deployment \
+  --deployment-readiness-timeout 10m \
+  --state-storage-class local-path
+```
+
+如组织已经准备 PVC：
+
+```bash
+--state-existing-claim infernex-agent-state
+```
+
+每次新建会返回 `changeId`。未在时限内 Ready 或当前 generation 报告
+Degraded 时，Agent 自动删除且只删除本次新建的 `InferNexService`。详细流程、
+恢复命令和边界见[变更保护、备份与回退](change-safety-zh.md)。
+
+### 5.5 多 master 或使用内网镜像仓库
 
 如果 Agent 可能被调度到多个 control-plane 节点，选择一种方式：
 

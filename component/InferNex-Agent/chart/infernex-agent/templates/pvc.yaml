@@ -1,0 +1,18 @@
+{{- if and .Values.changeSafety.persistence.enabled (empty .Values.changeSafety.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  {{- with .Values.changeSafety.persistence.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.changeSafety.persistence.size }}
+{{- end }}

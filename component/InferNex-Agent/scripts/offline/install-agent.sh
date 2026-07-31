@@ -33,6 +33,10 @@ Options:
   --openai-existing-secret NAME   Use an existing Secret with key "api-key"
   --enable-recovery               Enable guarded, double-opt-in recovery
   --recovery-template-namespace N InferNexServiceConfig namespace
+  --enable-deployment             Enable catalog writes with durable rollback state
+  --deployment-readiness-timeout D Roll back failed new services (default: 10m)
+  --state-existing-claim NAME     Existing PVC for change records
+  --state-storage-class NAME      StorageClass for an Agent-created state PVC
   --values FILE                   Additional Helm values file (repeatable)
   --timeout DURATION              Helm/rollout timeout (default: 5m)
   --skip-checksums                Skip bundle content verification
@@ -59,6 +63,10 @@ openai_api_key_file=""
 openai_existing_secret=""
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
+enable_deployment="false"
+deployment_readiness_timeout="10m"
+state_existing_claim=""
+state_storage_class=""
 timeout="5m"
 verify_checksums="true"
 declare -a target_namespaces=()
@@ -154,6 +162,25 @@ while (($#)); do
       recovery_template_namespace="$2"
       shift 2
       ;;
+    --enable-deployment)
+      enable_deployment="true"
+      shift
+      ;;
+    --deployment-readiness-timeout)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-readiness-timeout requires a value"
+      deployment_readiness_timeout="$2"
+      shift 2
+      ;;
+    --state-existing-claim)
+      [[ $# -ge 2 ]] || bundle_die "--state-existing-claim requires a value"
+      state_existing_claim="$2"
+      shift 2
+      ;;
+    --state-storage-class)
+      [[ $# -ge 2 ]] || bundle_die "--state-storage-class requires a value"
+      state_storage_class="$2"
+      shift 2
+      ;;
     --values)
       [[ $# -ge 2 ]] || bundle_die "--values requires a value"
       extra_values+=("$2")
@@ -199,6 +226,20 @@ fi
 [[ "$dashboard_node_port" =~ ^[0-9]+$ ]] &&
   ((dashboard_node_port >= 30000 && dashboard_node_port <= 32767)) ||
   bundle_die "dashboard NodePort must be between 30000 and 32767"
+[[ "$deployment_readiness_timeout" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+  bundle_die "deployment readiness timeout must be a positive duration such as 10m"
+if [[ -n "$state_existing_claim" ]]; then
+  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]] ||
+    bundle_die "--state-existing-claim requires a write capability"
+  [[ "$state_existing_claim" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] ||
+    bundle_die "invalid state PVC name: ${state_existing_claim}"
+fi
+if [[ -n "$state_storage_class" ]]; then
+  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]] ||
+    bundle_die "--state-storage-class requires a write capability"
+  [[ "$state_storage_class" =~ ^[A-Za-z0-9]([-A-Za-z0-9.]*[A-Za-z0-9])?$ ]] ||
+    bundle_die "invalid state StorageClass: ${state_storage_class}"
+fi
 
 if ((${#target_namespaces[@]} == 0)); then
   mapfile -t target_namespaces < <(
@@ -251,6 +292,11 @@ if [[ "$enable_recovery" == "true" ]]; then
     bundle_die "InferNexServiceConfig CRD is required for recovery"
   kubectl get namespace "$recovery_template_namespace" >/dev/null ||
     bundle_die "recovery template namespace does not exist: ${recovery_template_namespace}"
+fi
+if [[ -n "$state_existing_claim" &&
+  ( "$enable_deployment" == "true" || "$enable_recovery" == "true" ) ]]; then
+  kubectl --namespace "$namespace" get persistentvolumeclaim "$state_existing_claim" >/dev/null ||
+    bundle_die "state PVC does not exist: ${namespace}/${state_existing_claim}"
 fi
 
 if [[ "$skip_image_import" != "true" ]]; then
@@ -364,6 +410,21 @@ if [[ "$enable_recovery" == "true" ]]; then
     --set "supervisor.remediation.enabled=true"
     --set-string "supervisor.remediation.templateNamespace=${recovery_template_namespace}"
   )
+fi
+if [[ "$enable_deployment" == "true" ]]; then
+  helm_args+=(
+    --set "tools.deployment.enabled=true"
+    --set-string "changeSafety.deploymentReadinessTimeout=${deployment_readiness_timeout}"
+  )
+fi
+if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]]; then
+  helm_args+=(--set "changeSafety.persistence.enabled=true")
+  if [[ -n "$state_existing_claim" ]]; then
+    helm_args+=(--set-string "changeSafety.persistence.existingClaim=${state_existing_claim}")
+  fi
+  if [[ -n "$state_storage_class" ]]; then
+    helm_args+=(--set-string "changeSafety.persistence.storageClassName=${state_storage_class}")
+  fi
 fi
 
 bundle_info "installing InferNex Agent"

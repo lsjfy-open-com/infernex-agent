@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -33,6 +34,7 @@ import (
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/analyzer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
@@ -50,6 +52,8 @@ type options struct {
 	dashboardListen    string
 	kubeconfig         string
 	enableDeployment   bool
+	stateDir           string
+	deploymentTimeout  time.Duration
 	scanNamespaces     string
 	scanInterval       time.Duration
 	eventSinceMinutes  int
@@ -72,6 +76,13 @@ func main() {
 }
 
 func run() error {
+	if len(os.Args) > 1 && os.Args[1] == "cluster-state" {
+		return runClusterState(os.Args[2:])
+	}
+	return runServer()
+}
+
+func runServer() error {
 	opts := options{}
 	flag.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
 	flag.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
@@ -87,6 +98,18 @@ func run() error {
 		"enable-deployment",
 		false,
 		"Enable constrained catalog deploy/delete tools; disabled by default",
+	)
+	flag.StringVar(
+		&opts.stateDir,
+		"state-dir",
+		"/var/lib/infernex-agent",
+		"Protected persistent directory for change records and rollback state",
+	)
+	flag.DurationVar(
+		&opts.deploymentTimeout,
+		"deployment-readiness-timeout",
+		10*time.Minute,
+		"Rollback a newly created catalog service if it is not Ready within this duration",
 	)
 	flag.StringVar(
 		&opts.scanNamespaces,
@@ -160,13 +183,30 @@ func run() error {
 
 	domainObserver := observer.New(kubeClient)
 	serverOptions := make([]mcpserver.Option, 0, 1)
-	if opts.enableDeployment {
-		serverOptions = append(serverOptions, mcpserver.WithDeployer(deployer.New(kubeClient)))
-	}
-	server := mcpserver.New(domainObserver, version, serverOptions...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var changeStore changesafety.Store
+	if opts.enableDeployment || opts.enableAutoRecovery {
+		fileStore, err := changesafety.NewFileStore(filepath.Join(opts.stateDir, "changes"))
+		if err != nil {
+			return fmt.Errorf("configure persistent change store: %w", err)
+		}
+		changeStore = fileStore
+	}
+	if opts.enableDeployment {
+		domainDeployer := deployer.New(
+			kubeClient,
+			deployer.WithStore(changeStore),
+			deployer.WithReadiness(opts.deploymentTimeout, 2*time.Second),
+		)
+		if err := domainDeployer.Start(ctx); err != nil {
+			return fmt.Errorf("resume deployment safety monitoring: %w", err)
+		}
+		serverOptions = append(serverOptions, mcpserver.WithDeployer(domainDeployer))
+	}
+	server := mcpserver.New(domainObserver, version, serverOptions...)
 
 	domainAnalyzer, err := buildAnalyzer(opts)
 	if err != nil {
@@ -174,9 +214,16 @@ func run() error {
 	}
 	var domainRemediator supervisor.Remediator
 	if opts.enableAutoRecovery {
-		profileRemediator, remediatorErr := remediator.New(kubeClient, opts.recoveryTemplateNS)
+		profileRemediator, remediatorErr := remediator.New(
+			kubeClient,
+			opts.recoveryTemplateNS,
+			remediator.WithStore(changeStore),
+		)
 		if remediatorErr != nil {
 			return fmt.Errorf("configure recovery remediator: %w", remediatorErr)
+		}
+		if remediatorErr := profileRemediator.Start(ctx); remediatorErr != nil {
+			return fmt.Errorf("resume recovery change records: %w", remediatorErr)
 		}
 		domainRemediator = profileRemediator
 	}

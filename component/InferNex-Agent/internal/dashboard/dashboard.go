@@ -253,7 +253,10 @@ const indexHTML = `<!doctype html>
           const target = item.remediation.name
             ? " · " + item.remediation.namespace + "/" + item.remediation.name
             : "";
-          remediation.append(el("div", "analysis-title", "自动恢复 · " + item.remediation.status + target));
+          const change = item.remediation.changeId
+            ? " · change " + item.remediation.changeId.slice(0, 12)
+            : "";
+          remediation.append(el("div", "analysis-title", "自动恢复 · " + item.remediation.status + target + change));
           const detail = item.remediation.error || item.remediation.message ||
             ("连续严重巡检 " + item.remediation.failureScans + " 次");
           remediation.append(el("div", "analysis-body " + (item.remediation.error ? "error" : ""), detail));

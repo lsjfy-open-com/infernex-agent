@@ -229,6 +229,12 @@ jobs:
             --kubeconfig /etc/infernex-agent/kubeconfig \
             --target-namespace models
           sudo test -x /opt/infernex-agent/bin/configure-model.sh
+          sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
+          recovery_point="$(sudo sh -c \
+            'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
+          sudo /opt/infernex-agent/bin/infernex-agent cluster-state verify \
+            --input "${recovery_point}/cluster-state.json" |
+            grep -q '"valid": true'
           sudo grep -q -- '--scan-namespaces=models' \
             /etc/infernex-agent/agent.conf
           sudo /opt/infernex-agent/bin/configure-model.sh --show |
@@ -300,11 +306,26 @@ jobs:
           ! sudo grep -q -- '--openai-' /etc/infernex-agent/agent.conf
           sudo systemctl is-active --quiet infernex-agent.service
 
+          second_recovery_point="$(sudo sh -c \
+            'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
+          sudo /opt/infernex-agent/bin/restore-host-install.sh \
+            --backup-dir "${second_recovery_point}" \
+            --confirm
+          sudo grep -q \
+            -- '--openai-model=ci-diagnostic-model' \
+            /etc/infernex-agent/agent.conf
+          sudo test -s /etc/infernex-agent/openai-api-key
+          sudo /opt/infernex-agent/bin/configure-model.sh --test
+          sudo systemctl is-active --quiet infernex-agent.service
+
+          sudo /opt/infernex-agent/bin/configure-model.sh --disable
+
           kill "${model_server_pid}" >/dev/null 2>&1 || true
           wait "${model_server_pid}" 2>/dev/null || true
           trap - EXIT
           sudo "${host_bundle}/bin/uninstall-host.sh" \
             --purge-credentials \
+            --purge-state \
             --purge-user
 
       - name: Upload deployable offline bundle
@@ -349,6 +370,7 @@ jobs:
           if [[ -x "${host_uninstaller}" ]]; then
             sudo "${host_uninstaller}" \
               --purge-credentials \
+              --purge-state \
               --purge-user || true
           fi
           kind delete cluster --name infernex-agent

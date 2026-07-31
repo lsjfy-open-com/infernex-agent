@@ -251,6 +251,7 @@ install -m 0644 \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \
   "${agent_dir}/docs/operations-runbook-zh.md" \
+  "${agent_dir}/docs/change-safety-zh.md" \
   "${bundle_root}/docs/"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 

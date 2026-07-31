@@ -18,6 +18,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
@@ -32,7 +33,8 @@ const deploymentInstructions = `
 Catalog deployment is explicitly enabled. It only accepts a fixed catalogId,
 namespace, and name; it never accepts arbitrary images, commands, URLs, or
 Kubernetes objects. Deployment and deletion both require confirm=true. Inspect
-the resulting service and topology before reporting a successful rollout.`
+the resulting service and topology before reporting a successful rollout.
+Use infernex_get_change with the returned changeId to observe commit or rollback.`
 
 type namespaceInput struct {
 	Namespace string `json:"namespace" jsonschema:"Kubernetes namespace containing the InferNexService resources"`
@@ -55,6 +57,10 @@ type deploymentInput struct {
 	Name      string `json:"name" jsonschema:"DNS-compatible name for the InferNexService instance"`
 	CatalogID string `json:"catalogId" jsonschema:"Fixed deployment catalog identifier; currently smollm2-135m-q4"`
 	Confirm   bool   `json:"confirm" jsonschema:"Must be true after reviewing namespace, name, and catalogId"`
+}
+
+type changeInput struct {
+	ChangeID string `json:"changeId" jsonschema:"Opaque changeId returned by a deployment or deletion tool"`
 }
 
 type serverOptions struct {
@@ -176,6 +182,15 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 				CatalogID: input.CatalogID,
 				Confirm:   input.Confirm,
 			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_get_change",
+			Description: "Read the latest durable state of a catalog deployment change, including automatic rollback outcome.",
+			Annotations: readOnly("Get deployment change state"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input changeInput) (*mcp.CallToolResult, changesafety.ChangeStatus, error) {
+			output, err := options.deployer.GetChange(ctx, input.ChangeID)
 			return nil, output, err
 		})
 	}

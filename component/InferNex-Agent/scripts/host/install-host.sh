@@ -29,6 +29,7 @@ Options:
   --openai-api-key-file FILE       API key copied as a protected credential
   --openai-timeout DURATION        Model request timeout (default: 60s)
   --enable-deployment              Enable constrained catalog tools
+  --deployment-readiness-timeout D Roll back a failed new deployment (default: 10m)
   --enable-recovery                Enable guarded recovery
   --recovery-template-namespace N  Profile namespace
   --recovery-min-critical-scans N  Default: 3
@@ -52,6 +53,7 @@ openai_model=""
 openai_api_key_source=""
 openai_timeout=""
 enable_deployment="false"
+deployment_readiness_timeout="10m"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
 recovery_min_scans="3"
@@ -115,6 +117,11 @@ while (($#)); do
       enable_deployment="true"
       shift
       ;;
+    --deployment-readiness-timeout)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-readiness-timeout requires a value"
+      deployment_readiness_timeout="$2"
+      shift 2
+      ;;
     --enable-recovery)
       enable_recovery="true"
       shift
@@ -157,6 +164,9 @@ bundle_require_command useradd
 bundle_require_command awk
 bundle_require_command wc
 bundle_require_command readlink
+bundle_require_command cp
+bundle_require_command date
+bundle_require_command sha256sum
 
 if [[ -n "$bundle_root" ]]; then
   bundle_root="$(cd -- "$bundle_root" && pwd)"
@@ -257,6 +267,8 @@ fi
 [[ "$recovery_min_scans" =~ ^[0-9]+$ ]] &&
   ((recovery_min_scans >= 2 && recovery_min_scans <= 100)) ||
   bundle_die "recovery critical scans must be between 2 and 100"
+[[ "$deployment_readiness_timeout" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+  bundle_die "deployment readiness timeout must be a positive duration such as 10m"
 
 if grep -Eq '^[[:space:]]+(certificate-authority|client-certificate|client-key|tokenFile|exec|auth-provider):' \
   "$kubeconfig_source"; then
@@ -312,6 +324,7 @@ installed_kubeconfig="${config_root}/kubeconfig"
 installed_api_key="${config_root}/openai-api-key"
 agent_config="${config_root}/agent.conf"
 installed_configurator="${install_root}/bin/configure-model.sh"
+installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 
 if ! id "$service_user" >/dev/null 2>&1; then
@@ -323,15 +336,124 @@ service_group="$(id -gn "$service_user")"
 install -d -m 0755 -o root -g root "${install_root}/bin"
 install -d -m 0750 -o "$service_user" -g "$service_group" "$config_root" "$state_root"
 
+install_backup_root="${state_root}/backups/install-$(
+  date -u +%Y%m%dT%H%M%SZ
+)-$$"
+install -d -m 0700 -o root -g root \
+  "${state_root}/backups" "$install_backup_root" "${install_backup_root}/host"
+cluster_snapshot="${install_backup_root}/cluster-state.json"
+cluster_backup_args=(
+  cluster-state backup
+  --kubeconfig "$kubeconfig_source"
+  --output "$cluster_snapshot"
+  --purpose pre-host-install
+)
+for scan_namespace in "${scan_namespaces[@]}"; do
+  cluster_backup_args+=(--namespace "$scan_namespace")
+done
+bundle_info "capturing the pre-install InferNex cluster state"
+"$binary_source" "${cluster_backup_args[@]}"
+
+host_backup_targets=(
+  "$installed_binary"
+  "${installed_binary}.previous"
+  "$runner_path"
+  "$installed_kubeconfig"
+  "$installed_api_key"
+  "$agent_config"
+  "$installed_configurator"
+  "$installed_restorer"
+  "$installed_bundle_lib"
+  "$unit_path"
+)
+host_backup_manifest="${install_backup_root}/host/manifest"
+: >"$host_backup_manifest"
+chmod 0600 "$host_backup_manifest"
+for target_index in "${!host_backup_targets[@]}"; do
+  target="${host_backup_targets[$target_index]}"
+  if [[ -e "$target" ]]; then
+    cp --archive --no-dereference -- "$target" \
+      "${install_backup_root}/host/${target_index}"
+    printf '%s\tpresent\t%s\n' "$target_index" "$target" >>"$host_backup_manifest"
+  else
+    printf '%s\tabsent\t%s\n' "$target_index" "$target" >>"$host_backup_manifest"
+  fi
+done
+(
+  cd -- "$install_backup_root"
+  sha256sum cluster-state.json >cluster-state.sha256
+)
+service_was_active="false"
+service_was_enabled="false"
+systemctl is-active --quiet infernex-agent.service && service_was_active="true"
+systemctl is-enabled --quiet infernex-agent.service && service_was_enabled="true"
+printf 'active=%s\nenabled=%s\n' "$service_was_active" "$service_was_enabled" \
+  >"${install_backup_root}/host/service-state"
+chmod 0600 "${install_backup_root}/host/service-state"
+: >"${install_backup_root}/host/checksums.sha256"
+for target_index in "${!host_backup_targets[@]}"; do
+  backup="${install_backup_root}/host/${target_index}"
+  if [[ -f "$backup" ]]; then
+    (
+      cd -- "${install_backup_root}/host"
+      sha256sum "$target_index"
+    ) >>"${install_backup_root}/host/checksums.sha256"
+  fi
+done
+(
+  cd -- "${install_backup_root}/host"
+  sha256sum manifest service-state
+) >>"${install_backup_root}/host/checksums.sha256"
+chmod 0600 "${install_backup_root}/host/checksums.sha256"
+installation_committed="false"
+
+rollback_failed_install() {
+  local exit_status=$?
+  [[ "$installation_committed" == "false" ]] || return "$exit_status"
+  bundle_warn "installation failed; restoring the previous host installation and cluster baseline"
+  systemctl stop infernex-agent.service >/dev/null 2>&1 || true
+  for target_index in "${!host_backup_targets[@]}"; do
+    target="${host_backup_targets[$target_index]}"
+    backup="${install_backup_root}/host/${target_index}"
+    if [[ -e "$backup" ]]; then
+      cp --archive --no-dereference -- "$backup" "$target" || true
+    else
+      rm -f -- "$target" || true
+    fi
+  done
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ "$service_was_enabled" == "true" ]]; then
+    systemctl enable infernex-agent.service >/dev/null 2>&1 || true
+  else
+    systemctl disable infernex-agent.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$service_was_active" == "true" ]]; then
+    systemctl start infernex-agent.service >/dev/null 2>&1 || true
+  fi
+  "$binary_source" cluster-state restore \
+    --kubeconfig "$kubeconfig_source" \
+    --input "$cluster_snapshot" \
+    --confirm >/dev/null 2>&1 ||
+    bundle_warn "automatic cluster restore failed; use ${cluster_snapshot} for manual recovery"
+  bundle_warn "pre-install backup retained at ${install_backup_root}"
+  return "$exit_status"
+}
+trap rollback_failed_install EXIT
+
 bundle_lib_source="${script_dir}/bundle-lib.sh"
 if [[ ! -f "$bundle_lib_source" ]]; then
   bundle_lib_source="${script_dir}/../offline/bundle-lib.sh"
 fi
-[[ -f "${script_dir}/configure-model.sh" && -f "$bundle_lib_source" ]] ||
-  bundle_die "host model configuration tools are missing"
+[[ -f "${script_dir}/configure-model.sh" &&
+  -f "${script_dir}/restore-host-install.sh" &&
+  -f "$bundle_lib_source" ]] ||
+  bundle_die "host configuration and restore tools are missing"
 install -m 0755 -o root -g root \
   "${script_dir}/configure-model.sh" \
   "$installed_configurator"
+install -m 0755 -o root -g root \
+  "${script_dir}/restore-host-install.sh" \
+  "$installed_restorer"
 install -m 0644 -o root -g root \
   "$bundle_lib_source" \
   "$installed_bundle_lib"
@@ -429,7 +551,11 @@ if [[ "$preserve_model_config" == "true" ]]; then
     bundle_die "${agent_config} references a missing OpenAI API key"
 fi
 if [[ "$enable_deployment" == "true" ]]; then
-  agent_args+=("--enable-deployment")
+  agent_args+=(
+    "--enable-deployment"
+    "--state-dir=${state_root}"
+    "--deployment-readiness-timeout=${deployment_readiness_timeout}"
+  )
 fi
 if [[ "$enable_recovery" == "true" ]]; then
   agent_args+=(
@@ -548,7 +674,10 @@ else
   bundle_info "files installed; run systemctl enable --now infernex-agent.service when ready"
 fi
 
+installation_committed="true"
+trap - EXIT
 bundle_info "host installation completed"
+bundle_info "pre-install recovery point: ${install_backup_root}"
 bundle_info "dashboard listener: ${dashboard_listen_address}"
 bundle_info "MCP listener: ${listen_address}"
 if [[ -n "$openai_base_url" || "$preserve_model_config" == "true" ]]; then

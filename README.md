@@ -1,6 +1,6 @@
 # InferNex Agent
 
-[English](README-en.md) | [????](README-zh.md)
+[English](README-en.md) | [简体中文](README-zh.md)
 
 [![InferNex Agent CI](https://github.com/lsjfy-open-com/infernex-agent/actions/workflows/infernex-agent.yaml/badge.svg)](https://github.com/lsjfy-open-com/infernex-agent/actions/workflows/infernex-agent.yaml)
 [![License](https://img.shields.io/badge/License-Mulan_PSL_v2-blue.svg)](LICENSE)
@@ -61,17 +61,17 @@ by default, and does not require a container or NPU runtime.
 
 ## Documentation
 
-- [??????????????](component/InferNex-Agent/docs/product-guide-zh.md)
-- [?????????](component/InferNex-Agent/docs/product-design-zh.md)
-- [???????????????](component/InferNex-Agent/docs/model-configuration-zh.md)
-- [???????????](component/InferNex-Agent/docs/security-boundaries-zh.md)
-- [??????](component/InferNex-Agent/docs/operations-runbook-zh.md)
+- [产品使用说明、部署选型和验收](component/InferNex-Agent/docs/product-guide-zh.md)
+- [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
+- [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
+- [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
+- [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
 - [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
 - [Agent openEuler host/systemd installation (Chinese)](component/InferNex-Agent/docs/host-install-openeuler-zh.md)
 - [InferNex English documentation](README-en.md)
-- [InferNex ????](README-zh.md)
+- [InferNex 中文文档](README-zh.md)
 
 ## Validation
 

@@ -345,6 +345,7 @@ func (s *Scanner) evaluateRemediation(
 	service.Remediation.Status = result.Action
 	service.Remediation.Namespace = result.Namespace
 	service.Remediation.Name = result.Name
+	service.Remediation.ChangeID = result.ChangeID
 	service.Remediation.Message = "recovery InferNexService is managed by InferNex Bridge"
 }
 
