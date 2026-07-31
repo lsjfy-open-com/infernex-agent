@@ -165,6 +165,7 @@ else
   systemctl disable infernex-agent.service >/dev/null 2>&1 || true
 fi
 if [[ "$service_was_active" == "true" ]]; then
+  systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
   systemctl start infernex-agent.service
 fi
 

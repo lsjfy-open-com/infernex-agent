@@ -371,6 +371,7 @@ if [[ "$modify_requested" == "true" ]]; then
 
   if [[ "$restart_service" == "true" ]]; then
     bundle_info "restarting ${service_name}"
+    systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
     if ! systemctl restart "$service_name" ||
       ! sleep 1 ||
       ! systemctl is-active --quiet "$service_name"; then
@@ -381,6 +382,7 @@ if [[ "$modify_requested" == "true" ]]; then
       else
         rm -f -- "$credential_file"
       fi
+      systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
       systemctl restart "$service_name" || true
       journalctl -u "$service_name" --no-pager -n 100 >&2 || true
       bundle_die "failed to activate model configuration; previous configuration restored"

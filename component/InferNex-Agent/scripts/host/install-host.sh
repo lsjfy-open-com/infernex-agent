@@ -428,6 +428,7 @@ rollback_failed_install() {
     systemctl disable infernex-agent.service >/dev/null 2>&1 || true
   fi
   if [[ "$service_was_active" == "true" ]]; then
+    systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
     systemctl start infernex-agent.service >/dev/null 2>&1 || true
   fi
   "$binary_source" cluster-state restore \
@@ -656,6 +657,7 @@ if [[ "$start_service" == "true" ]]; then
   else
     service_action="start"
   fi
+  systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
   if ! systemctl "$service_action" infernex-agent.service; then
     journalctl -u infernex-agent.service --no-pager -n 100 >&2 || true
     bundle_die "failed to start infernex-agent.service"
