@@ -199,6 +199,15 @@ or wildcard bind plus a host firewall rule. API keys are copied to a separate
 `0600` credential file and are not written into unit files or process
 arguments.
 
+Host effective arguments are stored one per line in
+`/etc/infernex-agent/agent.conf`. The runner reads them into a Bash array and
+does not evaluate the configuration as shell code. Operators can install
+without a model, then use the installed `configure-model.sh` command to test,
+enable, replace, or disable the optional analyzer. Model updates are atomic;
+the command restores the previous configuration when the service cannot
+restart. Binary upgrades preserve existing model settings unless replacement
+model flags are explicitly supplied.
+
 When deployment is enabled:
 
 1. Cluster-wide RBAC is rejected by the Helm chart.

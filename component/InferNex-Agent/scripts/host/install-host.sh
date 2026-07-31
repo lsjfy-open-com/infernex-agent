@@ -27,6 +27,7 @@ Options:
   --openai-base-url URL            Internal OpenAI-compatible /v1 endpoint
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
+  --openai-timeout DURATION        Model request timeout (default: 60s)
   --enable-deployment              Enable constrained catalog tools
   --enable-recovery                Enable guarded recovery
   --recovery-template-namespace N  Profile namespace
@@ -49,6 +50,7 @@ dashboard_listen_address="127.0.0.1:8081"
 openai_base_url=""
 openai_model=""
 openai_api_key_source=""
+openai_timeout=""
 enable_deployment="false"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
@@ -104,6 +106,11 @@ while (($#)); do
       openai_api_key_source="$2"
       shift 2
       ;;
+    --openai-timeout)
+      [[ $# -ge 2 ]] || bundle_die "--openai-timeout requires a value"
+      openai_timeout="$2"
+      shift 2
+      ;;
     --enable-deployment)
       enable_deployment="true"
       shift
@@ -147,6 +154,9 @@ bundle_require_command systemctl
 bundle_require_command kubectl
 bundle_require_command curl
 bundle_require_command useradd
+bundle_require_command awk
+bundle_require_command wc
+bundle_require_command readlink
 
 if [[ -n "$bundle_root" ]]; then
   bundle_root="$(cd -- "$bundle_root" && pwd)"
@@ -200,17 +210,49 @@ validate_listen_address "$dashboard_listen_address" ||
 [[ "$listen_address" != "$dashboard_listen_address" ]] ||
   bundle_die "MCP and dashboard listen addresses must differ"
 
+health_url_for_address() {
+  local address="$1"
+  local port="${address##*:}"
+  local host="${address%:*}"
+  case "$host" in
+    0.0.0.0 | :: | '[::]') host="127.0.0.1" ;;
+  esac
+  if [[ "$host" == *:* && "$host" != \[*\] ]]; then
+    host="[${host}]"
+  fi
+  printf 'http://%s:%s' "$host" "$port"
+}
+
 if [[ -n "$openai_base_url" || -n "$openai_model" ]]; then
   [[ -n "$openai_base_url" && -n "$openai_model" ]] ||
     bundle_die "--openai-base-url and --openai-model must be provided together"
   [[ "$openai_base_url" =~ ^https?://[^[:space:]@]+$ ]] ||
     bundle_die "OpenAI base URL must be http(s), contain no credentials, and contain no spaces"
+  [[ "$openai_base_url" != *'?'* && "$openai_base_url" != *'#'* ]] ||
+    bundle_die "OpenAI base URL must not contain a query string or fragment"
+  [[ "$openai_model" != *[[:space:]]* &&
+    "$openai_model" != *$'\r'* &&
+    "$openai_model" != *$'\n'* ]] ||
+    bundle_die "OpenAI model name must not contain whitespace or control characters"
 fi
 if [[ -n "$openai_api_key_source" ]]; then
   [[ -n "$openai_base_url" ]] ||
     bundle_die "--openai-api-key-file requires OpenAI endpoint configuration"
   [[ -f "$openai_api_key_source" && -r "$openai_api_key_source" ]] ||
     bundle_die "OpenAI API key file is not readable"
+  api_key_size="$(wc -c <"$openai_api_key_source")"
+  ((api_key_size > 0 && api_key_size <= 65536)) ||
+    bundle_die "OpenAI API key file must contain between 1 and 65536 bytes"
+  if LC_ALL=C grep -q $'\r' "$openai_api_key_source" ||
+    ! awk 'NR > 1 { exit 1 }' "$openai_api_key_source"; then
+    bundle_die "OpenAI API key file must contain exactly one text line"
+  fi
+fi
+if [[ -n "$openai_timeout" ]]; then
+  [[ -n "$openai_base_url" ]] ||
+    bundle_die "--openai-timeout requires OpenAI endpoint configuration"
+  [[ "$openai_timeout" =~ ^[1-9][0-9]*(ms|s|m|h)$ ]] ||
+    bundle_die "OpenAI timeout must be a positive duration such as 60s or 2m"
 fi
 [[ "$recovery_min_scans" =~ ^[0-9]+$ ]] &&
   ((recovery_min_scans >= 2 && recovery_min_scans <= 100)) ||
@@ -268,6 +310,9 @@ installed_binary="${install_root}/bin/infernex-agent"
 runner_path="${install_root}/bin/run-agent.sh"
 installed_kubeconfig="${config_root}/kubeconfig"
 installed_api_key="${config_root}/openai-api-key"
+agent_config="${config_root}/agent.conf"
+installed_configurator="${install_root}/bin/configure-model.sh"
+installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -278,17 +323,53 @@ service_group="$(id -gn "$service_user")"
 install -d -m 0755 -o root -g root "${install_root}/bin"
 install -d -m 0750 -o "$service_user" -g "$service_group" "$config_root" "$state_root"
 
+bundle_lib_source="${script_dir}/bundle-lib.sh"
+if [[ ! -f "$bundle_lib_source" ]]; then
+  bundle_lib_source="${script_dir}/../offline/bundle-lib.sh"
+fi
+[[ -f "${script_dir}/configure-model.sh" && -f "$bundle_lib_source" ]] ||
+  bundle_die "host model configuration tools are missing"
+install -m 0755 -o root -g root \
+  "${script_dir}/configure-model.sh" \
+  "$installed_configurator"
+install -m 0644 -o root -g root \
+  "$bundle_lib_source" \
+  "$installed_bundle_lib"
+
 if [[ -f "$installed_binary" ]]; then
   install -m 0755 -o root -g root "$installed_binary" "${installed_binary}.previous"
 fi
 temporary_binary="${installed_binary}.new"
 install -m 0755 -o root -g root "$binary_source" "$temporary_binary"
 mv -f -- "$temporary_binary" "$installed_binary"
-install -m 0600 -o "$service_user" -g "$service_group" \
-  "$kubeconfig_source" "$installed_kubeconfig"
-if [[ -n "$openai_api_key_source" ]]; then
+if [[ "$(readlink -f -- "$kubeconfig_source")" !=
+  "$(readlink -f -- "$installed_kubeconfig" 2>/dev/null || true)" ]]; then
   install -m 0600 -o "$service_user" -g "$service_group" \
-    "$openai_api_key_source" "$installed_api_key"
+    "$kubeconfig_source" "$installed_kubeconfig"
+else
+  chmod 0600 "$installed_kubeconfig"
+  chown "$service_user":"$service_group" "$installed_kubeconfig"
+fi
+
+preserve_model_config="false"
+if [[ -z "$openai_base_url" &&
+  -z "$openai_model" &&
+  -z "$openai_api_key_source" &&
+  -z "$openai_timeout" &&
+  -f "$agent_config" ]]; then
+  preserve_model_config="true"
+fi
+if [[ "$preserve_model_config" == "true" ]]; then
+  bundle_info "preserving existing model configuration"
+elif [[ -n "$openai_api_key_source" ]]; then
+  if [[ "$(readlink -f -- "$openai_api_key_source")" !=
+    "$(readlink -f -- "$installed_api_key" 2>/dev/null || true)" ]]; then
+    install -m 0600 -o "$service_user" -g "$service_group" \
+      "$openai_api_key_source" "$installed_api_key"
+  else
+    chmod 0600 "$installed_api_key"
+    chown "$service_user":"$service_group" "$installed_api_key"
+  fi
 else
   rm -f -- "$installed_api_key"
 fi
@@ -302,10 +383,44 @@ agent_args=(
   "--scan-namespaces=${scan_namespaces_csv}"
 )
 if [[ -n "$openai_base_url" ]]; then
-  agent_args+=("--openai-base-url=${openai_base_url}" "--openai-model=${openai_model}")
+  agent_args+=(
+    "--openai-base-url=${openai_base_url}"
+    "--openai-model=${openai_model}"
+    "--openai-timeout=${openai_timeout:-60s}"
+  )
 fi
 if [[ -n "$openai_api_key_source" ]]; then
   agent_args+=("--openai-api-key-file=${installed_api_key}")
+fi
+if [[ "$preserve_model_config" == "true" ]]; then
+  preserved_base_url="false"
+  preserved_model="false"
+  preserved_api_key="false"
+  while IFS= read -r argument; do
+    [[ -n "$argument" && "$argument" == --* ]] ||
+      bundle_die "${agent_config} contains an invalid argument"
+    case "$argument" in
+      --openai-base-url=*)
+        preserved_base_url="true"
+        agent_args+=("$argument")
+        ;;
+      --openai-model=*)
+        preserved_model="true"
+        agent_args+=("$argument")
+        ;;
+      --openai-api-key-file=*)
+        preserved_api_key="true"
+        agent_args+=("$argument")
+        ;;
+      --openai-timeout=*)
+        agent_args+=("$argument")
+        ;;
+    esac
+  done <"$agent_config"
+  [[ "$preserved_base_url" == "$preserved_model" ]] ||
+    bundle_die "${agent_config} contains incomplete model configuration"
+  [[ "$preserved_api_key" != "true" || -f "$installed_api_key" ]] ||
+    bundle_die "${agent_config} references a missing OpenAI API key"
 fi
 if [[ "$enable_deployment" == "true" ]]; then
   agent_args+=("--enable-deployment")
@@ -319,16 +434,33 @@ if [[ "$enable_recovery" == "true" ]]; then
 fi
 
 temporary_runner="$(mktemp "${install_root}/bin/.run-agent.XXXXXX")"
-{
-  printf '#!/usr/bin/env bash\nset -euo pipefail\nexec %q' "$installed_binary"
-  for argument in "${agent_args[@]}"; do
-    printf ' \\\n  %q' "$argument"
-  done
-  printf '\n'
-} >"$temporary_runner"
+cat >"$temporary_runner" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+mapfile -t agent_args <${agent_config@Q}
+((
+  \${#agent_args[@]} > 0
+)) || {
+  echo "InferNex Agent configuration contains no arguments" >&2
+  exit 1
+}
+for argument in "\${agent_args[@]}"; do
+  [[ -n "\$argument" && "\$argument" == --* ]] || {
+    echo "InferNex Agent configuration contains an invalid argument" >&2
+    exit 1
+  }
+done
+exec ${installed_binary@Q} "\${agent_args[@]}"
+EOF
 chmod 0755 "$temporary_runner"
 chown root:root "$temporary_runner"
 mv -f -- "$temporary_runner" "$runner_path"
+
+temporary_config="$(mktemp "${config_root}/.agent.conf.XXXXXX")"
+printf '%s\n' "${agent_args[@]}" >"$temporary_config"
+chmod 0640 "$temporary_config"
+chown root:"$service_group" "$temporary_config"
+mv -f -- "$temporary_config" "$agent_config"
 
 temporary_unit="$(mktemp /etc/systemd/system/.infernex-agent.service.XXXXXX)"
 cat >"$temporary_unit" <<EOF
@@ -384,16 +516,22 @@ systemctl daemon-reload
 
 if [[ "$start_service" == "true" ]]; then
   bundle_info "enabling and starting infernex-agent.service"
-  if ! systemctl enable --now infernex-agent.service; then
+  if ! systemctl enable infernex-agent.service; then
+    bundle_die "failed to enable infernex-agent.service"
+  fi
+  if systemctl is-active --quiet infernex-agent.service; then
+    service_action="restart"
+  else
+    service_action="start"
+  fi
+  if ! systemctl "$service_action" infernex-agent.service; then
     journalctl -u infernex-agent.service --no-pager -n 100 >&2 || true
     bundle_die "failed to start infernex-agent.service"
   fi
-  mcp_port="${listen_address##*:}"
-  dashboard_port="${dashboard_listen_address##*:}"
   verify_args=(
     --kubeconfig "$installed_kubeconfig"
-    --mcp-url "http://127.0.0.1:${mcp_port}"
-    --dashboard-url "http://127.0.0.1:${dashboard_port}"
+    --mcp-url "$(health_url_for_address "$listen_address")"
+    --dashboard-url "$(health_url_for_address "$dashboard_listen_address")"
   )
   for scan_namespace in "${scan_namespaces[@]}"; do
     verify_args+=(--target-namespace "$scan_namespace")
@@ -407,3 +545,8 @@ fi
 bundle_info "host installation completed"
 bundle_info "dashboard listener: ${dashboard_listen_address}"
 bundle_info "MCP listener: ${listen_address}"
+if [[ -n "$openai_base_url" || "$preserve_model_config" == "true" ]]; then
+  bundle_info "model configuration: ${agent_config}"
+else
+  bundle_info "model analysis is disabled; configure it later with ${installed_configurator}"
+fi

@@ -168,6 +168,7 @@ bundle_root="${work_dir}/${bundle_name}"
 mkdir -p \
   "${bundle_root}/bin" \
   "${bundle_root}/charts" \
+  "${bundle_root}/docs" \
   "${bundle_root}/images" \
   "${bundle_root}/values"
 
@@ -244,6 +245,13 @@ install -m 0644 \
 install -m 0644 \
   "${agent_dir}/docs/offline-install-zh.md" \
   "${bundle_root}/README.md"
+install -m 0644 \
+  "${agent_dir}/docs/product-guide-zh.md" \
+  "${agent_dir}/docs/product-design-zh.md" \
+  "${agent_dir}/docs/model-configuration-zh.md" \
+  "${agent_dir}/docs/security-boundaries-zh.md" \
+  "${agent_dir}/docs/operations-runbook-zh.md" \
+  "${bundle_root}/docs/"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

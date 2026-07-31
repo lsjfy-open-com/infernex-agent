@@ -264,6 +264,30 @@ namespace-scoped identity, a non-root hardened systemd unit, loopback-only
 MCP/dashboard defaults, and an API-key credential file. See the
 [openEuler host installation guide](docs/host-install-openeuler-zh.md).
 
+Model analysis is optional in both deployment modes. A host installation can
+start without a model and configure one later without reinstalling:
+
+```bash
+sudo /opt/infernex-agent/bin/configure-model.sh \
+  --base-url http://internal-model.example:8000/v1 \
+  --model ops-model \
+  --api-key-file /secure/infernex-agent-openai.key \
+  --test \
+  --show
+```
+
+Non-secret effective arguments are stored in
+`/etc/infernex-agent/agent.conf`; the optional API key remains a separate
+`0600` credential.
+
+Product documentation:
+
+- [Product guide and acceptance](docs/product-guide-zh.md)
+- [Product design and failure semantics](docs/product-design-zh.md)
+- [Model configuration lifecycle](docs/model-configuration-zh.md)
+- [Security and capability boundaries](docs/security-boundaries-zh.md)
+- [Operations runbook](docs/operations-runbook-zh.md)
+
 ## Deployment
 
 The Helm chart defaults to namespace-scoped, read-only RBAC and does not

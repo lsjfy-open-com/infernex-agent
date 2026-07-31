@@ -113,7 +113,7 @@ cleanup() {
 trap cleanup EXIT
 
 bundle_root="${work_dir}/${bundle_name}"
-mkdir -p "${bundle_root}/bin" "${bundle_root}/payload"
+mkdir -p "${bundle_root}/bin" "${bundle_root}/docs" "${bundle_root}/payload"
 binary_target="${bundle_root}/payload/infernex-agent"
 
 if [[ -n "$binary_source" ]]; then
@@ -134,6 +134,7 @@ fi
 
 install -m 0755 \
   "${script_dir}/bundle-lib.sh" \
+  "${agent_dir}/scripts/host/configure-model.sh" \
   "${agent_dir}/scripts/host/create-kubeconfig.sh" \
   "${agent_dir}/scripts/host/install-host.sh" \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
@@ -142,6 +143,13 @@ install -m 0755 \
 install -m 0644 \
   "${agent_dir}/docs/host-install-openeuler-zh.md" \
   "${bundle_root}/README.md"
+install -m 0644 \
+  "${agent_dir}/docs/product-guide-zh.md" \
+  "${agent_dir}/docs/product-design-zh.md" \
+  "${agent_dir}/docs/model-configuration-zh.md" \
+  "${agent_dir}/docs/security-boundaries-zh.md" \
+  "${agent_dir}/docs/operations-runbook-zh.md" \
+  "${bundle_root}/docs/"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
