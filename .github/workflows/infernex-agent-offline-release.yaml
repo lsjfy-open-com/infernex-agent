@@ -22,6 +22,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: infernex-agent-offline-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build linux/${{ matrix.architecture }}
@@ -39,12 +43,6 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.x"
-          cache-dependency-path: component/InferNex-Agent/go.sum
 
       - name: Validate version
         env:
@@ -75,6 +73,18 @@ jobs:
             --tag "docker.io/library/infernex-agent:${VERSION}" \
             --output "type=docker,dest=${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar" \
             component
+          docker load \
+            --input "${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar"
+          container_id="$(
+            docker create \
+              --platform "linux/${ARCHITECTURE}" \
+              "docker.io/library/infernex-agent:${VERSION}"
+          )"
+          docker cp \
+            "${container_id}:/infernex-agent" \
+            "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}"
+          docker rm "${container_id}"
+          chmod 0755 "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}"
 
       - name: Assemble and verify bundle
         env:
@@ -93,14 +103,6 @@ jobs:
             -C "${RUNNER_TEMP}/verify"
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
-          (
-            cd component/InferNex-Agent
-            CGO_ENABLED=0 GOOS=linux GOARCH="${ARCHITECTURE}" go build \
-              -trimpath \
-              -ldflags="-s -w -X main.version=${VERSION}" \
-              -o "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
-              ./cmd/infernex-agent
-          )
           component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
