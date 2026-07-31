@@ -10,7 +10,7 @@
 
 # Build with component/ as the Docker context so the local InferNex-Bridge API
 # module can be reused instead of copying CRD types.
-FROM golang:1.25 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=0.3.0-dev
