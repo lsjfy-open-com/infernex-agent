@@ -19,9 +19,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
@@ -47,6 +49,19 @@ func (stubDeployer) Delete(_ context.Context, request deployer.Request) (deploye
 		CatalogID:    request.CatalogID,
 		Operation:    "deleted",
 		ResourceKind: "InferNexService",
+	}, nil
+}
+
+func (stubDeployer) GetChange(
+	_ context.Context,
+	changeID string,
+) (changesafety.ChangeStatus, error) {
+	return changesafety.ChangeStatus{
+		APIVersion: "agent.infernex.io/v1alpha1",
+		Kind:       "InferNexChange",
+		ID:         changeID,
+		Status:     changesafety.StatusCommitted,
+		OccurredAt: time.Now().UTC(),
 	}, nil
 }
 
@@ -212,8 +227,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 6 {
-		t.Fatalf("tool count = %d, want 6", len(list.Tools))
+	if len(list.Tools) != 7 {
+		t.Fatalf("tool count = %d, want 7", len(list.Tools))
 	}
 	tools := make(map[string]*mcp.Tool, len(list.Tools))
 	for _, tool := range list.Tools {
@@ -221,7 +236,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	}
 	deployTool := tools["infernex_deploy_model"]
 	deleteTool := tools["infernex_delete_model"]
-	if deployTool == nil || deleteTool == nil {
+	changeTool := tools["infernex_get_change"]
+	if deployTool == nil || deleteTool == nil || changeTool == nil {
 		t.Fatalf("deployment tools missing: %#v", tools)
 	}
 	if deployTool.Annotations == nil ||
@@ -235,6 +251,9 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 		deleteTool.Annotations.DestructiveHint == nil ||
 		!*deleteTool.Annotations.DestructiveHint {
 		t.Fatalf("unsafe delete annotations: %#v", deleteTool.Annotations)
+	}
+	if changeTool.Annotations == nil || !changeTool.Annotations.ReadOnlyHint {
+		t.Fatalf("unsafe change annotations: %#v", changeTool.Annotations)
 	}
 
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{

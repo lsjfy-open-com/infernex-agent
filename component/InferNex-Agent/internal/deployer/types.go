@@ -12,7 +12,12 @@
 
 package deployer
 
-import "context"
+import (
+	"context"
+	"time"
+
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+)
 
 const TinyModelCatalogID = "smollm2-135m-q4"
 
@@ -21,6 +26,7 @@ const TinyModelCatalogID = "smollm2-135m-q4"
 type Deployer interface {
 	Deploy(context.Context, Request) (Result, error)
 	Delete(context.Context, Request) (Result, error)
+	GetChange(context.Context, string) (changesafety.ChangeStatus, error)
 }
 
 type Request struct {
@@ -36,6 +42,25 @@ type Result struct {
 	CatalogID    string `json:"catalogId"`
 	Operation    string `json:"operation"`
 	ResourceKind string `json:"resourceKind"`
+	ChangeID     string `json:"changeId,omitempty"`
+	ChangeStatus string `json:"changeStatus,omitempty"`
 	Endpoint     string `json:"endpoint,omitempty"`
 	InferenceAPI string `json:"inferenceApi,omitempty"`
+}
+
+type Option func(*KubernetesDeployer)
+
+func WithStore(store changesafety.Store) Option {
+	return func(deployer *KubernetesDeployer) {
+		if store != nil {
+			deployer.store = store
+		}
+	}
+}
+
+func WithReadiness(timeout time.Duration, pollInterval time.Duration) Option {
+	return func(deployer *KubernetesDeployer) {
+		deployer.readinessTimeout = timeout
+		deployer.pollInterval = pollInterval
+	}
 }

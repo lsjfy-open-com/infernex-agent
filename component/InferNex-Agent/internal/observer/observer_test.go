@@ -44,6 +44,11 @@ func TestObserverUsesInferNexStatusAndManagedTopology(t *testing.T) {
 			Namespace:  "models",
 			Name:       "llama",
 			Generation: 7,
+			Annotations: map[string]string{
+				autoRecoveryAnnotation:    "true",
+				recoveryProfileAnnotation: "llama-pd-recovery-v1",
+				recoveryNameAnnotation:    "llama-recovery",
+			},
 		},
 		Spec: infernexv1alpha1.InferNexServiceSpec{
 			BaseRefs: []infernexv1alpha1.NamedRef{{Name: "infernex-default-pd-template"}},
@@ -130,6 +135,12 @@ func TestObserverUsesInferNexStatusAndManagedTopology(t *testing.T) {
 	}
 	if detail.Source == nil || detail.Source.Namespace != "models" {
 		t.Fatalf("source namespace = %#v, want resource namespace default", detail.Source)
+	}
+	if detail.Service.Recovery == nil ||
+		!detail.Service.Recovery.Enabled ||
+		detail.Service.Recovery.Profile != "llama-pd-recovery-v1" ||
+		detail.Service.Recovery.Name != "llama-recovery" {
+		t.Fatalf("recovery policy = %#v", detail.Service.Recovery)
 	}
 	if len(detail.Service.Components) != 2 || detail.Service.Components[0].Name != "hermes-router" {
 		t.Fatalf("sorted components = %#v", detail.Service.Components)

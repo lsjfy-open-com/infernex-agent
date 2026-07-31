@@ -10,10 +10,17 @@ This repository keeps the InferNex project structure intact and adds
 InferNex domain tools to MCP-compatible runtimes while reusing the existing
 `InferNexService` API and InferNex Bridge status.
 
-## Agent v0.2
+## Agent v0.3
 
-The default installation remains deliberately read-only and publishes four
-observation tools:
+The Agent can now run continuously on an InferNex management or Kubernetes
+control-plane node. Its supervisor scans explicit namespaces, correlates
+InferNex status, managed topology, Pod evidence, and recent Events, and serves
+a read-only dashboard and JSON snapshot API on a separate port. An optional
+OpenAI-compatible endpoint adds cached diagnostic advice without receiving
+Kubernetes credentials.
+
+The MCP boundary remains deliberately narrow and publishes four observation
+tools:
 
 - `infernex_list_services`
 - `infernex_inspect_service`
@@ -36,10 +43,34 @@ The default Helm configuration has deployment mode disabled, uses
 namespace-scoped read-only RBAC, and has no permission to read Secrets or
 mutate workloads.
 
+An additional double-opt-in recovery mode can create a new
+`InferNexService` after repeated critical scans. The source service must name
+an operator-approved `InferNexServiceConfig`; the Agent cannot create the
+profile, overwrite the source, switch traffic, or submit arbitrary workload
+fields.
+
+The management-node profile schedules the Agent on a control-plane/master node
+and exposes only the dashboard as NodePort `30081`; the MCP Service remains
+internal. See
+[`values-master-node.yaml`](component/InferNex-Agent/chart/infernex-agent/values-master-node.yaml).
+
+The same static Agent can run outside Kubernetes as a hardened, non-root
+systemd service on an openEuler master/bootstrap host. This mode uses a
+dedicated namespace-scoped kubeconfig, keeps MCP and the dashboard on loopback
+by default, and does not require a container or NPU runtime.
+
 ## Documentation
 
+- [产品使用说明、部署选型和验收](component/InferNex-Agent/docs/product-guide-zh.md)
+- [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
+- [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
+- [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
+- [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
+- [变更保护、备份与回退](component/InferNex-Agent/docs/change-safety-zh.md)
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
+- [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
+- [Agent openEuler host/systemd installation (Chinese)](component/InferNex-Agent/docs/host-install-openeuler-zh.md)
 - [InferNex English documentation](README-en.md)
 - [InferNex 中文文档](README-zh.md)
 

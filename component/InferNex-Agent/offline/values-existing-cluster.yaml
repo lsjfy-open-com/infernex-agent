@@ -1,0 +1,37 @@
+# Offline installation profile for an existing InferNex cluster.
+#
+# The installer overrides the image tag, target namespaces, dashboard CIDRs,
+# NodePort, and optional model/recovery settings. Keep this file secret-free.
+
+image:
+  pullPolicy: IfNotPresent
+
+placement:
+  controlPlaneOnly: true
+
+dashboard:
+  enabled: true
+  service:
+    type: NodePort
+    port: 8081
+    nodePort: 30081
+    externalTrafficPolicy: Local
+
+networkPolicy:
+  enabled: true
+  # install-agent.sh requires explicit internal CIDRs for NodePort installs.
+  dashboardAllowedCIDRs: []
+
+supervisor:
+  enabled: true
+  scanInterval: 60s
+  remediation:
+    enabled: false
+
+rbac:
+  clusterWide: false
+  targetNamespaces: []
+
+tools:
+  deployment:
+    enabled: false

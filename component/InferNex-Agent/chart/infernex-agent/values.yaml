@@ -19,6 +19,42 @@ service:
   type: ClusterIP
   port: 8080
 
+dashboard:
+  enabled: true
+  port: 8081
+  service:
+    # Keep the dashboard internal by default. values-master-node.yaml exposes
+    # only this read-only port through a NodePort.
+    type: ClusterIP
+    port: 8081
+    nodePort: null
+    externalTrafficPolicy: ""
+
+supervisor:
+  enabled: true
+  scanInterval: 60s
+  eventSinceMinutes: 60
+  eventLimit: 25
+  maxAnalysesPerScan: 10
+  # Empty inherits rbac.targetNamespaces, then the Helm release namespace.
+  namespaces: []
+  analysis:
+    openAI:
+      # Configure both baseURL and model to enable advisory model analysis.
+      # The API key is read only from an existing Secret.
+      baseURL: ""
+      model: ""
+      timeout: 60s
+      existingSecret: ""
+      secretKey: api-key
+  remediation:
+    # Opt-in twice: enable this controller-wide switch and annotate an
+    # InferNexService with agent.infernex.io/auto-recovery=true plus an
+    # approved recovery-profile name.
+    enabled: false
+    templateNamespace: infernex-bridge-system
+    minCriticalScans: 3
+
 rbac:
   # Cluster-wide observation is deliberately opt-in.
   clusterWide: false
@@ -32,10 +68,31 @@ tools:
     # still cannot submit arbitrary Kubernetes objects.
     enabled: false
 
+changeSafety:
+  # Newly created catalog services that do not become Ready in this window
+  # are deleted automatically, restoring the exact pre-deployment state.
+  deploymentReadinessTimeout: 10m
+  stateDir: /var/lib/infernex-agent
+  persistence:
+    # emptyDir survives a container restart but not Pod replacement. Enable a
+    # PVC for production so in-flight change records survive Agent upgrades.
+    enabled: false
+    existingClaim: ""
+    storageClassName: ""
+    size: 1Gi
+
 networkPolicy:
   enabled: true
   # Additional namespaces that host an authorized MCP client.
   additionalNamespaceNames: []
+  # Source CIDRs allowed to reach the read-only dashboard. When empty, only
+  # pods in the Helm release namespace can reach it.
+  dashboardAllowedCIDRs: []
+
+placement:
+  # Adds control-plane/master node affinity and standard NoSchedule
+  # tolerations. Use this for a dedicated InferNex management-node install.
+  controlPlaneOnly: false
 
 resources:
   limits:
@@ -54,6 +111,10 @@ affinity: {}
 
 podSecurityContext:
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  fsGroupChangePolicy: OnRootMismatch
   seccompProfile:
     type: RuntimeDefault
 

@@ -10,10 +10,10 @@
 
 # Build with component/ as the Docker context so the local InferNex-Bridge API
 # module can be reused instead of copying CRD types.
-FROM golang:1.25 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=0.2.0-dev
+ARG VERSION=0.3.0-dev
 
 WORKDIR /workspace
 COPY InferNex-Bridge/go.mod InferNex-Bridge/go.sum ./InferNex-Bridge/
@@ -33,5 +33,5 @@ FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /out/infernex-agent /infernex-agent
 USER 65532:65532
-EXPOSE 8080
+EXPOSE 8080 8081
 ENTRYPOINT ["/infernex-agent"]

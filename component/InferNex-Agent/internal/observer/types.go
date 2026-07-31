@@ -38,6 +38,7 @@ type ServiceSummary struct {
 	Generation         int64              `json:"generation"`
 	ObservedGeneration int64              `json:"observedGeneration"`
 	Model              *ModelSummary      `json:"model,omitempty"`
+	Recovery           *RecoverySummary   `json:"recovery,omitempty"`
 	Components         []ComponentSummary `json:"components,omitempty"`
 	Conditions         []ConditionSummary `json:"conditions,omitempty"`
 }
@@ -51,6 +52,12 @@ type ServiceDetail struct {
 type ModelSummary struct {
 	Name string `json:"name,omitempty"`
 	URI  string `json:"uri,omitempty"`
+}
+
+type RecoverySummary struct {
+	Enabled bool   `json:"enabled"`
+	Profile string `json:"profile,omitempty"`
+	Name    string `json:"name,omitempty"`
 }
 
 type SourceSummary struct {

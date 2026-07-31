@@ -1,3 +1,24 @@
+{{- $openAI := .Values.supervisor.analysis.openAI }}
+{{- if ne (empty $openAI.baseURL) (empty $openAI.model) }}
+{{- fail "supervisor.analysis.openAI.baseURL and model must be configured together" }}
+{{- end }}
+{{- if and .Values.supervisor.remediation.enabled (not .Values.supervisor.enabled) }}
+{{- fail "supervisor.remediation.enabled requires supervisor.enabled=true" }}
+{{- end }}
+{{- if and .Values.supervisor.remediation.enabled (empty .Values.supervisor.remediation.templateNamespace) }}
+{{- fail "supervisor.remediation.enabled requires a templateNamespace" }}
+{{- end }}
+{{- if and .Values.supervisor.enabled (not .Values.rbac.clusterWide) .Values.supervisor.namespaces }}
+{{- $allowedNamespaces := .Values.rbac.targetNamespaces }}
+{{- if not $allowedNamespaces }}
+{{- $allowedNamespaces = list .Release.Namespace }}
+{{- end }}
+{{- range .Values.supervisor.namespaces }}
+{{- if not (has . $allowedNamespaces) }}
+{{- fail (printf "supervisor namespace %q requires matching rbac.targetNamespaces entry" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,13 +61,57 @@ spec:
           args:
             - --transport=streamable-http
             - --listen-address=:8080
+            {{- if .Values.dashboard.enabled }}
+            - --dashboard-listen-address=:{{ .Values.dashboard.port }}
+            {{- end }}
+            {{- if .Values.supervisor.enabled }}
+            {{- $scanNamespaces := .Values.supervisor.namespaces }}
+            {{- if not $scanNamespaces }}
+            {{- $scanNamespaces = .Values.rbac.targetNamespaces }}
+            {{- end }}
+            {{- if not $scanNamespaces }}
+            {{- $scanNamespaces = list .Release.Namespace }}
+            {{- end }}
+            - --scan-namespaces={{ join "," $scanNamespaces }}
+            - --scan-interval={{ .Values.supervisor.scanInterval }}
+            - --event-since-minutes={{ .Values.supervisor.eventSinceMinutes }}
+            - --event-limit={{ .Values.supervisor.eventLimit }}
+            - --max-analyses-per-scan={{ .Values.supervisor.maxAnalysesPerScan }}
+            {{- if $openAI.baseURL }}
+            - {{ printf "--openai-base-url=%s" $openAI.baseURL | quote }}
+            - {{ printf "--openai-model=%s" $openAI.model | quote }}
+            - --openai-timeout={{ $openAI.timeout }}
+            {{- end }}
+            {{- if .Values.supervisor.remediation.enabled }}
+            - --enable-auto-recovery
+            - --recovery-template-namespace={{ .Values.supervisor.remediation.templateNamespace }}
+            - --recovery-min-critical-scans={{ .Values.supervisor.remediation.minCriticalScans }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.tools.deployment.enabled }}
             - --enable-deployment
+            - --deployment-readiness-timeout={{ .Values.changeSafety.deploymentReadinessTimeout }}
+            {{- end }}
+            {{- if or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled }}
+            - --state-dir={{ .Values.changeSafety.stateDir }}
             {{- end }}
           ports:
             - name: mcp
               containerPort: 8080
               protocol: TCP
+            {{- if .Values.dashboard.enabled }}
+            - name: dashboard
+              containerPort: {{ .Values.dashboard.port }}
+              protocol: TCP
+            {{- end }}
+          {{- if $openAI.existingSecret }}
+          env:
+            - name: INFERNEX_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $openAI.existingSecret }}
+                  key: {{ $openAI.secretKey }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /healthz
@@ -67,6 +132,8 @@ spec:
             - name: kube-api-access
               mountPath: /var/run/secrets/kubernetes.io/serviceaccount
               readOnly: true
+            - name: agent-state
+              mountPath: {{ .Values.changeSafety.stateDir }}
       volumes:
         - name: kube-api-access
           projected:
@@ -86,15 +153,45 @@ spec:
                       fieldRef:
                         apiVersion: v1
                         fieldPath: metadata.namespace
+        - name: agent-state
+          {{- if .Values.changeSafety.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-state" (include "infernex-agent.fullname" .)) .Values.changeSafety.persistence.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if .Values.placement.controlPlaneOnly }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/control-plane
+                    operator: Exists
+              - matchExpressions:
+                  - key: node-role.kubernetes.io/master
+                    operator: Exists
+      {{- else }}
       {{- with .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.tolerations }}
+      {{- end }}
+      {{- if or .Values.placement.controlPlaneOnly .Values.tolerations }}
       tolerations:
+        {{- if .Values.placement.controlPlaneOnly }}
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: node-role.kubernetes.io/master
+          operator: Exists
+          effect: NoSchedule
+        {{- end }}
+        {{- with .Values.tolerations }}
         {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- end }}

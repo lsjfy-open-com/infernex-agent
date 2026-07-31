@@ -49,6 +49,7 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
+          bash -n scripts/offline/*.sh scripts/host/*.sh
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -73,12 +74,50 @@ jobs:
             --set 'rbac.targetNamespaces[0]=models' \
             --set tools.deployment.enabled=true \
             >/dev/null
+          master_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --values ./chart/infernex-agent/values-master-node.yaml \
+              --set 'rbac.targetNamespaces[0]=models'
+          )"
+          grep -q 'nodePort: 30081' <<<"${master_render}"
+          grep -q 'node-role.kubernetes.io/control-plane' <<<"${master_render}"
+          grep -q -- '--scan-namespaces=models' <<<"${master_render}"
+          grep -q 'name: infernex-agent-dashboard' <<<"${master_render}"
+          openai_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=models' \
+              --set supervisor.analysis.openAI.baseURL=http://model.internal:8000/v1 \
+              --set supervisor.analysis.openAI.model=ops-model \
+              --set supervisor.analysis.openAI.existingSecret=infernex-openai
+          )"
+          grep -q -- '--openai-model=ops-model' <<<"${openai_render}"
+          grep -q 'name: INFERNEX_OPENAI_API_KEY' <<<"${openai_render}"
+          remediation_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=models' \
+              --set supervisor.remediation.enabled=true \
+              --set supervisor.remediation.templateNamespace=infernex-bridge-system
+          )"
+          grep -q -- '--enable-auto-recovery' <<<"${remediation_render}"
+          grep -q 'name: infernex-agent-recovery-profiles' <<<"${remediation_render}"
+          grep -q 'resources:.*infernexserviceconfigs' <<<"${remediation_render}"
           if helm template infernex-agent ./chart/infernex-agent \
             --namespace infernex-system \
             --set rbac.clusterWide=true \
             --set tools.deployment.enabled=true \
             >/dev/null 2>&1; then
             echo "cluster-wide mutation render unexpectedly succeeded"
+            exit 1
+          fi
+          if helm template infernex-agent ./chart/infernex-agent \
+            --namespace infernex-system \
+            --set rbac.clusterWide=true \
+            --set supervisor.remediation.enabled=true \
+            >/dev/null 2>&1; then
+            echo "cluster-wide auto-remediation render unexpectedly succeeded"
             exit 1
           fi
 
@@ -105,6 +144,49 @@ jobs:
             component/InferNex-Bridge
           kind load docker-image infernex-bridge:e2e --name infernex-agent
 
+      - name: Build and verify offline bundle
+        run: |
+          docker tag infernex-agent:e2e docker.io/library/infernex-agent:0.3.0
+          docker save \
+            --output "${RUNNER_TEMP}/infernex-agent-images-amd64.tar" \
+            docker.io/library/infernex-agent:0.3.0
+          component/InferNex-Agent/scripts/offline/build-bundle.sh \
+            --version 0.3.0 \
+            --architecture amd64 \
+            --agent-image docker.io/library/infernex-agent:0.3.0 \
+            --image-archive "${RUNNER_TEMP}/infernex-agent-images-amd64.tar" \
+            --output-dir "${RUNNER_TEMP}/offline-dist"
+          mkdir -p "${RUNNER_TEMP}/offline-extracted"
+          tar -xzf \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-offline-0.3.0-linux-amd64.tar.gz" \
+            -C "${RUNNER_TEMP}/offline-extracted"
+          "${RUNNER_TEMP}/offline-extracted/infernex-agent-offline-0.3.0-linux-amd64/bin/verify-agent.sh" \
+            --checksums-only
+          helm lint \
+            "${RUNNER_TEMP}/offline-extracted/infernex-agent-offline-0.3.0-linux-amd64/charts/infernex-agent-0.3.0.tgz"
+          (
+            cd component/InferNex-Agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=0.3.0" \
+              -o "${RUNNER_TEMP}/infernex-agent-linux-amd64" \
+              ./cmd/infernex-agent
+          )
+          component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
+            --version 0.3.0 \
+            --architecture amd64 \
+            --binary "${RUNNER_TEMP}/infernex-agent-linux-amd64" \
+            --output-dir "${RUNNER_TEMP}/offline-dist"
+          mkdir -p "${RUNNER_TEMP}/host-extracted"
+          tar -xzf \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz" \
+            -C "${RUNNER_TEMP}/host-extracted"
+          (
+            cd "${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
+            sha256sum --check SHA256SUMS
+            ./payload/infernex-agent --help >/dev/null
+          )
+
       - name: Install test CRDs
         working-directory: component/InferNex-Agent
         run: |
@@ -122,6 +204,152 @@ jobs:
       - name: Run real tiny-model deployment and inference test
         run: bash component/InferNex-Agent/test/e2e/tiny-model.sh
 
+      - name: Reinstall Agent from offline bundle
+        run: |
+          helm uninstall infernex-agent --namespace infernex-system
+          "${RUNNER_TEMP}/offline-extracted/infernex-agent-offline-0.3.0-linux-amd64/bin/install-agent.sh" \
+            --skip-image-import \
+            --agent-image infernex-agent:e2e \
+            --target-namespace models \
+            --dashboard-cluster-ip
+
+      - name: Install host Agent with dedicated identity
+        run: |
+          host_bundle="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
+          sudo "${host_bundle}/bin/create-kubeconfig.sh" \
+            --admin-kubeconfig "${HOME}/.kube/config" \
+            --target-namespace models \
+            --output "${RUNNER_TEMP}/infernex-agent-host.kubeconfig"
+          sudo "${host_bundle}/bin/install-host.sh" \
+            --kubeconfig "${RUNNER_TEMP}/infernex-agent-host.kubeconfig" \
+            --scan-namespace models
+          sudo systemd-analyze verify \
+            /etc/systemd/system/infernex-agent.service
+          sudo "${host_bundle}/bin/verify-host.sh" \
+            --kubeconfig /etc/infernex-agent/kubeconfig \
+            --target-namespace models
+          sudo test -x /opt/infernex-agent/bin/configure-model.sh
+          sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
+          recovery_point="$(sudo sh -c \
+            'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
+          sudo /opt/infernex-agent/bin/infernex-agent cluster-state verify \
+            --input "${recovery_point}/cluster-state.json" |
+            grep -q '"valid": true'
+          sudo grep -q -- '--scan-namespaces=models' \
+            /etc/infernex-agent/agent.conf
+          sudo /opt/infernex-agent/bin/configure-model.sh --show |
+            grep -q 'model_analysis=disabled'
+
+          python3 - <<'PY' >"${RUNNER_TEMP}/host-model.log" 2>&1 &
+          import json
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+
+          class Handler(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  length = int(self.headers.get("content-length", "0"))
+                  self.rfile.read(length)
+                  body = json.dumps({
+                      "model": "ci-diagnostic-model",
+                      "choices": [{
+                          "message": {"role": "assistant", "content": "OK"}
+                      }],
+                  }).encode()
+                  self.send_response(200)
+                  self.send_header("Content-Type", "application/json")
+                  self.send_header("Content-Length", str(len(body)))
+                  self.end_headers()
+                  self.wfile.write(body)
+
+              def log_message(self, _format, *_args):
+                  pass
+
+          HTTPServer(("127.0.0.1", 19090), Handler).serve_forever()
+          PY
+          model_server_pid=$!
+          trap 'kill "${model_server_pid}" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 20); do
+            if curl --silent http://127.0.0.1:19090/ >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          printf 'ci-test-key\n' >"${RUNNER_TEMP}/host-model.key"
+          sudo /opt/infernex-agent/bin/configure-model.sh \
+            --base-url http://127.0.0.1:19090/v1 \
+            --model ci-diagnostic-model \
+            --api-key-file "${RUNNER_TEMP}/host-model.key" \
+            --timeout 30s \
+            --test \
+            --show |
+            grep -q 'model_analysis=enabled'
+          sudo grep -q \
+            -- '--openai-api-key-file=/etc/infernex-agent/openai-api-key' \
+            /etc/infernex-agent/agent.conf
+          ! sudo grep -q 'ci-test-key' \
+            /etc/infernex-agent/agent.conf \
+            /etc/systemd/system/infernex-agent.service
+          sudo systemctl is-active --quiet infernex-agent.service
+
+          sudo "${host_bundle}/bin/install-host.sh" \
+            --kubeconfig /etc/infernex-agent/kubeconfig \
+            --scan-namespace models
+          sudo grep -q \
+            -- '--openai-model=ci-diagnostic-model' \
+            /etc/infernex-agent/agent.conf
+          sudo test -s /etc/infernex-agent/openai-api-key
+          sudo /opt/infernex-agent/bin/configure-model.sh --test
+
+          sudo /opt/infernex-agent/bin/configure-model.sh --disable --show |
+            grep -q 'model_analysis=disabled'
+          sudo test ! -e /etc/infernex-agent/openai-api-key
+          ! sudo grep -q -- '--openai-' /etc/infernex-agent/agent.conf
+          sudo systemctl is-active --quiet infernex-agent.service
+
+          second_recovery_point="$(sudo sh -c \
+            'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
+          sudo /opt/infernex-agent/bin/restore-host-install.sh \
+            --backup-dir "${second_recovery_point}" \
+            --confirm
+          sudo grep -q \
+            -- '--openai-model=ci-diagnostic-model' \
+            /etc/infernex-agent/agent.conf
+          sudo test -s /etc/infernex-agent/openai-api-key
+          sudo /opt/infernex-agent/bin/configure-model.sh --test
+          sudo systemctl is-active --quiet infernex-agent.service
+
+          sudo /opt/infernex-agent/bin/configure-model.sh --disable
+
+          kill "${model_server_pid}" >/dev/null 2>&1 || true
+          wait "${model_server_pid}" 2>/dev/null || true
+          trap - EXIT
+          sudo "${host_bundle}/bin/uninstall-host.sh" \
+            --purge-credentials \
+            --purge-state \
+            --purge-user
+
+      - name: Upload deployable offline bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infernex-agent-offline-0.3.0-linux-amd64
+          path: |
+            ${{ runner.temp }}/offline-dist/infernex-agent-offline-0.3.0-linux-amd64.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-offline-0.3.0-linux-amd64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload host offline bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infernex-agent-host-offline-0.3.0-linux-amd64
+          path: |
+            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Collect diagnostics
         if: failure()
         run: |
@@ -132,7 +360,17 @@ jobs:
           kubectl -n infernex-bridge-system logs deployment/infernex-bridge || true
           kubectl -n models logs deployment/kind-smollm-engine-aggregate \
             --all-containers --prefix || true
+          sudo systemctl status infernex-agent.service --no-pager || true
+          sudo journalctl -u infernex-agent.service --no-pager -n 200 || true
 
       - name: Delete Kind cluster
         if: always()
-        run: kind delete cluster --name infernex-agent
+        run: |
+          host_uninstaller="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64/bin/uninstall-host.sh"
+          if [[ -x "${host_uninstaller}" ]]; then
+            sudo "${host_uninstaller}" \
+              --purge-credentials \
+              --purge-state \
+              --purge-user || true
+          fi
+          kind delete cluster --name infernex-agent
