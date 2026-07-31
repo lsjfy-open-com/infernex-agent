@@ -66,6 +66,7 @@ by default, and does not require a container or NPU runtime.
 - [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
 - [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
 - [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
+- [变更保护、备份与回退](component/InferNex-Agent/docs/change-safety-zh.md)
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
 - [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
