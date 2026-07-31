@@ -49,7 +49,7 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
-          bash -n scripts/offline/*.sh
+          bash -n scripts/offline/*.sh scripts/host/*.sh
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -164,6 +164,28 @@ jobs:
             --checksums-only
           helm lint \
             "${RUNNER_TEMP}/offline-extracted/infernex-agent-offline-0.3.0-linux-amd64/charts/infernex-agent-0.3.0.tgz"
+          (
+            cd component/InferNex-Agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=0.3.0" \
+              -o "${RUNNER_TEMP}/infernex-agent-linux-amd64" \
+              ./cmd/infernex-agent
+          )
+          component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
+            --version 0.3.0 \
+            --architecture amd64 \
+            --binary "${RUNNER_TEMP}/infernex-agent-linux-amd64" \
+            --output-dir "${RUNNER_TEMP}/offline-dist"
+          mkdir -p "${RUNNER_TEMP}/host-extracted"
+          tar -xzf \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz" \
+            -C "${RUNNER_TEMP}/host-extracted"
+          (
+            cd "${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
+            sha256sum --check SHA256SUMS
+            ./payload/infernex-agent --help >/dev/null
+          )
 
       - name: Install test CRDs
         working-directory: component/InferNex-Agent
@@ -191,6 +213,25 @@ jobs:
             --target-namespace models \
             --dashboard-cluster-ip
 
+      - name: Install host Agent with dedicated identity
+        run: |
+          host_bundle="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
+          sudo "${host_bundle}/bin/create-kubeconfig.sh" \
+            --admin-kubeconfig "${HOME}/.kube/config" \
+            --target-namespace models \
+            --output "${RUNNER_TEMP}/infernex-agent-host.kubeconfig"
+          sudo "${host_bundle}/bin/install-host.sh" \
+            --kubeconfig "${RUNNER_TEMP}/infernex-agent-host.kubeconfig" \
+            --scan-namespace models
+          sudo systemd-analyze verify \
+            /etc/systemd/system/infernex-agent.service
+          sudo "${host_bundle}/bin/verify-host.sh" \
+            --kubeconfig /etc/infernex-agent/kubeconfig \
+            --target-namespace models
+          sudo "${host_bundle}/bin/uninstall-host.sh" \
+            --purge-credentials \
+            --purge-user
+
       - name: Upload deployable offline bundle
         if: always()
         uses: actions/upload-artifact@v4
@@ -199,6 +240,17 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-dist/infernex-agent-offline-0.3.0-linux-amd64.tar.gz
             ${{ runner.temp }}/offline-dist/infernex-agent-offline-0.3.0-linux-amd64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload host offline bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: infernex-agent-host-offline-0.3.0-linux-amd64
+          path: |
+            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -212,7 +264,16 @@ jobs:
           kubectl -n infernex-bridge-system logs deployment/infernex-bridge || true
           kubectl -n models logs deployment/kind-smollm-engine-aggregate \
             --all-containers --prefix || true
+          sudo systemctl status infernex-agent.service --no-pager || true
+          sudo journalctl -u infernex-agent.service --no-pager -n 200 || true
 
       - name: Delete Kind cluster
         if: always()
-        run: kind delete cluster --name infernex-agent
+        run: |
+          host_uninstaller="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64/bin/uninstall-host.sh"
+          if [[ -x "${host_uninstaller}" ]]; then
+            sudo "${host_uninstaller}" \
+              --purge-credentials \
+              --purge-user || true
+          fi
+          kind delete cluster --name infernex-agent

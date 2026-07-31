@@ -54,11 +54,17 @@ and exposes only the dashboard as NodePort `30081`; the MCP Service remains
 internal. See
 [`values-master-node.yaml`](component/InferNex-Agent/chart/infernex-agent/values-master-node.yaml).
 
+The same static Agent can run outside Kubernetes as a hardened, non-root
+systemd service on an openEuler master/bootstrap host. This mode uses a
+dedicated namespace-scoped kubeconfig, keeps MCP and the dashboard on loopback
+by default, and does not require a container or NPU runtime.
+
 ## Documentation
 
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
 - [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
+- [Agent openEuler host/systemd installation (Chinese)](component/InferNex-Agent/docs/host-install-openeuler-zh.md)
 - [InferNex English documentation](README-en.md)
 - [InferNex 中文文档](README-zh.md)
 

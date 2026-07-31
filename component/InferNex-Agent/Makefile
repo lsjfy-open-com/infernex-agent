@@ -48,3 +48,10 @@ offline-bundle:
 		--agent-image $(IMG) \
 		--container-tool $(CONTAINER_TOOL) \
 		--output-dir $(OFFLINE_OUTPUT_DIR)
+
+.PHONY: offline-host-bundle
+offline-host-bundle:
+	bash ./scripts/offline/build-host-bundle.sh \
+		--version $(VERSION) \
+		--architecture $(OFFLINE_ARCH) \
+		--output-dir $(OFFLINE_OUTPUT_DIR)

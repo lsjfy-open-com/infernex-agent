@@ -249,6 +249,21 @@ cd infernex-agent-offline-0.3.0-linux-amd64
 See the complete Chinese guide:
 [offline build and existing-cluster installation](docs/offline-install-zh.md).
 
+For an Agent that runs directly on an openEuler master/bootstrap host rather
+than in Kubernetes, build the static-binary bundle:
+
+```bash
+./scripts/offline/build-host-bundle.sh \
+  --version 0.3.0 \
+  --architecture arm64 \
+  --output-dir ./dist
+```
+
+The host mode uses the existing `--kubeconfig` support, a dedicated
+namespace-scoped identity, a non-root hardened systemd unit, loopback-only
+MCP/dashboard defaults, and an API-key credential file. See the
+[openEuler host installation guide](docs/host-install-openeuler-zh.md).
+
 ## Deployment
 
 The Helm chart defaults to namespace-scoped, read-only RBAC and does not

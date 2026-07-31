@@ -89,6 +89,30 @@ which prepares this isolation before kubectl-ai is optionally co-scheduled.
 This allows kubectl-ai's conversation and provider implementation to be reused
 without granting its generic kubectl or shell tools a Kubernetes identity.
 
+For a fixed master/bootstrap host, the same Agent binary can instead run as a
+non-root systemd service:
+
+```text
+openEuler management host
+  local Agent Runtime -> http://127.0.0.1:8080/mcp
+  infernex-agent.service
+    - static binary, no container/NPU runtime dependency
+    - dedicated namespace-scoped kubeconfig
+    - loopback MCP and dashboard by default
+    - optional internal OpenAI-compatible endpoint
+               |
+               v
+        Kubernetes apiserver -> InferNexService / Bridge status
+```
+
+The host mode uses the same observer, catalog, remediator, and supervisor. It
+does not introduce SSH execution or direct node/NPU access. A one-time
+bootstrap command may use an administrator kubeconfig to create the dedicated
+ServiceAccount and Roles; the long-running service must not use `admin.conf`.
+The provided bootstrap kubeconfig embeds a long-lived, narrowly scoped token,
+which must be stored as a credential and rotated. Enterprise PKI/OIDC
+credentials with the same Roles are preferred where available.
+
 ## Observation tool contract
 
 All tools require an explicit namespace and are marked read-only, idempotent,
@@ -153,7 +177,8 @@ ClusterIP Service.
 
 ## Security model
 
-The default installation corresponds to an observation-only permission level:
+The default in-cluster installation corresponds to an observation-only
+permission level:
 
 1. The domain container uses a short-lived projected ServiceAccount token
    through in-cluster configuration; pod-wide token automount is disabled.
@@ -164,6 +189,15 @@ The default installation corresponds to an observation-only permission level:
 5. The default NetworkPolicy permits MCP ingress only from the Agent release
    namespace.
 6. The LLM never receives kubeconfig or Kubernetes bearer tokens.
+
+The host/systemd installation preserves the same Kubernetes verbs, but stores
+its self-contained kubeconfig as a `0600` file readable only by the dedicated
+`infernex-agent` system user. Its systemd unit removes capabilities, enables
+`NoNewPrivileges`, protects kernel/system paths, and binds both HTTP listeners
+to loopback by default. Dashboard exposure requires an explicit management IP
+or wildcard bind plus a host firewall rule. API keys are copied to a separate
+`0600` credential file and are not written into unit files or process
+arguments.
 
 When deployment is enabled:
 

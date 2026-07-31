@@ -3,6 +3,11 @@
 本文适用于已经在内网 Kubernetes 中部署 InferNex、InferNex Bridge 和
 PD 分离推理服务，仅新增管理节点 Agent 的场景。
 
+本文安装的是 Kubernetes Pod/Helm 形态。若运维习惯是在 openEuler
+master 或引导节点直接运行管理进程，请改用
+[openEuler 宿主机/systemd 安装](host-install-openeuler-zh.md)；两种形态
+共用同一 Agent 核心和 InferNex API，不需要同时安装。
+
 离线包只包含：
 
 - InferNex Agent 容器镜像；

@@ -1,6 +1,11 @@
 name: InferNex Agent offline bundle
 
 on:
+  pull_request:
+    paths:
+      - ".github/workflows/infernex-agent-offline-release.yaml"
+      - "component/InferNex-Agent/**"
+      - "component/InferNex-Bridge/api/**"
   workflow_dispatch:
     inputs:
       version:
@@ -22,6 +27,8 @@ jobs:
     name: Build linux/${{ matrix.architecture }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      BUNDLE_VERSION: ${{ inputs.version || '0.3.0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -33,9 +40,15 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: component/InferNex-Agent/go.sum
+
       - name: Validate version
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.BUNDLE_VERSION }}
         run: |
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
 
@@ -53,7 +66,7 @@ jobs:
       - name: Build architecture-specific image archive
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.BUNDLE_VERSION }}
         run: |
           docker buildx build \
             --platform "linux/${ARCHITECTURE}" \
@@ -66,7 +79,7 @@ jobs:
       - name: Assemble and verify bundle
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.BUNDLE_VERSION }}
         run: |
           component/InferNex-Agent/scripts/offline/build-bundle.sh \
             --version "${VERSION}" \
@@ -80,11 +93,32 @@ jobs:
             -C "${RUNNER_TEMP}/verify"
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
+          (
+            cd component/InferNex-Agent
+            CGO_ENABLED=0 GOOS=linux GOARCH="${ARCHITECTURE}" go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=${VERSION}" \
+              -o "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+              ./cmd/infernex-agent
+          )
+          component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
+            --version "${VERSION}" \
+            --architecture "${ARCHITECTURE}" \
+            --binary "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+            --output-dir "${RUNNER_TEMP}/offline-dist"
+          mkdir -p "${RUNNER_TEMP}/verify-host"
+          tar -xzf \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
+            -C "${RUNNER_TEMP}/verify-host"
+          (
+            cd "${RUNNER_TEMP}/verify-host/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}"
+            sha256sum --check SHA256SUMS
+          )
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: infernex-agent-offline-${{ inputs.version }}-linux-${{ matrix.architecture }}
+          name: infernex-agent-offline-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
           path: |
             ${{ runner.temp }}/offline-dist/*.tar.gz
             ${{ runner.temp }}/offline-dist/*.tar.gz.sha256
@@ -92,7 +126,7 @@ jobs:
           retention-days: 30
 
   prerelease:
-    if: ${{ inputs.publish_prerelease }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_prerelease }}
     needs:
       - build
     runs-on: ubuntu-latest

@@ -57,6 +57,7 @@ type options struct {
 	maxAnalysesPerScan int
 	openAIBaseURL      string
 	openAIModel        string
+	openAIAPIKeyFile   string
 	openAITimeout      time.Duration
 	enableAutoRecovery bool
 	recoveryTemplateNS string
@@ -109,6 +110,12 @@ func run() error {
 		"OpenAI-compatible base URL; requires --openai-model and enables advisory analysis",
 	)
 	flag.StringVar(&opts.openAIModel, "openai-model", "", "OpenAI-compatible model name")
+	flag.StringVar(
+		&opts.openAIAPIKeyFile,
+		"openai-api-key-file",
+		"",
+		"Read the OpenAI-compatible API key from this file; intended for host/systemd installs",
+	)
 	flag.DurationVar(&opts.openAITimeout, "openai-timeout", time.Minute, "OpenAI-compatible request timeout")
 	flag.BoolVar(
 		&opts.enableAutoRecovery,
@@ -222,16 +229,48 @@ func buildAnalyzer(opts options) (supervisor.Analyzer, error) {
 	if baseURL == "" || model == "" {
 		return nil, fmt.Errorf("--openai-base-url and --openai-model must be configured together")
 	}
+	apiKey, err := openAIAPIKey(opts.openAIAPIKeyFile)
+	if err != nil {
+		return nil, err
+	}
 	domainAnalyzer, err := analyzer.NewOpenAI(analyzer.OpenAIConfig{
 		BaseURL: baseURL,
 		Model:   model,
-		APIKey:  os.Getenv("INFERNEX_OPENAI_API_KEY"),
+		APIKey:  apiKey,
 		Timeout: opts.openAITimeout,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure OpenAI-compatible analyzer: %w", err)
 	}
 	return domainAnalyzer, nil
+}
+
+func openAIAPIKey(filePath string) (string, error) {
+	const maxAPIKeyBytes = 64 * 1024
+
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return os.Getenv("INFERNEX_OPENAI_API_KEY"), nil
+	}
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return "", fmt.Errorf("stat OpenAI API key file: %w", err)
+	}
+	if !fileInfo.Mode().IsRegular() {
+		return "", fmt.Errorf("OpenAI API key file must be a regular file")
+	}
+	if fileInfo.Size() > maxAPIKeyBytes {
+		return "", fmt.Errorf("OpenAI API key file exceeds %d bytes", maxAPIKeyBytes)
+	}
+	contents, err := os.ReadFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("read OpenAI API key file: %w", err)
+	}
+	apiKey := strings.TrimRight(string(contents), "\r\n")
+	if strings.ContainsAny(apiKey, "\r\n\x00") {
+		return "", fmt.Errorf("OpenAI API key file must contain exactly one text line")
+	}
+	return apiKey, nil
 }
 
 func parseNamespaces(value string) []string {
