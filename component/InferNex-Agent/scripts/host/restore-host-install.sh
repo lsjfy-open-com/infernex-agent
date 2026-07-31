@@ -111,8 +111,8 @@ host_targets=(
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"
   manifest_status="$(
-    awk -F '\t' -v index="$target_index" -v target="$target" \
-      '$1 == index && $3 == target {print $2}' \
+    awk -F '\t' -v item_index="$target_index" -v target="$target" \
+      '$1 == item_index && $3 == target {print $2}' \
       "${backup_dir}/host/manifest"
   )"
   [[ "$manifest_status" == "present" || "$manifest_status" == "absent" ]] ||
@@ -146,8 +146,8 @@ systemctl stop infernex-agent.service >/dev/null 2>&1 || true
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"
   manifest_status="$(
-    awk -F '\t' -v index="$target_index" -v target="$target" \
-      '$1 == index && $3 == target {print $2}' \
+    awk -F '\t' -v item_index="$target_index" -v target="$target" \
+      '$1 == item_index && $3 == target {print $2}' \
       "${backup_dir}/host/manifest"
   )"
   if [[ "$manifest_status" == "present" ]]; then
