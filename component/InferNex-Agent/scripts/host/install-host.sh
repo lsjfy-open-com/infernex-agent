@@ -342,8 +342,11 @@ fi
 temporary_binary="${installed_binary}.new"
 install -m 0755 -o root -g root "$binary_source" "$temporary_binary"
 mv -f -- "$temporary_binary" "$installed_binary"
-if [[ "$(readlink -f -- "$kubeconfig_source")" !=
-  "$(readlink -f -- "$installed_kubeconfig" 2>/dev/null || true)" ]]; then
+source_kubeconfig_resolved="$(readlink -f -- "$kubeconfig_source")"
+installed_kubeconfig_resolved="$(
+  readlink -f -- "$installed_kubeconfig" 2>/dev/null || true
+)"
+if [[ "$source_kubeconfig_resolved" != "$installed_kubeconfig_resolved" ]]; then
   install -m 0600 -o "$service_user" -g "$service_group" \
     "$kubeconfig_source" "$installed_kubeconfig"
 else
@@ -362,8 +365,11 @@ fi
 if [[ "$preserve_model_config" == "true" ]]; then
   bundle_info "preserving existing model configuration"
 elif [[ -n "$openai_api_key_source" ]]; then
-  if [[ "$(readlink -f -- "$openai_api_key_source")" !=
-    "$(readlink -f -- "$installed_api_key" 2>/dev/null || true)" ]]; then
+  source_api_key_resolved="$(readlink -f -- "$openai_api_key_source")"
+  installed_api_key_resolved="$(
+    readlink -f -- "$installed_api_key" 2>/dev/null || true
+  )"
+  if [[ "$source_api_key_resolved" != "$installed_api_key_resolved" ]]; then
     install -m 0600 -o "$service_user" -g "$service_group" \
       "$openai_api_key_source" "$installed_api_key"
   else
