@@ -1,5 +1,7 @@
 # InferNex Agent
 
+[English](README.md) | [简体中文](README-zh.md)
+
 InferNex Agent is the domain tool boundary between an agent runtime and the
 InferNex control plane. It reuses the existing `InferNexService` API and
 Bridge-generated status instead of reimplementing serving lifecycle or
@@ -330,6 +332,7 @@ Non-secret effective arguments are stored in
 
 Product documentation:
 
+- [Installation and operating-mode guide (Chinese)](docs/install-and-modes-zh.md)
 - [Product guide and acceptance](docs/product-guide-zh.md)
 - [Product design and failure semantics](docs/product-design-zh.md)
 - [Progressive experiments and cross-node diagnostics](docs/progressive-experiments-zh.md)
