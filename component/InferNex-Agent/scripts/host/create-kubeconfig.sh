@@ -26,6 +26,9 @@ Options:
   --service-account NAME           ServiceAccount name (default: infernex-agent-host)
   --output FILE                    Output kubeconfig (default: ./infernex-agent-host.kubeconfig)
   --enable-deployment              Permit constrained catalog create/delete
+  --enable-log-diagnostics         Permit InferNex-owned Pod log reads
+  --enable-experiments             Permit candidates and approved profiles
+  --experiment-template-namespace N Profile namespace (default: infernex-bridge-system)
   --enable-recovery                Permit recovery-service create and profile get
   --recovery-template-namespace N  Profile namespace (default: infernex-bridge-system)
   --rotate-token                   Replace the long-lived ServiceAccount token
@@ -43,6 +46,9 @@ agent_namespace="infernex-system"
 service_account="infernex-agent-host"
 output_file="${PWD}/infernex-agent-host.kubeconfig"
 enable_deployment="false"
+enable_log_diagnostics="false"
+enable_experiments="false"
+experiment_template_namespace="infernex-bridge-system"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
 rotate_token="false"
@@ -79,6 +85,20 @@ while (($#)); do
     --enable-deployment)
       enable_deployment="true"
       shift
+      ;;
+    --enable-log-diagnostics)
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --enable-experiments)
+      enable_experiments="true"
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --experiment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-template-namespace requires a value"
+      experiment_template_namespace="$2"
+      shift 2
       ;;
     --enable-recovery)
       enable_recovery="true"
@@ -121,6 +141,8 @@ validate_dns_label "$service_account" ||
   bundle_die "invalid ServiceAccount name: ${service_account}"
 validate_dns_label "$recovery_template_namespace" ||
   bundle_die "invalid recovery template namespace: ${recovery_template_namespace}"
+validate_dns_label "$experiment_template_namespace" ||
+  bundle_die "invalid experiment template namespace: ${experiment_template_namespace}"
 ((${#target_namespaces[@]} > 0)) ||
   bundle_die "at least one --target-namespace is required"
 for target_namespace in "${target_namespaces[@]}"; do
@@ -141,10 +163,10 @@ fi
 kubectl "${kubectl_args[@]}" get crd \
   infernexservices.infernex.infernex.io >/dev/null ||
   bundle_die "InferNexService CRD is missing"
-if [[ "$enable_recovery" == "true" ]]; then
+if [[ "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
   kubectl "${kubectl_args[@]}" get crd \
     infernexserviceconfigs.infernex.infernex.io >/dev/null ||
-    bundle_die "InferNexServiceConfig CRD is required for recovery"
+    bundle_die "InferNexServiceConfig CRD is required for recovery or experiments"
 fi
 
 bundle_info "creating dedicated ServiceAccount"
@@ -199,9 +221,49 @@ subjects:
     namespace: ${agent_namespace}
 EOF
 
-  if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]]; then
+  if [[ "$enable_log_diagnostics" == "true" ]]; then
+    bundle_info "applying bounded log-read RBAC in ${target_namespace}"
+    cat <<EOF | kubectl "${kubectl_args[@]}" apply -f - >/dev/null
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: infernex-agent-host-logs
+  namespace: ${target_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+rules:
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: infernex-agent-host-logs
+  namespace: ${target_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: infernex-agent-host-logs
+subjects:
+  - kind: ServiceAccount
+    name: ${service_account}
+    namespace: ${agent_namespace}
+EOF
+  else
+    kubectl "${kubectl_args[@]}" --namespace "$target_namespace" delete \
+      role/infernex-agent-host-logs \
+      rolebinding/infernex-agent-host-logs \
+      --ignore-not-found >/dev/null
+  fi
+
+  if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
     mutation_verbs='["create"]'
-    if [[ "$enable_deployment" == "true" ]]; then
+    if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
       mutation_verbs='["create", "delete"]'
     fi
     bundle_info "applying constrained mutation RBAC in ${target_namespace}"
@@ -283,6 +345,48 @@ else
   kubectl "${kubectl_args[@]}" --namespace "$recovery_template_namespace" delete \
     role/infernex-agent-host-recovery-profiles \
     rolebinding/infernex-agent-host-recovery-profiles \
+    --ignore-not-found >/dev/null 2>&1 || true
+fi
+
+if [[ "$enable_experiments" == "true" ]]; then
+  kubectl "${kubectl_args[@]}" get namespace "$experiment_template_namespace" >/dev/null ||
+    bundle_die "experiment template namespace does not exist: ${experiment_template_namespace}"
+  bundle_info "applying experiment-profile read permission"
+  cat <<EOF | kubectl "${kubectl_args[@]}" apply -f - >/dev/null
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: infernex-agent-host-experiment-profiles
+  namespace: ${experiment_template_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexserviceconfigs"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: infernex-agent-host-experiment-profiles
+  namespace: ${experiment_template_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: infernex-agent-host-experiment-profiles
+subjects:
+  - kind: ServiceAccount
+    name: ${service_account}
+    namespace: ${agent_namespace}
+EOF
+else
+  kubectl "${kubectl_args[@]}" --namespace "$experiment_template_namespace" delete \
+    role/infernex-agent-host-experiment-profiles \
+    rolebinding/infernex-agent-host-experiment-profiles \
     --ignore-not-found >/dev/null 2>&1 || true
 fi
 

@@ -28,6 +28,13 @@ Options:
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
   --openai-timeout DURATION        Model request timeout (default: 60s)
+  --enable-log-diagnostics         Read bounded InferNex-owned Pod logs
+  --max-diagnostics-per-scan N     Degraded services read per scan (default: 10)
+  --enable-experiments             Run durable, single-feature experiments
+  --experiment-template-namespace N Approved feature profile namespace
+  --experiment-readiness-timeout D Default: 20m
+  --experiment-soak-duration D     Default: 5m
+  --experiment-diagnostic-interval D Default: 30s
   --enable-deployment              Enable constrained catalog tools
   --deployment-readiness-timeout D Roll back a failed new deployment (default: 10m)
   --enable-recovery                Enable guarded recovery
@@ -52,6 +59,13 @@ openai_base_url=""
 openai_model=""
 openai_api_key_source=""
 openai_timeout=""
+enable_log_diagnostics="false"
+max_diagnostics_per_scan="10"
+enable_experiments="false"
+experiment_template_namespace="infernex-bridge-system"
+experiment_readiness_timeout="20m"
+experiment_soak_duration="5m"
+experiment_diagnostic_interval="30s"
 enable_deployment="false"
 deployment_readiness_timeout="10m"
 enable_recovery="false"
@@ -111,6 +125,40 @@ while (($#)); do
     --openai-timeout)
       [[ $# -ge 2 ]] || bundle_die "--openai-timeout requires a value"
       openai_timeout="$2"
+      shift 2
+      ;;
+    --enable-log-diagnostics)
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --max-diagnostics-per-scan)
+      [[ $# -ge 2 ]] || bundle_die "--max-diagnostics-per-scan requires a value"
+      max_diagnostics_per_scan="$2"
+      shift 2
+      ;;
+    --enable-experiments)
+      enable_experiments="true"
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --experiment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-template-namespace requires a value"
+      experiment_template_namespace="$2"
+      shift 2
+      ;;
+    --experiment-readiness-timeout)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-readiness-timeout requires a value"
+      experiment_readiness_timeout="$2"
+      shift 2
+      ;;
+    --experiment-soak-duration)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-soak-duration requires a value"
+      experiment_soak_duration="$2"
+      shift 2
+      ;;
+    --experiment-diagnostic-interval)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-diagnostic-interval requires a value"
+      experiment_diagnostic_interval="$2"
       shift 2
       ;;
     --enable-deployment)
@@ -205,6 +253,15 @@ for scan_namespace in "${scan_namespaces[@]}"; do
 done
 validate_dns_label "$recovery_template_namespace" ||
   bundle_die "invalid recovery template namespace: ${recovery_template_namespace}"
+validate_dns_label "$experiment_template_namespace" ||
+  bundle_die "invalid experiment template namespace: ${experiment_template_namespace}"
+for duration in "$experiment_readiness_timeout" "$experiment_soak_duration" "$experiment_diagnostic_interval"; do
+  [[ "$duration" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+    bundle_die "experiment durations must be positive values such as 10m"
+done
+[[ "$max_diagnostics_per_scan" =~ ^[0-9]+$ ]] &&
+  ((max_diagnostics_per_scan >= 1 && max_diagnostics_per_scan <= 1000)) ||
+  bundle_die "max diagnostics per scan must be between 1 and 1000"
 
 validate_listen_address() {
   local address="$1"
@@ -288,7 +345,7 @@ for scan_namespace in "${scan_namespaces[@]}"; do
       list infernexservices.infernex.infernex.io --namespace "$scan_namespace"
   )" == "yes" ]] ||
     bundle_die "kubeconfig cannot list InferNexService in ${scan_namespace}"
-  if [[ "$enable_deployment" == "true" ]]; then
+  if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
     for verb in create delete; do
       [[ "$(
         kubectl --kubeconfig "$kubeconfig_source" auth can-i \
@@ -303,6 +360,13 @@ for scan_namespace in "${scan_namespaces[@]}"; do
     )" == "yes" ]] ||
       bundle_die "kubeconfig cannot create recovery InferNexService in ${scan_namespace}"
   fi
+  if [[ "$enable_log_diagnostics" == "true" ]]; then
+    [[ "$(
+      kubectl --kubeconfig "$kubeconfig_source" auth can-i \
+        get pods --subresource=log --namespace "$scan_namespace"
+    )" == "yes" ]] ||
+      bundle_die "kubeconfig cannot read Pod logs in ${scan_namespace}"
+  fi
 done
 if [[ "$enable_recovery" == "true" ]]; then
   [[ "$(
@@ -311,6 +375,14 @@ if [[ "$enable_recovery" == "true" ]]; then
       --namespace "$recovery_template_namespace"
   )" == "yes" ]] ||
     bundle_die "kubeconfig cannot get recovery profiles in ${recovery_template_namespace}"
+fi
+if [[ "$enable_experiments" == "true" ]]; then
+  [[ "$(
+    kubectl --kubeconfig "$kubeconfig_source" auth can-i \
+      get infernexserviceconfigs.infernex.infernex.io \
+      --namespace "$experiment_template_namespace"
+  )" == "yes" ]] ||
+    bundle_die "kubeconfig cannot get experiment profiles in ${experiment_template_namespace}"
 fi
 
 service_user="infernex-agent"
@@ -510,6 +582,7 @@ agent_args=(
   "--dashboard-listen-address=${dashboard_listen_address}"
   "--kubeconfig=${installed_kubeconfig}"
   "--scan-namespaces=${scan_namespaces_csv}"
+  "--max-diagnostics-per-scan=${max_diagnostics_per_scan}"
 )
 if [[ -n "$openai_base_url" ]]; then
   agent_args+=(
@@ -554,7 +627,6 @@ fi
 if [[ "$enable_deployment" == "true" ]]; then
   agent_args+=(
     "--enable-deployment"
-    "--state-dir=${state_root}"
     "--deployment-readiness-timeout=${deployment_readiness_timeout}"
   )
 fi
@@ -564,6 +636,21 @@ if [[ "$enable_recovery" == "true" ]]; then
     "--recovery-template-namespace=${recovery_template_namespace}"
     "--recovery-min-critical-scans=${recovery_min_scans}"
   )
+fi
+if [[ "$enable_log_diagnostics" == "true" ]]; then
+  agent_args+=("--enable-log-diagnostics")
+fi
+if [[ "$enable_experiments" == "true" ]]; then
+  agent_args+=(
+    "--enable-experiments"
+    "--experiment-template-namespace=${experiment_template_namespace}"
+    "--experiment-readiness-timeout=${experiment_readiness_timeout}"
+    "--experiment-soak-duration=${experiment_soak_duration}"
+    "--experiment-diagnostic-interval=${experiment_diagnostic_interval}"
+  )
+fi
+if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
+  agent_args+=("--state-dir=${state_root}")
 fi
 
 temporary_runner="$(mktemp "${install_root}/bin/.run-agent.XXXXXX")"

@@ -36,6 +36,14 @@ supervisor:
   eventSinceMinutes: 60
   eventLimit: 25
   maxAnalysesPerScan: 10
+  # Global per-scan log collection budget during a widespread outage.
+  maxDiagnosticsPerScan: 10
+  # Pod logs can contain prompts and application data. Log diagnostics are
+  # therefore a separate opt-in even when the supervisor is enabled. Only
+  # Pods carrying the selected InferNexService owner label are read.
+  diagnostics:
+    logs:
+      enabled: false
   # Empty inherits rbac.targetNamespaces, then the Helm release namespace.
   namespaces: []
   analysis:
@@ -54,6 +62,16 @@ supervisor:
     enabled: false
     templateNamespace: infernex-bridge-system
     minCriticalScans: 3
+
+experiments:
+  # Progressive experiments require log diagnostics and namespace-scoped
+  # write RBAC. Each profile must be an administrator-approved sparse
+  # InferNexServiceConfig in templateNamespace.
+  enabled: false
+  templateNamespace: infernex-bridge-system
+  readinessTimeout: 20m
+  soakDuration: 5m
+  diagnosticInterval: 30s
 
 rbac:
   # Cluster-wide observation is deliberately opt-in.

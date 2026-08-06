@@ -26,6 +26,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 )
@@ -34,6 +35,7 @@ const (
 	defaultEventSinceMinutes = 60
 	defaultEventLimit        = 25
 	defaultMaxAnalyses       = 10
+	defaultMaxDiagnostics    = 10
 	defaultMinCriticalScans  = 3
 	maxIssueMessageRunes     = 512
 	maxIssueEvents           = 10
@@ -42,18 +44,21 @@ const (
 )
 
 type Config struct {
-	Namespaces         []string
-	Interval           time.Duration
-	EventSinceMinutes  int
-	EventLimit         int
-	MaxAnalysesPerScan int
-	MinCriticalScans   int
+	Namespaces            []string
+	Interval              time.Duration
+	EventSinceMinutes     int
+	EventLimit            int
+	MaxAnalysesPerScan    int
+	MaxDiagnosticsPerScan int
+	MinCriticalScans      int
+	Diagnoser             diagnostics.Diagnoser
 }
 
 type Scanner struct {
 	observer      observer.Observer
 	analyzer      Analyzer
 	remediator    Remediator
+	diagnoser     diagnostics.Diagnoser
 	store         *SnapshotStore
 	config        Config
 	now           func() time.Time
@@ -95,6 +100,9 @@ func New(
 	if config.MaxAnalysesPerScan <= 0 {
 		config.MaxAnalysesPerScan = defaultMaxAnalyses
 	}
+	if config.MaxDiagnosticsPerScan <= 0 {
+		config.MaxDiagnosticsPerScan = defaultMaxDiagnostics
+	}
 	if config.MinCriticalScans <= 0 {
 		config.MinCriticalScans = defaultMinCriticalScans
 	}
@@ -102,6 +110,7 @@ func New(
 		observer:      domainObserver,
 		analyzer:      analyzer,
 		remediator:    domainRemediator,
+		diagnoser:     config.Diagnoser,
 		store:         store,
 		config:        config,
 		now:           time.Now,
@@ -132,16 +141,19 @@ func (s *Scanner) ScanOnce(ctx context.Context) Snapshot {
 		Namespaces:  make([]NamespaceSnapshot, 0, len(s.config.Namespaces)),
 	}
 	analysesRemaining := s.config.MaxAnalysesPerScan
+	diagnosticsRemaining := s.config.MaxDiagnosticsPerScan
 	activeCacheKeys := make(map[string]struct{})
 
 	for _, namespace := range s.config.Namespaces {
-		namespaceSnapshot, usedAnalyses := s.scanNamespace(
+		namespaceSnapshot, usedAnalyses, usedDiagnostics := s.scanNamespace(
 			ctx,
 			namespace,
 			analysesRemaining,
+			diagnosticsRemaining,
 			activeCacheKeys,
 		)
 		analysesRemaining -= usedAnalyses
+		diagnosticsRemaining -= usedDiagnostics
 		snapshot.Namespaces = append(snapshot.Namespaces, namespaceSnapshot)
 	}
 	for key := range s.cache {
@@ -171,8 +183,9 @@ func (s *Scanner) scanNamespace(
 	ctx context.Context,
 	namespace string,
 	analysesRemaining int,
+	diagnosticsRemaining int,
 	activeCacheKeys map[string]struct{},
-) (NamespaceSnapshot, int) {
+) (NamespaceSnapshot, int, int) {
 	started := s.now().UTC()
 	result := NamespaceSnapshot{
 		Name:      namespace,
@@ -183,18 +196,26 @@ func (s *Scanner) scanNamespace(
 	if err != nil {
 		result.Error = boundedMessage(err.Error())
 		result.ScanMillis = s.now().UTC().Sub(started).Milliseconds()
-		return result, 0
+		return result, 0, 0
 	}
 	result.Total = list.TotalServices
 	result.Truncated = list.ServicesTruncated
 
 	usedAnalyses := 0
+	usedDiagnostics := 0
 	for _, service := range list.Services {
 		if err := ctx.Err(); err != nil {
 			result.Error = boundedMessage(err.Error())
 			break
 		}
-		serviceSnapshot := s.collectService(ctx, service)
+		serviceSnapshot, diagnosticAttempted := s.collectService(
+			ctx,
+			service,
+			diagnosticsRemaining-usedDiagnostics > 0,
+		)
+		if diagnosticAttempted {
+			usedDiagnostics++
+		}
 		cacheKey := service.Namespace + "/" + service.Name
 		activeCacheKeys[cacheKey] = struct{}{}
 		if len(serviceSnapshot.Issues) > 0 && s.analyzer != nil {
@@ -218,13 +239,14 @@ func (s *Scanner) scanNamespace(
 		result.Services = append(result.Services, serviceSnapshot)
 	}
 	result.ScanMillis = s.now().UTC().Sub(started).Milliseconds()
-	return result, usedAnalyses
+	return result, usedAnalyses, usedDiagnostics
 }
 
 func (s *Scanner) collectService(
 	ctx context.Context,
 	summary observer.ServiceSummary,
-) ServiceSnapshot {
+	allowDiagnostics bool,
+) (ServiceSnapshot, bool) {
 	result := ServiceSnapshot{
 		Detail: observer.ServiceDetail{Service: summary},
 		Topology: observer.Topology{
@@ -273,8 +295,34 @@ func (s *Scanner) collectService(
 			result.Issues = append(result.Issues, detectEventIssues(events)...)
 		}
 	}
+	diagnosticAttempted := false
+	if s.diagnoser != nil && (len(result.Issues) > 0 || !summary.Ready) && !allowDiagnostics {
+		result.Issues = append(result.Issues, Issue{
+			Severity: SeverityInfo,
+			Code:     "DIAGNOSTICS_DEFERRED",
+			Message:  "log diagnostics were deferred by the per-scan collection budget",
+			Resource: "InferNexService/" + summary.Name,
+		})
+	}
+	if s.diagnoser != nil && (len(result.Issues) > 0 || !summary.Ready) && allowDiagnostics {
+		diagnosticAttempted = true
+		report, diagnosticErr := s.diagnoser.Diagnose(ctx, diagnostics.Request{
+			Namespace:    summary.Namespace,
+			Name:         summary.Name,
+			SinceMinutes: s.config.EventSinceMinutes,
+		})
+		if diagnosticErr != nil {
+			result.Issues = append(
+				result.Issues,
+				issueForError("DIAGNOSTICS_FAILED", "InferNexService", diagnosticErr),
+			)
+		} else {
+			result.Diagnostics = &report
+			result.Issues = append(result.Issues, issuesForIncidents(report.Incidents)...)
+		}
+	}
 	sortIssues(result.Issues)
-	return result
+	return result, diagnosticAttempted
 }
 
 func (s *Scanner) evaluateRemediation(
@@ -539,7 +587,46 @@ func analysisRequest(service ServiceSnapshot) AnalysisRequest {
 			Component: event.Component,
 		})
 	}
+	if service.Diagnostics != nil {
+		for index, incident := range service.Diagnostics.Incidents {
+			if index >= 20 {
+				break
+			}
+			request.Incidents = append(request.Incidents, AnalysisIncident{
+				RootCategory: incident.RootCategory,
+				Severity:     Severity(incident.Severity),
+				Confidence:   incident.Confidence,
+				Components:   append([]string(nil), incident.Components...),
+				Symptoms:     append([]string(nil), incident.Symptoms...),
+			})
+		}
+	}
 	return request
+}
+
+func issuesForIncidents(incidents []diagnostics.Incident) []Issue {
+	issues := make([]Issue, 0, len(incidents))
+	for index, incident := range incidents {
+		if index >= 10 {
+			break
+		}
+		severity := SeverityWarning
+		if incident.Severity == diagnostics.SeverityCritical {
+			severity = SeverityCritical
+		}
+		component := ""
+		if len(incident.Components) > 0 {
+			component = strings.Join(incident.Components, ",")
+		}
+		issues = append(issues, Issue{
+			Severity:  severity,
+			Code:      "DIAGNOSTIC_" + strings.ToUpper(strings.ReplaceAll(incident.RootCategory, "-", "_")),
+			Message:   boundedMessage(incident.Recommendation),
+			Component: component,
+			Resource:  "Incident/" + incident.ID,
+		})
+	}
+	return issues
 }
 
 func summarizeSnapshot(namespaces []NamespaceSnapshot) Summary {

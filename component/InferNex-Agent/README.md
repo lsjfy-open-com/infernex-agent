@@ -78,6 +78,31 @@ The supervisor is advisory and read-only by default. Enabling the existing
 deployment catalog does not let model output bypass its fixed catalog,
 ownership checks, namespace RBAC, or explicit confirmation contract.
 
+When bounded log diagnostics are explicitly enabled, degraded services also
+receive redacted current/previous container-log evidence and a cross-node
+incident timeline for NPU/CANN, HCCL/RDMA, Mooncake/KV transport, vLLM worker,
+stream interruption, invalid UTF-8/output corruption, OOM, and timeout errors.
+The optional MCP tool is `infernex_diagnose_service`; raw unmatched logs are
+not retained. Continuous scans collect logs for at most 10 degraded services
+per pass by default, so a widespread outage does not cause unbounded log API
+traffic.
+
+### Progressive single-feature experiments
+
+An additional opt-in controller turns an approved sequence of sparse
+`InferNexServiceConfig` feature profiles into a durable experiment. Each stage
+keeps the stable service, prepends exactly one feature profile, and creates a
+separate candidate through the existing Bridge API. Ready/current-generation,
+baseline health, candidate-vs-baseline diagnostic comparison, and soak time are
+mandatory gates. A regression or timeout deletes only the exact owned current
+candidate; completed stages become the next stable baseline.
+
+It publishes `infernex_start_experiment`, `infernex_get_experiment`, and
+`infernex_list_experiments`, plus `/api/v1/experiments` on the dashboard. It
+does not generate profiles, replay inference traffic, switch production
+traffic, or delete passed candidates. See the
+[progressive experiment and cross-node diagnostics guide](docs/progressive-experiments-zh.md).
+
 ### Guarded automatic recovery service
 
 Automatic recovery is a separate, deterministic, double-opt-in path. It is
@@ -307,6 +332,7 @@ Product documentation:
 
 - [Product guide and acceptance](docs/product-guide-zh.md)
 - [Product design and failure semantics](docs/product-design-zh.md)
+- [Progressive experiments and cross-node diagnostics](docs/progressive-experiments-zh.md)
 - [Change safety, backup, and rollback](docs/change-safety-zh.md)
 - [Model configuration lifecycle](docs/model-configuration-zh.md)
 - [Security and capability boundaries](docs/security-boundaries-zh.md)
@@ -357,6 +383,18 @@ To enable a pre-approved recovery profile, add:
   --set supervisor.remediation.enabled=true \
   --set-string supervisor.remediation.templateNamespace=infernex-bridge-system
 ```
+
+To enable bounded log diagnostics and progressive experiments, add:
+
+```bash
+  --set supervisor.diagnostics.logs.enabled=true \
+  --set experiments.enabled=true \
+  --set-string experiments.templateNamespace=infernex-bridge-system \
+  --set changeSafety.persistence.enabled=true
+```
+
+Experiments require namespace-scoped RBAC and spare capacity for a parallel
+candidate. They never switch traffic automatically.
 
 The dashboard is then available at:
 

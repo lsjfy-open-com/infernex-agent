@@ -13,6 +13,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,8 +22,18 @@ import (
 	"testing"
 	"time"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
+
+type experimentReaderStub struct{}
+
+func (experimentReaderStub) List(context.Context) ([]experiment.Plan, error) {
+	return []experiment.Plan{{
+		ID: "experiment-1", Status: experiment.PlanStatusRunning, StableService: "qwen-stable",
+		Stages: []experiment.Stage{{FeatureProfile: "enable-mooncake", Status: experiment.StageStatusSoaking}},
+	}}, nil
+}
 
 func TestDashboardServesUIAndReadinessSnapshot(t *testing.T) {
 	store := supervisor.NewSnapshotStore("test-version", time.Minute, false)
@@ -65,5 +76,24 @@ func TestDashboardServesUIAndReadinessSnapshot(t *testing.T) {
 	if !strings.Contains(string(body), "InferNex <span>Agent</span>") ||
 		!strings.Contains(string(body), "/api/v1/snapshot") {
 		t.Fatal("dashboard page is missing expected content")
+	}
+}
+
+func TestDashboardServesExperimentState(t *testing.T) {
+	store := supervisor.NewSnapshotStore("test-version", time.Minute, false)
+	handler := New(store, WithExperiments(experimentReaderStub{}))
+
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/experiments", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("experiments status = %d, body = %s", response.Code, response.Body.String())
+	}
+	var plans []experiment.Plan
+	if err := json.NewDecoder(response.Body).Decode(&plans); err != nil {
+		t.Fatalf("decode experiments: %v", err)
+	}
+	if len(plans) != 1 || plans[0].StableService != "qwen-stable" ||
+		len(plans[0].Stages) != 1 || plans[0].Stages[0].FeatureProfile != "enable-mooncake" {
+		t.Fatalf("plans = %#v", plans)
 	}
 }

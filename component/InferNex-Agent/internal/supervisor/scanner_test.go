@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 )
@@ -54,6 +55,55 @@ type fakeAnalyzer struct {
 
 type fakeRemediator struct {
 	calls int
+}
+
+type fakeDiagnoser struct {
+	calls int
+}
+
+type budgetObserver struct{}
+
+func (budgetObserver) ListServices(_ context.Context, namespace string) (observer.ServiceList, error) {
+	return observer.ServiceList{
+		Namespace: namespace, TotalServices: 2,
+		Services: []observer.ServiceSummary{
+			{Namespace: namespace, Name: "first", Ready: false, Generation: 1, ObservedGeneration: 1},
+			{Namespace: namespace, Name: "second", Ready: false, Generation: 1, ObservedGeneration: 1},
+		},
+	}, nil
+}
+
+func (budgetObserver) InspectService(_ context.Context, namespace, name string) (observer.ServiceDetail, error) {
+	return observer.ServiceDetail{Service: observer.ServiceSummary{
+		Namespace: namespace, Name: name, Ready: false, Generation: 1, ObservedGeneration: 1,
+	}}, nil
+}
+
+func (budgetObserver) GetTopology(_ context.Context, namespace, name string) (observer.Topology, error) {
+	return observer.Topology{
+		Service:   observer.ServiceSummary{Namespace: namespace, Name: name, Ready: false},
+		Workloads: []observer.WorkloadSummary{}, Pods: []observer.PodSummary{},
+	}, nil
+}
+
+func (budgetObserver) GetEvents(_ context.Context, namespace, name string, since, _ int) (observer.EventEvidence, error) {
+	return observer.EventEvidence{
+		Service:      observer.ServiceReference{Namespace: namespace, Name: name},
+		SinceMinutes: since, Events: []observer.EventSummary{},
+	}, nil
+}
+
+func (f *fakeDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (diagnostics.Report, error) {
+	f.calls++
+	return diagnostics.Report{
+		Service: diagnostics.ServiceReference{Namespace: request.Namespace, Name: request.Name},
+		Incidents: []diagnostics.Incident{{
+			ID: "npu-stream-1", RootCategory: "npu-device-failure",
+			Severity: diagnostics.SeverityCritical, Confidence: "high",
+			Components: []string{"npu-device-plugin", "engine-pd-decode"},
+			Symptoms:   []string{"stream-interrupted"},
+		}},
+	}, nil
 }
 
 func (f *fakeRemediator) EnsureRecovery(
@@ -127,11 +177,13 @@ func TestScannerBuildsSnapshotAndCachesUnchangedAnalysis(t *testing.T) {
 	}
 	domainAnalyzer := &fakeAnalyzer{}
 	domainRemediator := &fakeRemediator{}
+	domainDiagnoser := &fakeDiagnoser{}
 	store := NewSnapshotStore("test", time.Minute, true)
 	scanner, err := New(domainObserver, domainAnalyzer, domainRemediator, store, Config{
 		Namespaces:       []string{"models", "models"},
 		Interval:         time.Minute,
 		MinCriticalScans: 2,
+		Diagnoser:        domainDiagnoser,
 	})
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
@@ -152,6 +204,20 @@ func TestScannerBuildsSnapshotAndCachesUnchangedAnalysis(t *testing.T) {
 	}
 	if domainAnalyzer.calls != 1 {
 		t.Fatalf("analyzer calls = %d, want 1", domainAnalyzer.calls)
+	}
+	if domainDiagnoser.calls != 1 || serviceSnapshot.Diagnostics == nil ||
+		len(serviceSnapshot.Diagnostics.Incidents) != 1 {
+		t.Fatalf("diagnostics = %#v, calls = %d", serviceSnapshot.Diagnostics, domainDiagnoser.calls)
+	}
+	foundDiagnosticIssue := false
+	for _, issue := range serviceSnapshot.Issues {
+		if issue.Code == "DIAGNOSTIC_NPU_DEVICE_FAILURE" {
+			foundDiagnosticIssue = true
+			break
+		}
+	}
+	if !foundDiagnosticIssue {
+		t.Fatalf("diagnostic issue missing: %#v", serviceSnapshot.Issues)
 	}
 	if serviceSnapshot.Remediation == nil ||
 		serviceSnapshot.Remediation.Status != "waiting" ||
@@ -184,5 +250,40 @@ func TestNewScannerRejectsMissingNamespaces(t *testing.T) {
 	)
 	if err == nil {
 		t.Fatal("New unexpectedly accepted an empty namespace list")
+	}
+}
+
+func TestScannerBoundsLogDiagnosticsPerScan(t *testing.T) {
+	diagnoser := &fakeDiagnoser{}
+	scanner, err := New(
+		budgetObserver{},
+		nil,
+		nil,
+		NewSnapshotStore("test", time.Minute, false),
+		Config{
+			Namespaces:            []string{"models"},
+			Interval:              time.Minute,
+			MaxDiagnosticsPerScan: 1,
+			Diagnoser:             diagnoser,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := scanner.ScanOnce(context.Background())
+	if diagnoser.calls != 1 {
+		t.Fatalf("diagnostic calls = %d, want 1", diagnoser.calls)
+	}
+	if len(snapshot.Namespaces) != 1 || len(snapshot.Namespaces[0].Services) != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	deferred := false
+	for _, issue := range snapshot.Namespaces[0].Services[1].Issues {
+		if issue.Code == "DIAGNOSTICS_DEFERRED" {
+			deferred = true
+		}
+	}
+	if !deferred {
+		t.Fatalf("second service was not deferred: %#v", snapshot.Namespaces[0].Services[1].Issues)
 	}
 }

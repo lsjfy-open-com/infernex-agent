@@ -261,7 +261,26 @@ Helm values、命令行参数或 Dashboard。若 Secret 已由内部密钥系统
 Degraded 时，Agent 自动删除且只删除本次新建的 `InferNexService`。详细流程、
 恢复命令和边界见[变更保护、备份与回退](change-safety-zh.md)。
 
-### 5.5 多 master 或使用内网镜像仓库
+### 5.5 启用跨节点诊断和渐进实验
+
+以下命令会启用有界日志读取、持久实验计划和并行候选。必须预留候选所需 NPU：
+
+```bash
+./bin/install-agent.sh \
+  --target-node master-01 \
+  --target-namespace kserve \
+  --dashboard-cidr 10.20.0.0/16 \
+  --runtime ctr \
+  --enable-experiments \
+  --experiment-template-namespace infernex-bridge-system \
+  --state-storage-class local-path
+```
+
+profile 由现有 InferNex 配置流程创建并带批准标签；Agent 不生成 vLLM、
+vLLM Ascend 或 Mooncake 参数。完整设计、门禁和边界见
+[渐进式特性实验与跨节点故障关联](progressive-experiments-zh.md)。
+
+### 5.6 多 master 或使用内网镜像仓库
 
 如果 Agent 可能被调度到多个 control-plane 节点，选择一种方式：
 

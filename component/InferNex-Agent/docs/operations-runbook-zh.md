@@ -16,6 +16,7 @@ curl --fail http://127.0.0.1:8080/healthz
 curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8081/readyz
 curl --fail http://127.0.0.1:8081/api/v1/snapshot
+curl --fail http://127.0.0.1:8081/api/v1/experiments
 ```
 
 如果使用非默认监听地址，应替换为实际管理 IP 和端口。
@@ -158,6 +159,9 @@ ServiceAccount Token Secret。不要在未确认新服务健康前删除旧凭�
 | 模型超时 | 网络、模型负载、timeout | 调整端点容量或超时 |
 | 没有模型分析 | 服务是否存在问题 | 健康服务不会调用模型 |
 | 重复恢复服务 | 是否运行多个恢复实例 | 一个命名空间只保留一个恢复控制实例 |
+| 实验一直 waiting-ready | 候选状态、NPU 余量、Bridge Event | 修复容量/配置；超时后确认候选已精确回退 |
+| 实验因日志回归停止 | comparison 和 incident 时间线 | 从最早 NPU/HCCL/Mooncake 证据开始，不先处理下游 stream 症状 |
+| 诊断没有乱码证据 | 框架/代理是否记录原始错误 | 当前不主动发请求；先启用安全的客户端/网关错误日志 |
 
 ## 10. 建议监控项
 
@@ -169,6 +173,7 @@ ServiceAccount Token Secret。不要在未确认新服务健康前删除旧凭�
 - 临界问题服务数量；
 - 模型请求错误和超时日志；
 - 自动恢复尝试、拒绝和创建结果；
+- 实验阶段耗时、回退结果、候选相对基线新增的临界类别；
 - kubeconfig/API Key 轮换到期时间；
 - 宿主机磁盘、内存和网络可达性。
 

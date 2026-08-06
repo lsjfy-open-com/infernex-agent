@@ -38,6 +38,8 @@ API 和控制器完成。
 | 固定目录部署工具 | 关闭 | 仅创建/删除受 Agent 所有权保护的 `InferNexService` |
 | 安装前备份和部署失败回退 | 写能力启用时强制 | 持久变更记录、超时/Degraded 自动撤销本次新建 |
 | 受控自动恢复 | 关闭 | 多重显式授权后创建新的恢复服务 |
+| 跨节点日志关联诊断 | 关闭 | 有界读取受管 Pod 当前/上一次日志，脱敏并建立故障时间线 |
+| 单特性渐进实验 | 关闭 | 基线加一个批准 profile，自动门禁并精确回退当前候选 |
 
 模型不是产品启动条件。未配置模型时，扫描、规则诊断、MCP、Dashboard 和
 JSON API 均正常工作。模型只在服务存在问题时接收受限证据并产生建议。
@@ -53,6 +55,10 @@ MCP 工具契约：
 | `infernex_deploy_model` | 可选写 | 从编译内置目录创建受控 `InferNexService` |
 | `infernex_delete_model` | 可选写 | 删除带匹配 Agent 所有权的目录服务 |
 | `infernex_get_change` | 可选只读 | 查询部署提交、失败和自动回退状态 |
+| `infernex_diagnose_service` | 可选只读 | 关联 NPU、HCCL、Mooncake、engine、stream 和乱码证据 |
+| `infernex_start_experiment` | 可选写 | 从稳定基线启动按顺序、单特性候选计划 |
+| `infernex_get_experiment` | 可选只读 | 查询阶段、比较和回退状态 |
+| `infernex_list_experiments` | 可选只读 | 列出最近的持久实验计划 |
 
 自动恢复属于持续 supervisor 能力，不向 MCP 暴露通用恢复写工具。
 
@@ -153,6 +159,7 @@ sudo /opt/infernex-agent/bin/configure-model.sh --show
 curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8081/readyz
 curl --fail http://127.0.0.1:8081/api/v1/snapshot
+curl --fail http://127.0.0.1:8081/api/v1/experiments
 ```
 
 宿主机配置位置：
@@ -176,11 +183,14 @@ curl --fail http://127.0.0.1:8081/api/v1/snapshot
 5. 未启用写能力时不存在 mutation RBAC；
 6. 配置模型时 `configure-model.sh --test` 成功；
 7. 断开模型端点后，规则扫描和 Dashboard 仍持续工作；
-8. 凭据文件权限、备份、轮换和卸载策略符合内部要求。
+8. 凭据文件权限、备份、轮换和卸载策略符合内部要求；
+9. 如启用实验，确认状态目录持久、模板已审批、集群有并行候选容量；
+10. 人为注入候选日志回归时，只删除当前候选且稳定基线仍为 Ready。
 
 ## 9. 文档地图
 
 - [产品设计](product-design-zh.md)
+- [渐进式特性实验与跨节点故障关联](progressive-experiments-zh.md)
 - [变更保护、备份与回退](change-safety-zh.md)
 - [模型配置](model-configuration-zh.md)
 - [安全与能力边界](security-boundaries-zh.md)

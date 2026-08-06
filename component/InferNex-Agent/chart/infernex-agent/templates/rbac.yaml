@@ -1,6 +1,6 @@
 {{- $root := . }}
-{{- if and .Values.rbac.clusterWide (or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled) }}
-{{- fail "deployment and auto-remediation require namespace-scoped RBAC; set rbac.clusterWide=false and list targetNamespaces" }}
+{{- if and .Values.rbac.clusterWide (or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled .Values.experiments.enabled) }}
+{{- fail "deployment, auto-remediation, and experiments require namespace-scoped RBAC; set rbac.clusterWide=false and list targetNamespaces" }}
 {{- end }}
 {{- if .Values.rbac.clusterWide }}
 apiVersion: rbac.authorization.k8s.io/v1
@@ -22,6 +22,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list"]
+  {{- if .Values.supervisor.diagnostics.logs.enabled }}
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["list"]
@@ -60,12 +65,12 @@ rules:
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs: ["get", "list"]
-  {{- if or $root.Values.tools.deployment.enabled $root.Values.supervisor.remediation.enabled }}
+  {{- if or $root.Values.tools.deployment.enabled $root.Values.supervisor.remediation.enabled $root.Values.experiments.enabled }}
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs:
       - create
-      {{- if $root.Values.tools.deployment.enabled }}
+      {{- if or $root.Values.tools.deployment.enabled $root.Values.experiments.enabled }}
       - delete
       {{- end }}
   {{- end }}
@@ -78,6 +83,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["list"]
+  {{- if $root.Values.supervisor.diagnostics.logs.enabled }}
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["list"]
@@ -97,6 +107,36 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "infernex-agent.serviceAccountName" $root }}
     namespace: {{ $root.Release.Namespace }}
+{{- end }}
+{{- if .Values.experiments.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-experiment-profiles
+  namespace: {{ .Values.experiments.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexserviceconfigs"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-experiment-profiles
+  namespace: {{ .Values.experiments.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "infernex-agent.fullname" . }}-experiment-profiles
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "infernex-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
 {{- end }}
 {{- end }}
 {{- if .Values.supervisor.remediation.enabled }}

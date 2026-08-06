@@ -29,6 +29,11 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 - 任意 patch/delete Kubernetes 对象；
 - shell、SSH 或宿主机命令执行。
 
+启用日志诊断时只额外授予目标命名空间 `get pods/log`。采集器仍通过
+`infernex.io/owner` 标签限定一个服务，限制 Pod、时间窗、尾部行数和字节数，
+只保留匹配的分类证据。Pod 日志可能包含 Prompt、响应和业务数据，因此该权限
+默认关闭；常见凭据脱敏不能替代组织的数据分级和访问审计。
+
 长期 systemd 服务不得使用 `/etc/kubernetes/admin.conf`。
 
 ## 3. 网络边界
@@ -100,6 +105,13 @@ ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允�
 恢复只创建一个新 `InferNexService`，不覆盖源服务、不删除源服务、不切流，
 也不创建或修改恢复 profile。
 
+### 渐进实验
+
+实验需要显式启用、命名空间级 `InferNexService create/delete`、日志读取和模板
+命名空间 `InferNexServiceConfig get`。输入只能是现有稳定服务、候选名前缀和带
+批准标签的 profile 名称；不接受 YAML、镜像、URL、命令或任意 patch。Agent
+不修改/删除基线、不切流，回退前必须匹配实验 ID、`changeId` 和所有权。
+
 ## 7. 宿主机进程隔离
 
 systemd 服务：
@@ -125,7 +137,8 @@ systemd 服务：
 - 告警通知渠道；
 - 自动流量切换和业务回滚；
 - 企业 Secret Manager 集成；
-- openEuler/A2 硬件诊断。
+- openEuler/A2 硬件诊断；
+- 主动推理请求、SSE/JSON 完整性探针和性能基线比较；
 
 因此生产部署必须由外部网络边界保护入口，并由现有 IAM、堡垒机、日志平台、
 告警平台和 InferNex 控制器补齐相应职责。

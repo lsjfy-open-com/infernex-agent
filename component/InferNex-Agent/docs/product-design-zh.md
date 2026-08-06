@@ -66,6 +66,8 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 | MCP server | 显式工具参数 | 有界领域结果 | 无 |
 | Catalog deployer | 固定 catalog ID | Agent 所有的 `InferNexService` | Kubernetes CR |
 | Remediator | 批准模板和连续故障证据 | 新的恢复 `InferNexService` | Kubernetes CR |
+| Diagnostics | 受管 Pod 日志和 Event | 脱敏证据、跨节点 incident 时间线 | 无 |
+| Experiment controller | 稳定基线和批准特性序列 | 独立候选、阶段门禁和精确回退 | 追加写计划/变更日志 |
 
 重启 Agent 会清空分析缓存和当前内存快照，下一轮扫描会自动重建。权威状态
 始终位于 Kubernetes/InferNex，而不在本地 Agent 数据库中。
@@ -147,6 +149,9 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
   Degraded 时仅删除同一 `change-id` 创建的资源；
 - 未完成部署在 Agent 重启后继续监控，终态可通过 `infernex_get_change` 查询。
 - 自动恢复服务也使用同一追加写变更记录和 `change-id`，Dashboard 显示该关联 ID。
+- 渐进实验不修改基线；每阶段先持久化，再创建独立候选，仅在所有权和
+  `change-id` 匹配时回退当前候选；重启后恢复未完成计划。
+- 候选相对基线新增临界日志类别、Degraded、丢失 Ready 或超时都会停止后续阶段。
 
 ## 9. 扩展原则
 

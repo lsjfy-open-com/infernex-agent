@@ -126,6 +126,16 @@ sudo ./bin/create-kubeconfig.sh \
 如需固定 catalog 部署/删除工具，使用 `--enable-deployment`。不要授予
 cluster-admin，也不需要读取 Secret、Node 或创建原始 Deployment。
 
+如需跨节点日志诊断和渐进实验：
+
+```bash
+--enable-experiments \
+--experiment-template-namespace infernex-bridge-system
+```
+
+实验会隐式启用日志诊断，并增加 `pods/log get`、候选
+`InferNexService create/delete` 和批准 profile 的读取权限。
+
 生成 kubeconfig 内含长期 ServiceAccount Token，权限虽然已收窄，仍应：
 
 - 文件权限保持 `0600`；

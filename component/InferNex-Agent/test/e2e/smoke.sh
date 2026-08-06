@@ -6,6 +6,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 component_dir="${repo_root}/component/InferNex-Agent"
 chart_dir="${component_dir}/chart/infernex-agent"
 fixture_file="${component_dir}/test/e2e/fixtures.yaml"
+config_crd="${repo_root}/component/InferNex-Bridge/config/crd/bases/infernex.infernex.io_infernexserviceconfigs.yaml"
 
 agent_namespace="${AGENT_NAMESPACE:-infernex-system}"
 model_namespace="models"
@@ -15,6 +16,21 @@ image_tag="${AGENT_IMAGE_TAG:-e2e}"
 local_port="${AGENT_LOCAL_PORT:-18080}"
 dashboard_local_port="${AGENT_DASHBOARD_LOCAL_PORT:-18081}"
 
+kubectl apply --server-side -f "${config_crd}"
+config_crd_established=""
+for _ in $(seq 1 60); do
+  config_crd_established="$(
+    kubectl get crd infernexserviceconfigs.infernex.infernex.io \
+      -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' \
+      2>/dev/null || true
+  )"
+  [[ "$config_crd_established" == "True" ]] && break
+  sleep 1
+done
+[[ "$config_crd_established" == "True" ]] || {
+  echo "InferNexServiceConfig CRD was not Established within 60s" >&2
+  exit 1
+}
 kubectl apply -f "${fixture_file}"
 
 helm upgrade --install "${release_name}" "${chart_dir}" \
@@ -24,7 +40,13 @@ helm upgrade --install "${release_name}" "${chart_dir}" \
   --set "image.tag=${image_tag}" \
   --set "image.pullPolicy=Never" \
   --set "rbac.targetNamespaces[0]=${model_namespace}" \
-  --set "supervisor.scanInterval=5s"
+  --set "supervisor.scanInterval=5s" \
+  --set "supervisor.diagnostics.logs.enabled=true" \
+  --set "experiments.enabled=true" \
+  --set "experiments.templateNamespace=infernex-bridge-system" \
+  --set "experiments.readinessTimeout=45s" \
+  --set "experiments.soakDuration=1s" \
+  --set "experiments.diagnosticInterval=1s"
 
 kubectl -n "${agent_namespace}" rollout status \
   "deployment/${release_name}" \
@@ -60,9 +82,27 @@ count: 1
 EOF
 
 service_account="system:serviceaccount:${agent_namespace}:${release_name}"
-test "$(kubectl auth can-i list events --as="${service_account}" -n "${model_namespace}")" = "yes"
-test "$(kubectl auth can-i get secrets --as="${service_account}" -n "${model_namespace}")" = "no"
-test "$(kubectl auth can-i create deployments --as="${service_account}" -n "${model_namespace}")" = "no"
+assert_can_i() {
+  local expected="$1"
+  local description="$2"
+  shift 2
+  local actual="no"
+  if kubectl auth can-i "$@" --as="${service_account}" --quiet; then
+    actual="yes"
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "RBAC assertion failed: ${description}; expected=${expected} actual=${actual}" >&2
+    return 1
+  fi
+}
+
+assert_can_i yes "list Events" list events -n "${model_namespace}"
+assert_can_i yes "read Pod logs" get pods --subresource=log -n "${model_namespace}"
+assert_can_i yes "create experiment candidates" create infernexservices.infernex.infernex.io -n "${model_namespace}"
+assert_can_i yes "delete experiment candidates" delete infernexservices.infernex.infernex.io -n "${model_namespace}"
+assert_can_i yes "read approved feature profiles" get infernexserviceconfigs.infernex.infernex.io -n infernex-bridge-system
+assert_can_i no "read Secrets" get secrets -n "${model_namespace}"
+assert_can_i no "create Deployments" create deployments -n "${model_namespace}"
 
 port_forward_log="$(mktemp)"
 dashboard_port_forward_log="$(mktemp)"
@@ -155,5 +195,107 @@ jq -e '
     .name == "smoke"
   )
 ' <<<"${events_result}" >/dev/null
+
+diagnostic_result="$(mcp_call infernex_diagnose_service '{"namespace":"models","name":"smoke","sinceMinutes":60}')"
+jq -e '
+  any(
+    .result.structuredContent.incidents[];
+    .rootCategory == "kubernetes-warning" and .severity == "warning"
+  )
+' <<<"${diagnostic_result}" >/dev/null
+
+start_result="$(mcp_call infernex_start_experiment '{"namespace":"models","baselineName":"smoke","candidatePrefix":"smoke-pass","featureProfiles":["smoke-feature-mooncake"],"confirm":true}')"
+experiment_id="$(jq -er '.result.structuredContent.id' <<<"${start_result}")"
+for _ in $(seq 1 30); do
+  if kubectl -n "${model_namespace}" get infernexservice smoke-pass-s01 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+kubectl -n "${model_namespace}" get infernexservice smoke-pass-s01 >/dev/null
+candidate_generation="$(kubectl -n "${model_namespace}" get infernexservice smoke-pass-s01 -o jsonpath='{.metadata.generation}')"
+kubectl -n "${model_namespace}" patch infernexservice smoke-pass-s01 \
+  --subresource=status \
+  --type=merge \
+  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation}}}"
+
+pass_plan=""
+for _ in $(seq 1 30); do
+  pass_plan="$(mcp_call infernex_get_experiment "$(jq -nc --arg id "${experiment_id}" '{experimentId:$id}')")"
+  [[ "$(jq -r '.result.structuredContent.status' <<<"${pass_plan}")" == "completed" ]] && break
+  sleep 1
+done
+jq -e '
+  .result.structuredContent.status == "completed" and
+  .result.structuredContent.stableService == "smoke-pass-s01" and
+  .result.structuredContent.stages[0].status == "passed"
+' <<<"${pass_plan}" >/dev/null
+kubectl -n "${model_namespace}" get infernexservice smoke smoke-pass-s01 >/dev/null
+
+rollback_result="$(mcp_call infernex_start_experiment '{"namespace":"models","baselineName":"smoke","candidatePrefix":"smoke-fail","featureProfiles":["smoke-feature-mooncake"],"confirm":true}')"
+rollback_experiment_id="$(jq -er '.result.structuredContent.id' <<<"${rollback_result}")"
+for _ in $(seq 1 30); do
+  if kubectl -n "${model_namespace}" get infernexservice smoke-fail-s01 >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+candidate_uid="$(kubectl -n "${model_namespace}" get infernexservice smoke-fail-s01 -o jsonpath='{.metadata.uid}')"
+candidate_generation="$(kubectl -n "${model_namespace}" get infernexservice smoke-fail-s01 -o jsonpath='{.metadata.generation}')"
+failure_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+kubectl create -f - <<EOF
+apiVersion: v1
+kind: Event
+metadata:
+  name: smoke-fail-npu
+  namespace: ${model_namespace}
+involvedObject:
+  apiVersion: infernex.infernex.io/v1alpha1
+  kind: InferNexService
+  name: smoke-fail-s01
+  namespace: ${model_namespace}
+  uid: ${candidate_uid}
+type: Warning
+reason: NPUDeviceLost
+message: NPU device lost after ACL error
+source:
+  component: infernex-agent-e2e
+firstTimestamp: ${failure_time}
+lastTimestamp: ${failure_time}
+count: 1
+EOF
+kubectl -n "${model_namespace}" patch infernexservice smoke-fail-s01 \
+  --subresource=status \
+  --type=merge \
+  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation}}}"
+
+failed_plan=""
+for _ in $(seq 1 30); do
+  failed_plan="$(mcp_call infernex_get_experiment "$(jq -nc --arg id "${rollback_experiment_id}" '{experimentId:$id}')")"
+  [[ "$(jq -r '.result.structuredContent.status' <<<"${failed_plan}")" == "failed" ]] && break
+  sleep 1
+done
+jq -e '
+  .result.structuredContent.status == "failed" and
+  .result.structuredContent.stableService == "smoke" and
+  .result.structuredContent.stages[0].status == "rolled-back" and
+  any(.result.structuredContent.stages[0].comparison.regressionCategories[]; . == "npu-device-failure")
+' <<<"${failed_plan}" >/dev/null
+if kubectl -n "${model_namespace}" get infernexservice smoke-fail-s01 >/dev/null 2>&1; then
+  echo "failed experiment candidate was not rolled back" >&2
+  exit 1
+fi
+kubectl -n "${model_namespace}" get infernexservice smoke >/dev/null
+
+experiment_snapshot="$(curl --fail --silent --show-error "http://127.0.0.1:${dashboard_local_port}/api/v1/experiments")"
+jq -e --arg pass "${experiment_id}" --arg failed "${rollback_experiment_id}" '
+  any(.[]; .id == $pass and .status == "completed") and
+  any(.[]; .id == $failed and .status == "failed")
+' <<<"${experiment_snapshot}" >/dev/null
+
+# A passed candidate is deliberately retained in production. This smoke test
+# shares its namespace with the following tiny-model E2E, so remove only the
+# synthetic candidate after all retention and dashboard assertions complete.
+kubectl -n "${model_namespace}" delete infernexservice smoke-pass-s01 --wait=true
 
 echo "InferNex Agent Kind smoke test passed"

@@ -13,9 +13,11 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -23,7 +25,27 @@ type SnapshotReader interface {
 	Load() supervisor.Snapshot
 }
 
-func New(reader SnapshotReader) http.Handler {
+type ExperimentReader interface {
+	List(context.Context) ([]experiment.Plan, error)
+}
+
+type options struct {
+	experiments ExperimentReader
+}
+
+type Option func(*options)
+
+func WithExperiments(reader ExperimentReader) Option {
+	return func(options *options) {
+		options.experiments = reader
+	}
+}
+
+func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
+	configuration := options{}
+	for _, option := range optionFunctions {
+		option(&configuration)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/" {
@@ -41,6 +63,24 @@ func New(reader SnapshotReader) http.Handler {
 		encoder.SetEscapeHTML(true)
 		if err := encoder.Encode(reader.Load()); err != nil {
 			http.Error(response, "encode snapshot", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("/api/v1/experiments", func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "no-store")
+		plans := []experiment.Plan{}
+		if configuration.experiments != nil {
+			var err error
+			plans, err = configuration.experiments.List(request.Context())
+			if err != nil {
+				http.Error(response, "list experiments", http.StatusInternalServerError)
+				return
+			}
+		}
+		encoder := json.NewEncoder(response)
+		encoder.SetEscapeHTML(true)
+		if err := encoder.Encode(plans); err != nil {
+			http.Error(response, "encode experiments", http.StatusInternalServerError)
 		}
 	})
 	mux.HandleFunc("/healthz", func(response http.ResponseWriter, _ *http.Request) {
@@ -148,6 +188,7 @@ const indexHTML = `<!doctype html>
     .analysis { margin-top: 13px; padding: 13px; border: 1px solid rgba(53, 208, 186, .27); border-radius: 10px; background: rgba(53, 208, 186, .055); }
     .analysis-title { color: var(--accent); font-weight: 700; margin-bottom: 5px; }
     .analysis-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.experiment-stages { margin-top: 10px; }
     .error { color: var(--critical); }
     .empty { padding: 38px; text-align: center; color: var(--muted); }
     footer { margin-top: 24px; color: var(--muted); font-size: 12px; text-align: right; }
@@ -172,6 +213,7 @@ const indexHTML = `<!doctype html>
     <div class="connection"><span id="dot" class="dot"></span><span id="connection">正在连接</span></div>
   </header>
   <section id="metrics" class="metrics"></section>
+	<section id="experiments"></section>
   <section id="content"><div class="empty">等待首次巡检结果…</div></section>
   <footer id="footer"></footer>
 </main>
@@ -239,6 +281,17 @@ const indexHTML = `<!doctype html>
           row.append(body);
           card.append(row);
         }
+		const incidents = item.diagnostics ? (item.diagnostics.incidents || []) : [];
+		for (const incident of incidents) {
+		  const diagnostic = el("div", "analysis");
+		  diagnostic.append(el("div", "analysis-title", "关联诊断 · " + incident.rootCategory + " · " + incident.confidence));
+		  const scope = [];
+		  if ((incident.components || []).length) scope.push("组件 " + incident.components.join(", "));
+		  if ((incident.nodes || []).length) scope.push("节点 " + incident.nodes.join(", "));
+		  diagnostic.append(el("div", "meta", scope.join(" · ")));
+		  diagnostic.append(el("div", "analysis-body", incident.recommendation || "请检查关联时间线"));
+		  card.append(diagnostic);
+		}
         if (item.analysis) {
           const analysis = el("div", "analysis");
           const title = item.analysis.status === "complete"
@@ -273,11 +326,50 @@ const indexHTML = `<!doctype html>
     byId("connection").textContent = data.ready ? "巡检运行中" : "等待首次巡检";
   }
 
+	function renderExperiments(plans) {
+	  const root = byId("experiments");
+	  root.replaceChildren();
+	  if (!plans || plans.length === 0) return;
+	  const section = el("section", "namespace");
+	  const head = el("div", "namespace-head");
+	  head.append(el("h2", "", "渐进式特性实验"), el("div", "meta", plans.length + " 个计划"));
+	  section.append(head);
+	  const cards = el("div", "services");
+	  for (const plan of plans) {
+		const card = el("article", "service");
+		const cardHead = el("div", "service-head");
+		cardHead.append(el("h3", "", plan.namespace + "/" + plan.candidatePrefix), badge(plan.status, plan.status === "completed" ? "good" : (plan.status === "failed" ? "critical" : "")));
+		card.append(cardHead);
+		const badges = el("div", "badges");
+		badges.append(badge("基线 " + plan.baselineName), badge("当前稳定 " + plan.stableService), badge("阶段 " + plan.currentStage + "/" + (plan.stages || []).length));
+		card.append(badges);
+		if (plan.message) card.append(el("div", "meta", plan.message));
+		const stages = el("div", "experiment-stages");
+		for (const stage of (plan.stages || [])) {
+		  const row = el("div", "issue");
+		  row.append(el("span", "issue-dot " + (stage.status === "passed" ? "" : (stage.status === "rolled-back" ? "critical" : "warning"))));
+		  const body = el("div");
+		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " · " + stage.featureProfile + " · " + stage.status));
+		  body.append(el("div", "", stage.baselineName + " → " + stage.candidateName));
+		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "新增异常: " + stage.comparison.regressionCategories.join(", ")));
+		  if (stage.message) body.append(el("div", "meta", stage.message));
+		  row.append(body);
+		  stages.append(row);
+		}
+		card.append(stages);
+		cards.append(card);
+	  }
+	  section.append(cards);
+	  root.append(section);
+	}
+
   async function refresh() {
     try {
-      const response = await fetch("./api/v1/snapshot", {cache: "no-store"});
+	  const response = await fetch("./api/v1/snapshot", {cache: "no-store"});
       if (!response.ok) throw new Error("HTTP " + response.status);
       render(await response.json());
+	  const experiments = await fetch("./api/v1/experiments", {cache: "no-store"});
+	  if (experiments.ok) renderExperiments(await experiments.json());
     } catch (error) {
       byId("dot").className = "dot error";
       byId("connection").textContent = "连接失败";

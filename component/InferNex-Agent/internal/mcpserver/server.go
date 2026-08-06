@@ -20,6 +20,8 @@ import (
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
@@ -35,6 +37,19 @@ namespace, and name; it never accepts arbitrary images, commands, URLs, or
 Kubernetes objects. Deployment and deletion both require confirm=true. Inspect
 the resulting service and topology before reporting a successful rollout.
 Use infernex_get_change with the returned changeId to observe commit or rollback.`
+
+const diagnosticInstructions = `
+Bounded service diagnostics are enabled. infernex_diagnose_service reads only
+Pod logs selected by the InferNex service owner label, redacts common credential
+forms, and returns classified evidence plus a cross-node/component timeline.`
+
+const experimentInstructions = `
+Progressive experiments are explicitly enabled. A plan retains the stable
+baseline, prepends exactly one administrator-approved sparse feature profile per
+stage, and creates a distinct candidate. It never edits the baseline, switches
+traffic, accepts raw YAML, or deletes resources without matching experiment and
+change ownership. A diagnostic regression, Degraded condition, readiness loss,
+or timeout rolls back only the current candidate.`
 
 type namespaceInput struct {
 	Namespace string `json:"namespace" jsonschema:"Kubernetes namespace containing the InferNexService resources"`
@@ -63,8 +78,48 @@ type changeInput struct {
 	ChangeID string `json:"changeId" jsonschema:"Opaque changeId returned by a deployment or deletion tool"`
 }
 
+type diagnosticInput struct {
+	Namespace    string `json:"namespace" jsonschema:"Kubernetes namespace containing the InferNexService"`
+	Name         string `json:"name" jsonschema:"InferNexService resource name"`
+	SinceMinutes int    `json:"sinceMinutes,omitempty" jsonschema:"Bounded lookback window in minutes; defaults to 15 and must not exceed 1440"`
+	MaxPods      int    `json:"maxPods,omitempty" jsonschema:"Maximum related Pods; defaults to 50 and must not exceed 100"`
+	TailLines    int64  `json:"tailLines,omitempty" jsonschema:"Maximum lines per container and current/previous log stream; defaults to 200 and must not exceed 1000"`
+}
+
+type experimentInput struct {
+	Namespace       string   `json:"namespace" jsonschema:"Namespace containing the stable baseline and experiment candidates"`
+	BaselineName    string   `json:"baselineName" jsonschema:"Ready InferNexService whose runtime fields come from baseRefs"`
+	CandidatePrefix string   `json:"candidatePrefix" jsonschema:"DNS-compatible prefix used for distinct stage candidate names"`
+	FeatureProfiles []string `json:"featureProfiles" jsonschema:"Ordered administrator-approved sparse InferNexServiceConfig names; one is introduced per stage"`
+	Confirm         bool     `json:"confirm" jsonschema:"Must be true after reviewing baseline, capacity, prefix, and ordered feature profiles"`
+}
+
+type experimentIDInput struct {
+	ExperimentID string `json:"experimentId" jsonschema:"Opaque experimentId returned by infernex_start_experiment"`
+}
+
+type emptyInput struct{}
+
+type experimentListOutput struct {
+	Experiments []experiment.Plan `json:"experiments"`
+}
+
 type serverOptions struct {
-	deployer deployer.Deployer
+	deployer    deployer.Deployer
+	diagnoser   diagnostics.Diagnoser
+	experiments experiment.Manager
+}
+
+func WithDiagnoser(diagnoser diagnostics.Diagnoser) Option {
+	return func(options *serverOptions) {
+		options.diagnoser = diagnoser
+	}
+}
+
+func WithExperiments(manager experiment.Manager) Option {
+	return func(options *serverOptions) {
+		options.experiments = manager
+	}
 }
 
 type Option func(*serverOptions)
@@ -83,6 +138,12 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	serverInstructions := readOnlyInstructions
 	if options.deployer != nil {
 		serverInstructions += deploymentInstructions
+	}
+	if options.diagnoser != nil {
+		serverInstructions += diagnosticInstructions
+	}
+	if options.experiments != nil {
+		serverInstructions += experimentInstructions
 	}
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "infernex-agent", Version: version},
@@ -109,6 +170,23 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		output, err := domainObserver.ListServices(ctx, input.Namespace)
 		return nil, output, err
 	})
+
+	if options.diagnoser != nil {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_diagnose_service",
+			Description: "Correlate bounded, redacted Pod log evidence and Kubernetes Events across the nodes and components managed for one InferNexService.",
+			Annotations: readOnly("Diagnose InferNex service"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input diagnosticInput) (*mcp.CallToolResult, diagnostics.Report, error) {
+			output, err := options.diagnoser.Diagnose(ctx, diagnostics.Request{
+				Namespace:    input.Namespace,
+				Name:         input.Name,
+				SinceMinutes: input.SinceMinutes,
+				MaxPods:      input.MaxPods,
+				TailLines:    input.TailLines,
+			})
+			return nil, output, err
+		})
+	}
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "infernex_inspect_service",
@@ -192,6 +270,52 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input changeInput) (*mcp.CallToolResult, changesafety.ChangeStatus, error) {
 			output, err := options.deployer.GetChange(ctx, input.ChangeID)
 			return nil, output, err
+		})
+	}
+
+	if options.experiments != nil {
+		mutating := func(title string) *mcp.ToolAnnotations {
+			destructive := false
+			openWorld := true
+			return &mcp.ToolAnnotations{
+				Title:           title,
+				ReadOnlyHint:    false,
+				IdempotentHint:  false,
+				DestructiveHint: &destructive,
+				OpenWorldHint:   &openWorld,
+			}
+		}
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_start_experiment",
+			Description: "Start a durable progressive experiment from one stable baseRef-driven service. Each stage adds one approved feature profile to a distinct candidate and rolls it back on regression.",
+			Annotations: mutating("Start progressive InferNex experiment"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input experimentInput) (*mcp.CallToolResult, experiment.Plan, error) {
+			output, err := options.experiments.Create(ctx, experiment.Request{
+				Namespace:       input.Namespace,
+				BaselineName:    input.BaselineName,
+				CandidatePrefix: input.CandidatePrefix,
+				FeatureProfiles: input.FeatureProfiles,
+				Confirm:         input.Confirm,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_get_experiment",
+			Description: "Read the latest durable state, stage comparison, and rollback outcome of one progressive experiment.",
+			Annotations: readOnly("Get InferNex experiment"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input experimentIDInput) (*mcp.CallToolResult, experiment.Plan, error) {
+			output, err := options.experiments.Get(ctx, input.ExperimentID)
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_list_experiments",
+			Description: "List the latest durable state of recent progressive experiments.",
+			Annotations: readOnly("List InferNex experiments"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, experimentListOutput, error) {
+			output, err := options.experiments.List(ctx)
+			return nil, experimentListOutput{Experiments: output}, err
 		})
 	}
 

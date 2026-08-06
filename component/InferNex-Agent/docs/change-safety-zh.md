@@ -9,6 +9,8 @@
 2. 每个新的 catalog 部署必须先持久化变更前状态。新服务在规定时间内不能
    Ready，或 InferNex 控制面报告当前 generation 已进入 `Degraded`，Agent
    必须自动撤销本次创建。
+3. 每个渐进实验阶段必须先持久化计划和变更事件。候选超时、丢失 Ready、
+   Degraded 或相对稳定基线新增临界诊断类别时，只回退当前候选，稳定基线不变。
 
 这里的“集群状态”指 Agent 管理边界内的源事实：
 目标命名空间中的 `InferNexService`。Deployment、DaemonSet、Pod 和 Service
@@ -145,12 +147,18 @@ sudo ./bin/install-host.sh \
 携带 `change-id`。因此安装前快照恢复能够识别并撤销快照之后由自动恢复路径
 新增的服务；该 ID 同时出现在 Dashboard/JSON 的 remediation 信息中。
 
+渐进实验为每个阶段分配独立 `changeId`，并把计划追加写入
+`/var/lib/infernex-agent/experiments/`。候选带实验 ID、阶段、基线、profile 和
+`changeId`；回退前全部所有权必须匹配。通过的候选写入 `committed` 并成为下一
+阶段基线，失败阶段写入 `rolled-back` 或 `rollback-failed`。Agent 重启后恢复
+状态为 planned/running 的计划，不重新创建已经存在且 spec 完全相同的候选。
+
 ## 5. Kubernetes/Helm 模式
 
 Helm 安装和升级使用 `--atomic --wait`，Agent 自身启动失败时由 Helm 恢复
 上一 release 或清理失败的首次安装。
 
-启用 catalog 写能力时，生产环境必须给变更记录使用持久卷：
+启用 catalog 或实验写能力时，生产环境必须给变更记录使用持久卷：
 
 ```bash
 ./bin/install-agent.sh \
@@ -192,6 +200,7 @@ Kind 测试可以使用默认 `emptyDir`；它能承受容器重启，但 Pod �
 - 新建 catalog 服务失败自动回到创建前状态；
 - Agent 重启后继续未完成变更；
 - 明确的 `change-id`、追加写记录和只读状态查询。
+- 渐进实验失败时保留原始基线和已通过阶段，只删除当前匹配所有权的候选。
 
 当前不承诺：
 
