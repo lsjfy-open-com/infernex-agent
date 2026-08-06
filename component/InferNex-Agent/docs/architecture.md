@@ -61,6 +61,8 @@ Immutable in-memory snapshot
 | Scaling and PD orchestration | PD Orchestrator | Add bounded plans against its stable API |
 | Continuous scheduling and evidence cache | Agent supervisor | Reuse the typed observer; never give the model a Kubernetes credential |
 | Read-only operational display | Agent dashboard | Render only normalized supervisor snapshots on a separate Service |
+| Cross-node log incident correlation | Agent diagnostics | Read only bounded logs for InferNex-owned Pods; redact and classify matched evidence |
+| Progressive feature combinations | Agent experiment controller + Bridge | Create distinct candidates from approved sparse configs; never reimplement workload reconciliation |
 
 The Agent does not expose `kubectl`, shell execution, Secrets, full Pod specs,
 or raw Kubernetes object traversal. This prevents the LLM tool contract from
@@ -151,6 +153,29 @@ Returns recent Kubernetes Events only when the involved object is the selected
 The lookback window defaults to 60 minutes and is capped at 24 hours. Event
 output defaults to 50 records and is capped at 200; notes are normalized and
 bounded to 512 Unicode code points.
+
+### `infernex_diagnose_service` (opt-in)
+
+Reads current and, after a restart, previous container logs only for Pods with
+the selected service owner label. It bounds Pod count, lookback, line count,
+bytes, and retained evidence; redacts common credentials; then correlates NPU,
+collective communication, resource, KV transport, engine, stream, timeout, and
+output-corruption categories into two-minute incident windows. The optional
+model receives incident summaries, not raw evidence or node names.
+
+## Progressive experiments (opt-in)
+
+The experiment controller accepts only a stable service, candidate prefix,
+ordered approved `InferNexServiceConfig` names, and explicit confirmation. Each
+stage prepends one sparse feature profile to the baseline `baseRefs`, creates a
+separate candidate, and gates it on current-generation Ready, baseline health,
+diagnostic comparison, and a soak duration. Durable plan and change events are
+written before creation and resumed after restart. Failure deletes only the
+current candidate whose experiment/change ownership still matches.
+
+This is a parallel-candidate control-plane test: it requires spare capacity,
+retains passed candidates, and does not send inference traffic, measure SLOs,
+or promote traffic.
 
 ## Guarded deployment catalog
 

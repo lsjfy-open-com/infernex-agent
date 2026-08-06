@@ -31,6 +31,13 @@ Options:
   --openai-model MODEL            Model name sent to chat/completions
   --openai-api-key-file FILE      Read API key from a local file
   --openai-existing-secret NAME   Use an existing Secret with key "api-key"
+  --enable-log-diagnostics        Read bounded InferNex-owned Pod logs
+  --max-diagnostics-per-scan N    Degraded services read per scan (default: 10)
+  --enable-experiments            Run durable, single-feature experiments
+  --experiment-template-namespace N Approved profile namespace
+  --experiment-readiness-timeout D Default: 20m
+  --experiment-soak-duration D    Default: 5m
+  --experiment-diagnostic-interval D Default: 30s
   --enable-recovery               Enable guarded, double-opt-in recovery
   --recovery-template-namespace N InferNexServiceConfig namespace
   --enable-deployment             Enable catalog writes with durable rollback state
@@ -61,6 +68,13 @@ openai_base_url=""
 openai_model=""
 openai_api_key_file=""
 openai_existing_secret=""
+enable_log_diagnostics="false"
+max_diagnostics_per_scan="10"
+enable_experiments="false"
+experiment_template_namespace="infernex-bridge-system"
+experiment_readiness_timeout="20m"
+experiment_soak_duration="5m"
+experiment_diagnostic_interval="30s"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
 enable_deployment="false"
@@ -153,6 +167,40 @@ while (($#)); do
       openai_existing_secret="$2"
       shift 2
       ;;
+    --enable-log-diagnostics)
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --max-diagnostics-per-scan)
+      [[ $# -ge 2 ]] || bundle_die "--max-diagnostics-per-scan requires a value"
+      max_diagnostics_per_scan="$2"
+      shift 2
+      ;;
+    --enable-experiments)
+      enable_experiments="true"
+      enable_log_diagnostics="true"
+      shift
+      ;;
+    --experiment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-template-namespace requires a value"
+      experiment_template_namespace="$2"
+      shift 2
+      ;;
+    --experiment-readiness-timeout)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-readiness-timeout requires a value"
+      experiment_readiness_timeout="$2"
+      shift 2
+      ;;
+    --experiment-soak-duration)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-soak-duration requires a value"
+      experiment_soak_duration="$2"
+      shift 2
+      ;;
+    --experiment-diagnostic-interval)
+      [[ $# -ge 2 ]] || bundle_die "--experiment-diagnostic-interval requires a value"
+      experiment_diagnostic_interval="$2"
+      shift 2
+      ;;
     --enable-recovery)
       enable_recovery="true"
       shift
@@ -229,17 +277,26 @@ fi
 [[ "$deployment_readiness_timeout" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
   bundle_die "deployment readiness timeout must be a positive duration such as 10m"
 if [[ -n "$state_existing_claim" ]]; then
-  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]] ||
+  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]] ||
     bundle_die "--state-existing-claim requires a write capability"
   [[ "$state_existing_claim" =~ ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$ ]] ||
     bundle_die "invalid state PVC name: ${state_existing_claim}"
 fi
 if [[ -n "$state_storage_class" ]]; then
-  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]] ||
+  [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]] ||
     bundle_die "--state-storage-class requires a write capability"
   [[ "$state_storage_class" =~ ^[A-Za-z0-9]([-A-Za-z0-9.]*[A-Za-z0-9])?$ ]] ||
     bundle_die "invalid state StorageClass: ${state_storage_class}"
 fi
+[[ "$experiment_template_namespace" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] ||
+  bundle_die "invalid experiment template namespace: ${experiment_template_namespace}"
+for duration in "$experiment_readiness_timeout" "$experiment_soak_duration" "$experiment_diagnostic_interval"; do
+  [[ "$duration" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+    bundle_die "experiment durations must be positive values such as 10m"
+done
+[[ "$max_diagnostics_per_scan" =~ ^[0-9]+$ ]] &&
+  ((max_diagnostics_per_scan >= 1 && max_diagnostics_per_scan <= 1000)) ||
+  bundle_die "max diagnostics per scan must be between 1 and 1000"
 
 if ((${#target_namespaces[@]} == 0)); then
   mapfile -t target_namespaces < <(
@@ -287,14 +344,20 @@ fi
 
 kubectl get crd infernexservices.infernex.infernex.io >/dev/null ||
   bundle_die "InferNexService CRD is missing; install InferNex/Bridge first"
-if [[ "$enable_recovery" == "true" ]]; then
+if [[ "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
   kubectl get crd infernexserviceconfigs.infernex.infernex.io >/dev/null ||
-    bundle_die "InferNexServiceConfig CRD is required for recovery"
+    bundle_die "InferNexServiceConfig CRD is required for recovery or experiments"
+fi
+if [[ "$enable_recovery" == "true" ]]; then
   kubectl get namespace "$recovery_template_namespace" >/dev/null ||
     bundle_die "recovery template namespace does not exist: ${recovery_template_namespace}"
 fi
+if [[ "$enable_experiments" == "true" ]]; then
+  kubectl get namespace "$experiment_template_namespace" >/dev/null ||
+    bundle_die "experiment template namespace does not exist: ${experiment_template_namespace}"
+fi
 if [[ -n "$state_existing_claim" &&
-  ( "$enable_deployment" == "true" || "$enable_recovery" == "true" ) ]]; then
+  ( "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ) ]]; then
   kubectl --namespace "$namespace" get persistentvolumeclaim "$state_existing_claim" >/dev/null ||
     bundle_die "state PVC does not exist: ${namespace}/${state_existing_claim}"
 fi
@@ -411,13 +474,28 @@ if [[ "$enable_recovery" == "true" ]]; then
     --set-string "supervisor.remediation.templateNamespace=${recovery_template_namespace}"
   )
 fi
+if [[ "$enable_log_diagnostics" == "true" ]]; then
+  helm_args+=(
+    --set "supervisor.diagnostics.logs.enabled=true"
+    --set "supervisor.maxDiagnosticsPerScan=${max_diagnostics_per_scan}"
+  )
+fi
+if [[ "$enable_experiments" == "true" ]]; then
+  helm_args+=(
+    --set "experiments.enabled=true"
+    --set-string "experiments.templateNamespace=${experiment_template_namespace}"
+    --set-string "experiments.readinessTimeout=${experiment_readiness_timeout}"
+    --set-string "experiments.soakDuration=${experiment_soak_duration}"
+    --set-string "experiments.diagnosticInterval=${experiment_diagnostic_interval}"
+  )
+fi
 if [[ "$enable_deployment" == "true" ]]; then
   helm_args+=(
     --set "tools.deployment.enabled=true"
     --set-string "changeSafety.deploymentReadinessTimeout=${deployment_readiness_timeout}"
   )
 fi
-if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" ]]; then
+if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
   helm_args+=(--set "changeSafety.persistence.enabled=true")
   if [[ -n "$state_existing_claim" ]]; then
     helm_args+=(--set-string "changeSafety.persistence.existingClaim=${state_existing_claim}")

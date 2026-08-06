@@ -25,12 +25,43 @@ import (
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
 type stubObserver struct{}
 
 type stubDeployer struct{}
+
+type stubDiagnoser struct{}
+
+type stubExperiments struct{}
+
+func (stubDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (diagnostics.Report, error) {
+	return diagnostics.Report{
+		Service: diagnostics.ServiceReference{Namespace: request.Namespace, Name: request.Name},
+		Incidents: []diagnostics.Incident{{
+			ID: "incident-1", RootCategory: "npu-device-failure", Severity: diagnostics.SeverityCritical,
+		}},
+	}, nil
+}
+
+func (stubExperiments) Create(_ context.Context, request experiment.Request) (experiment.Plan, error) {
+	return experiment.Plan{
+		ID: "experiment-1", Namespace: request.Namespace, BaselineName: request.BaselineName,
+		CandidatePrefix: request.CandidatePrefix, FeatureProfiles: request.FeatureProfiles,
+		Status: experiment.PlanStatusPlanned,
+	}, nil
+}
+
+func (stubExperiments) Get(_ context.Context, id string) (experiment.Plan, error) {
+	return experiment.Plan{ID: id, Status: experiment.PlanStatusRunning}, nil
+}
+
+func (stubExperiments) List(context.Context) ([]experiment.Plan, error) {
+	return []experiment.Plan{{ID: "experiment-1", Status: experiment.PlanStatusCompleted}}, nil
+}
 
 func (stubDeployer) Deploy(_ context.Context, request deployer.Request) (deployer.Result, error) {
 	return deployer.Result{
@@ -281,6 +312,101 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	}
 	if deployment.Operation != "created" || deployment.Name != "tiny" {
 		t.Fatalf("deploy result = %#v", deployment)
+	}
+}
+
+func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	server := New(
+		stubObserver{},
+		"test",
+		WithDiagnoser(stubDiagnoser{}),
+		WithExperiments(stubExperiments{}),
+	)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(list.Tools) != 8 {
+		t.Fatalf("tool count = %d, want 8", len(list.Tools))
+	}
+	tools := make(map[string]*mcp.Tool, len(list.Tools))
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	diagnoseTool := tools["infernex_diagnose_service"]
+	startTool := tools["infernex_start_experiment"]
+	getTool := tools["infernex_get_experiment"]
+	listTool := tools["infernex_list_experiments"]
+	if diagnoseTool == nil || startTool == nil || getTool == nil || listTool == nil {
+		t.Fatalf("optional tools missing: %#v", tools)
+	}
+	if diagnoseTool.Annotations == nil || !diagnoseTool.Annotations.ReadOnlyHint {
+		t.Fatalf("diagnostic tool must be read-only: %#v", diagnoseTool.Annotations)
+	}
+	if startTool.Annotations == nil || startTool.Annotations.ReadOnlyHint || startTool.Annotations.IdempotentHint {
+		t.Fatalf("start experiment annotations = %#v", startTool.Annotations)
+	}
+	if getTool.Annotations == nil || !getTool.Annotations.ReadOnlyHint ||
+		listTool.Annotations == nil || !listTool.Annotations.ReadOnlyHint {
+		t.Fatal("experiment query tools must be read-only")
+	}
+
+	diagnosticResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_diagnose_service",
+		Arguments: map[string]any{
+			"namespace": "models", "name": "qwen-pd", "sinceMinutes": 10,
+		},
+	})
+	if err != nil || diagnosticResult.IsError {
+		t.Fatalf("diagnose call failed: err=%v result=%#v", err, diagnosticResult)
+	}
+	payload, err := json.Marshal(diagnosticResult.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal diagnostics: %v", err)
+	}
+	var report diagnostics.Report
+	if err := json.Unmarshal(payload, &report); err != nil {
+		t.Fatalf("decode diagnostics: %v", err)
+	}
+	if report.Service.Name != "qwen-pd" || len(report.Incidents) != 1 {
+		t.Fatalf("diagnostics = %#v", report)
+	}
+
+	experimentResult, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_start_experiment",
+		Arguments: map[string]any{
+			"namespace": "models", "baselineName": "stable", "candidatePrefix": "trial",
+			"featureProfiles": []string{"enable-mooncake"}, "confirm": true,
+		},
+	})
+	if err != nil || experimentResult.IsError {
+		t.Fatalf("experiment call failed: err=%v result=%#v", err, experimentResult)
+	}
+	payload, err = json.Marshal(experimentResult.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal experiment: %v", err)
+	}
+	var plan experiment.Plan
+	if err := json.Unmarshal(payload, &plan); err != nil {
+		t.Fatalf("decode experiment: %v", err)
+	}
+	if plan.ID != "experiment-1" || len(plan.FeatureProfiles) != 1 {
+		t.Fatalf("experiment = %#v", plan)
 	}
 }
 

@@ -13,9 +13,11 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -23,7 +25,27 @@ type SnapshotReader interface {
 	Load() supervisor.Snapshot
 }
 
-func New(reader SnapshotReader) http.Handler {
+type ExperimentReader interface {
+	List(context.Context) ([]experiment.Plan, error)
+}
+
+type options struct {
+	experiments ExperimentReader
+}
+
+type Option func(*options)
+
+func WithExperiments(reader ExperimentReader) Option {
+	return func(options *options) {
+		options.experiments = reader
+	}
+}
+
+func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
+	configuration := options{}
+	for _, option := range optionFunctions {
+		option(&configuration)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/" {
@@ -41,6 +63,24 @@ func New(reader SnapshotReader) http.Handler {
 		encoder.SetEscapeHTML(true)
 		if err := encoder.Encode(reader.Load()); err != nil {
 			http.Error(response, "encode snapshot", http.StatusInternalServerError)
+		}
+	})
+	mux.HandleFunc("/api/v1/experiments", func(response http.ResponseWriter, request *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "no-store")
+		plans := []experiment.Plan{}
+		if configuration.experiments != nil {
+			var err error
+			plans, err = configuration.experiments.List(request.Context())
+			if err != nil {
+				http.Error(response, "list experiments", http.StatusInternalServerError)
+				return
+			}
+		}
+		encoder := json.NewEncoder(response)
+		encoder.SetEscapeHTML(true)
+		if err := encoder.Encode(plans); err != nil {
+			http.Error(response, "encode experiments", http.StatusInternalServerError)
 		}
 	})
 	mux.HandleFunc("/healthz", func(response http.ResponseWriter, _ *http.Request) {
@@ -148,6 +188,7 @@ const indexHTML = `<!doctype html>
     .analysis { margin-top: 13px; padding: 13px; border: 1px solid rgba(53, 208, 186, .27); border-radius: 10px; background: rgba(53, 208, 186, .055); }
     .analysis-title { color: var(--accent); font-weight: 700; margin-bottom: 5px; }
     .analysis-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.experiment-stages { margin-top: 10px; }
     .error { color: var(--critical); }
     .empty { padding: 38px; text-align: center; color: var(--muted); }
     footer { margin-top: 24px; color: var(--muted); font-size: 12px; text-align: right; }
@@ -167,12 +208,13 @@ const indexHTML = `<!doctype html>
   <header>
     <div>
       <h1>InferNex <span>Agent</span></h1>
-      <p class="subtitle">PD 推理服务持续巡检、证据汇总与分析建议</p>
+      <p class="subtitle">PD ??????????????????</p>
     </div>
-    <div class="connection"><span id="dot" class="dot"></span><span id="connection">正在连接</span></div>
+    <div class="connection"><span id="dot" class="dot"></span><span id="connection">????</span></div>
   </header>
   <section id="metrics" class="metrics"></section>
-  <section id="content"><div class="empty">等待首次巡检结果…</div></section>
+	<section id="experiments"></section>
+  <section id="content"><div class="empty">?????????</div></section>
   <footer id="footer"></footer>
 </main>
 <script>
@@ -189,30 +231,30 @@ const indexHTML = `<!doctype html>
     return card;
   };
   const badge = (text, tone) => el("span", "badge " + (tone || ""), text);
-  const fmtTime = value => value ? new Date(value).toLocaleString() : "尚未完成";
+  const fmtTime = value => value ? new Date(value).toLocaleString() : "????";
 
   function render(data) {
     const summary = data.summary || {};
     const metrics = byId("metrics");
     metrics.replaceChildren(
-      metric(summary.services, "服务"),
-      metric(summary.readyServices, "健康", "good"),
-      metric(summary.degradedServices, "异常", summary.degradedServices ? "critical" : ""),
-      metric(summary.issues, "问题"),
-      metric(summary.criticalIssues, "严重", summary.criticalIssues ? "critical" : ""),
-      metric(summary.warningIssues, "告警", summary.warningIssues ? "warning" : "")
+      metric(summary.services, "??"),
+      metric(summary.readyServices, "??", "good"),
+      metric(summary.degradedServices, "??", summary.degradedServices ? "critical" : ""),
+      metric(summary.issues, "??"),
+      metric(summary.criticalIssues, "??", summary.criticalIssues ? "critical" : ""),
+      metric(summary.warningIssues, "??", summary.warningIssues ? "warning" : "")
     );
 
     const content = byId("content");
     content.replaceChildren();
     const namespaces = data.namespaces || [];
     if (!data.ready || namespaces.length === 0) {
-      content.append(el("div", "empty", "等待首次巡检结果…"));
+      content.append(el("div", "empty", "?????????"));
     }
     for (const ns of namespaces) {
       const section = el("section", "namespace");
       const head = el("div", "namespace-head");
-      head.append(el("h2", "", ns.name), el("div", "meta", (ns.total || 0) + " 个服务 · " + ns.scanMillis + " ms"));
+      head.append(el("h2", "", ns.name), el("div", "meta", (ns.total || 0) + " ??? ? " + ns.scanMillis + " ms"));
       section.append(head);
       if (ns.error) section.append(el("p", "error", ns.error));
       const services = el("div", "services");
@@ -229,58 +271,108 @@ const indexHTML = `<!doctype html>
         card.append(badges);
 
         const issues = item.issues || [];
-        if (issues.length === 0) card.append(el("div", "meta", "未发现控制面异常"));
+        if (issues.length === 0) card.append(el("div", "meta", "????????"));
         for (const issue of issues) {
           const row = el("div", "issue");
           row.append(el("span", "issue-dot " + issue.severity));
           const body = el("div");
-          const resource = issue.resource ? " · " + issue.resource : "";
+          const resource = issue.resource ? " ? " + issue.resource : "";
           body.append(el("div", "issue-code", issue.code + resource), el("div", "", issue.message));
           row.append(body);
           card.append(row);
         }
+		const incidents = item.diagnostics ? (item.diagnostics.incidents || []) : [];
+		for (const incident of incidents) {
+		  const diagnostic = el("div", "analysis");
+		  diagnostic.append(el("div", "analysis-title", "???? ? " + incident.rootCategory + " ? " + incident.confidence));
+		  const scope = [];
+		  if ((incident.components || []).length) scope.push("?? " + incident.components.join(", "));
+		  if ((incident.nodes || []).length) scope.push("?? " + incident.nodes.join(", "));
+		  diagnostic.append(el("div", "meta", scope.join(" ? ")));
+		  diagnostic.append(el("div", "analysis-body", incident.recommendation || "????????"));
+		  card.append(diagnostic);
+		}
         if (item.analysis) {
           const analysis = el("div", "analysis");
           const title = item.analysis.status === "complete"
-            ? "模型分析 · " + (item.analysis.model || "OpenAI-compatible")
-            : "模型分析 · " + item.analysis.status;
+            ? "???? ? " + (item.analysis.model || "OpenAI-compatible")
+            : "???? ? " + item.analysis.status;
           analysis.append(el("div", "analysis-title", title));
-          analysis.append(el("div", "analysis-body " + (item.analysis.error ? "error" : ""), item.analysis.content || item.analysis.error || "等待下一轮分析"));
+          analysis.append(el("div", "analysis-body " + (item.analysis.error ? "error" : ""), item.analysis.content || item.analysis.error || "???????"));
           card.append(analysis);
         }
         if (item.remediation) {
           const remediation = el("div", "analysis");
           const target = item.remediation.name
-            ? " · " + item.remediation.namespace + "/" + item.remediation.name
+            ? " ? " + item.remediation.namespace + "/" + item.remediation.name
             : "";
           const change = item.remediation.changeId
-            ? " · change " + item.remediation.changeId.slice(0, 12)
+            ? " ? change " + item.remediation.changeId.slice(0, 12)
             : "";
-          remediation.append(el("div", "analysis-title", "自动恢复 · " + item.remediation.status + target + change));
+          remediation.append(el("div", "analysis-title", "???? ? " + item.remediation.status + target + change));
           const detail = item.remediation.error || item.remediation.message ||
-            ("连续严重巡检 " + item.remediation.failureScans + " 次");
+            ("?????? " + item.remediation.failureScans + " ?");
           remediation.append(el("div", "analysis-body " + (item.remediation.error ? "error" : ""), detail));
           card.append(remediation);
         }
         services.append(card);
       }
-      if ((ns.services || []).length === 0) services.append(el("div", "empty", "该命名空间没有 InferNexService"));
+      if ((ns.services || []).length === 0) services.append(el("div", "empty", "??????? InferNexService"));
       section.append(services);
       content.append(section);
     }
-    byId("footer").textContent = "版本 " + data.version + " · 最近巡检 " + fmtTime(data.generatedAt) + " · 周期 " + data.scanInterval;
+    byId("footer").textContent = "?? " + data.version + " ? ???? " + fmtTime(data.generatedAt) + " ? ?? " + data.scanInterval;
     byId("dot").className = "dot " + (data.ready ? "ok" : "");
-    byId("connection").textContent = data.ready ? "巡检运行中" : "等待首次巡检";
+    byId("connection").textContent = data.ready ? "?????" : "??????";
   }
+
+	function renderExperiments(plans) {
+	  const root = byId("experiments");
+	  root.replaceChildren();
+	  if (!plans || plans.length === 0) return;
+	  const section = el("section", "namespace");
+	  const head = el("div", "namespace-head");
+	  head.append(el("h2", "", "???????"), el("div", "meta", plans.length + " ???"));
+	  section.append(head);
+	  const cards = el("div", "services");
+	  for (const plan of plans) {
+		const card = el("article", "service");
+		const cardHead = el("div", "service-head");
+		cardHead.append(el("h3", "", plan.namespace + "/" + plan.candidatePrefix), badge(plan.status, plan.status === "completed" ? "good" : (plan.status === "failed" ? "critical" : "")));
+		card.append(cardHead);
+		const badges = el("div", "badges");
+		badges.append(badge("?? " + plan.baselineName), badge("???? " + plan.stableService), badge("?? " + plan.currentStage + "/" + (plan.stages || []).length));
+		card.append(badges);
+		if (plan.message) card.append(el("div", "meta", plan.message));
+		const stages = el("div", "experiment-stages");
+		for (const stage of (plan.stages || [])) {
+		  const row = el("div", "issue");
+		  row.append(el("span", "issue-dot " + (stage.status === "passed" ? "" : (stage.status === "rolled-back" ? "critical" : "warning"))));
+		  const body = el("div");
+		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " ? " + stage.featureProfile + " ? " + stage.status));
+		  body.append(el("div", "", stage.baselineName + " ? " + stage.candidateName));
+		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "????: " + stage.comparison.regressionCategories.join(", ")));
+		  if (stage.message) body.append(el("div", "meta", stage.message));
+		  row.append(body);
+		  stages.append(row);
+		}
+		card.append(stages);
+		cards.append(card);
+	  }
+	  section.append(cards);
+	  root.append(section);
+	}
 
   async function refresh() {
     try {
-      const response = await fetch("./api/v1/snapshot", {cache: "no-store"});
+	  const response = await fetch("./api/v1/snapshot", {cache: "no-store"});
       if (!response.ok) throw new Error("HTTP " + response.status);
       render(await response.json());
+	  const experiments = await fetch("./api/v1/experiments", {cache: "no-store"});
+	  if (experiments.ok) renderExperiments(await experiments.json());
     } catch (error) {
       byId("dot").className = "dot error";
-      byId("connection").textContent = "连接失败";
+      byId("connection").textContent = "????";
     }
   }
   refresh();

@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 )
@@ -52,6 +53,7 @@ type ServiceSnapshot struct {
 	Topology    observer.Topology      `json:"topology"`
 	Events      observer.EventEvidence `json:"events"`
 	Issues      []Issue                `json:"issues"`
+	Diagnostics *diagnostics.Report    `json:"diagnostics,omitempty"`
 	Analysis    *Analysis              `json:"analysis,omitempty"`
 	Remediation *Remediation           `json:"remediation,omitempty"`
 }
@@ -107,7 +109,16 @@ type AnalysisRequest struct {
 	Workloads  []observer.WorkloadSummary  `json:"workloads,omitempty"`
 	Pods       []AnalysisPod               `json:"pods,omitempty"`
 	Events     []AnalysisEvent             `json:"events,omitempty"`
+	Incidents  []AnalysisIncident          `json:"incidents,omitempty"`
 	Issues     []Issue                     `json:"issues"`
+}
+
+type AnalysisIncident struct {
+	RootCategory string   `json:"rootCategory"`
+	Severity     Severity `json:"severity"`
+	Confidence   string   `json:"confidence"`
+	Components   []string `json:"components,omitempty"`
+	Symptoms     []string `json:"symptoms,omitempty"`
 }
 
 type AnalysisPod struct {

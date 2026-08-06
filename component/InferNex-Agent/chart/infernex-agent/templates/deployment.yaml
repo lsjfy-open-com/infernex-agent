@@ -8,6 +8,21 @@
 {{- if and .Values.supervisor.remediation.enabled (empty .Values.supervisor.remediation.templateNamespace) }}
 {{- fail "supervisor.remediation.enabled requires a templateNamespace" }}
 {{- end }}
+{{- if and .Values.experiments.enabled (not .Values.supervisor.enabled) }}
+{{- fail "experiments.enabled requires supervisor.enabled=true" }}
+{{- end }}
+{{- if and .Values.experiments.enabled (not .Values.supervisor.diagnostics.logs.enabled) }}
+{{- fail "experiments.enabled requires supervisor.diagnostics.logs.enabled=true" }}
+{{- end }}
+{{- if and .Values.experiments.enabled (empty .Values.experiments.templateNamespace) }}
+{{- fail "experiments.enabled requires experiments.templateNamespace" }}
+{{- end }}
+{{- if and .Values.experiments.enabled (ne (int .Values.replicaCount) 1) }}
+{{- fail "experiments.enabled requires replicaCount=1 because experiment coordination is single-writer" }}
+{{- end }}
+{{- if lt (int .Values.supervisor.maxDiagnosticsPerScan) 1 }}
+{{- fail "supervisor.maxDiagnosticsPerScan must be at least 1" }}
+{{- end }}
 {{- if and .Values.supervisor.enabled (not .Values.rbac.clusterWide) .Values.supervisor.namespaces }}
 {{- $allowedNamespaces := .Values.rbac.targetNamespaces }}
 {{- if not $allowedNamespaces }}
@@ -77,6 +92,10 @@ spec:
             - --event-since-minutes={{ .Values.supervisor.eventSinceMinutes }}
             - --event-limit={{ .Values.supervisor.eventLimit }}
             - --max-analyses-per-scan={{ .Values.supervisor.maxAnalysesPerScan }}
+            - --max-diagnostics-per-scan={{ .Values.supervisor.maxDiagnosticsPerScan }}
+            {{- if .Values.supervisor.diagnostics.logs.enabled }}
+            - --enable-log-diagnostics
+            {{- end }}
             {{- if $openAI.baseURL }}
             - {{ printf "--openai-base-url=%s" $openAI.baseURL | quote }}
             - {{ printf "--openai-model=%s" $openAI.model | quote }}
@@ -87,12 +106,19 @@ spec:
             - --recovery-template-namespace={{ .Values.supervisor.remediation.templateNamespace }}
             - --recovery-min-critical-scans={{ .Values.supervisor.remediation.minCriticalScans }}
             {{- end }}
+            {{- if .Values.experiments.enabled }}
+            - --enable-experiments
+            - --experiment-template-namespace={{ .Values.experiments.templateNamespace }}
+            - --experiment-readiness-timeout={{ .Values.experiments.readinessTimeout }}
+            - --experiment-soak-duration={{ .Values.experiments.soakDuration }}
+            - --experiment-diagnostic-interval={{ .Values.experiments.diagnosticInterval }}
+            {{- end }}
             {{- end }}
             {{- if .Values.tools.deployment.enabled }}
             - --enable-deployment
             - --deployment-readiness-timeout={{ .Values.changeSafety.deploymentReadinessTimeout }}
             {{- end }}
-            {{- if or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled }}
+            {{- if or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled .Values.experiments.enabled }}
             - --state-dir={{ .Values.changeSafety.stateDir }}
             {{- end }}
           ports:

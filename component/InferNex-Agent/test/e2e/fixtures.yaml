@@ -3,12 +3,38 @@ kind: Namespace
 metadata:
   name: models
 ---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infernex-bridge-system
+---
+apiVersion: infernex.infernex.io/v1alpha1
+kind: InferNexServiceConfig
+metadata:
+  name: smoke-stable-base
+  namespace: infernex-bridge-system
+spec: {}
+---
+apiVersion: infernex.infernex.io/v1alpha1
+kind: InferNexServiceConfig
+metadata:
+  name: smoke-feature-mooncake
+  namespace: infernex-bridge-system
+  labels:
+    agent.infernex.io/approved-experiment-feature: "true"
+spec:
+  components:
+    mooncake:
+      enabled: true
+---
 apiVersion: infernex.infernex.io/v1alpha1
 kind: InferNexService
 metadata:
   name: smoke
   namespace: models
 spec:
+  baseRefs:
+    - name: smoke-stable-base
   model:
     name: smoke-model
     uri: https://user:token@example.invalid/models/smoke?signature=secret#fragment

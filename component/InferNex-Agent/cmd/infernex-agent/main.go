@@ -28,6 +28,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
@@ -37,6 +38,8 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
@@ -47,25 +50,32 @@ import (
 var version = "0.3.0-dev"
 
 type options struct {
-	transport          string
-	listen             string
-	dashboardListen    string
-	kubeconfig         string
-	enableDeployment   bool
-	stateDir           string
-	deploymentTimeout  time.Duration
-	scanNamespaces     string
-	scanInterval       time.Duration
-	eventSinceMinutes  int
-	eventLimit         int
-	maxAnalysesPerScan int
-	openAIBaseURL      string
-	openAIModel        string
-	openAIAPIKeyFile   string
-	openAITimeout      time.Duration
-	enableAutoRecovery bool
-	recoveryTemplateNS string
-	recoveryMinScans   int
+	transport                    string
+	listen                       string
+	dashboardListen              string
+	kubeconfig                   string
+	enableDeployment             bool
+	stateDir                     string
+	deploymentTimeout            time.Duration
+	scanNamespaces               string
+	scanInterval                 time.Duration
+	eventSinceMinutes            int
+	eventLimit                   int
+	maxAnalysesPerScan           int
+	maxDiagnosticsPerScan        int
+	openAIBaseURL                string
+	openAIModel                  string
+	openAIAPIKeyFile             string
+	openAITimeout                time.Duration
+	enableAutoRecovery           bool
+	recoveryTemplateNS           string
+	recoveryMinScans             int
+	enableDiagnostics            bool
+	enableExperiments            bool
+	experimentTemplateNS         string
+	experimentTimeout            time.Duration
+	experimentSoak               time.Duration
+	experimentDiagnosticInterval time.Duration
 }
 
 func main() {
@@ -126,6 +136,12 @@ func runServer() error {
 		10,
 		"Maximum new OpenAI analyses in one scan; unchanged evidence is cached",
 	)
+	flag.IntVar(
+		&opts.maxDiagnosticsPerScan,
+		"max-diagnostics-per-scan",
+		10,
+		"Maximum degraded services whose Pod logs are collected in one supervisor scan",
+	)
 	flag.StringVar(
 		&opts.openAIBaseURL,
 		"openai-base-url",
@@ -158,7 +174,46 @@ func runServer() error {
 		3,
 		"Consecutive critical scans required before ensuring a recovery service",
 	)
+	flag.BoolVar(
+		&opts.enableDiagnostics,
+		"enable-log-diagnostics",
+		false,
+		"Read bounded logs only from Pods owned by scanned InferNexServices and correlate cross-component incidents",
+	)
+	flag.BoolVar(
+		&opts.enableExperiments,
+		"enable-experiments",
+		false,
+		"Enable durable progressive experiments using approved sparse InferNexServiceConfig feature profiles",
+	)
+	flag.StringVar(
+		&opts.experimentTemplateNS,
+		"experiment-template-namespace",
+		"infernex-bridge-system",
+		"Namespace containing approved experiment feature profiles",
+	)
+	flag.DurationVar(
+		&opts.experimentTimeout,
+		"experiment-readiness-timeout",
+		20*time.Minute,
+		"Maximum duration for one experiment stage to pass readiness, diagnostics, and soak gates",
+	)
+	flag.DurationVar(
+		&opts.experimentSoak,
+		"experiment-soak-duration",
+		5*time.Minute,
+		"Continuous healthy duration required before an experiment candidate becomes the next stable baseline",
+	)
+	flag.DurationVar(
+		&opts.experimentDiagnosticInterval,
+		"experiment-diagnostic-interval",
+		30*time.Second,
+		"Interval between candidate-versus-baseline log diagnostic comparisons during soak",
+	)
 	flag.Parse()
+	if opts.enableExperiments && !opts.enableDiagnostics {
+		return fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	}
 
 	restConfig, err := kube.Config(opts.kubeconfig)
 	if err != nil {
@@ -182,13 +237,13 @@ func runServer() error {
 	}
 
 	domainObserver := observer.New(kubeClient)
-	serverOptions := make([]mcpserver.Option, 0, 1)
+	serverOptions := make([]mcpserver.Option, 0, 3)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	var changeStore changesafety.Store
-	if opts.enableDeployment || opts.enableAutoRecovery {
+	if opts.enableDeployment || opts.enableAutoRecovery || opts.enableExperiments {
 		fileStore, err := changesafety.NewFileStore(filepath.Join(opts.stateDir, "changes"))
 		if err != nil {
 			return fmt.Errorf("configure persistent change store: %w", err)
@@ -205,6 +260,54 @@ func runServer() error {
 			return fmt.Errorf("resume deployment safety monitoring: %w", err)
 		}
 		serverOptions = append(serverOptions, mcpserver.WithDeployer(domainDeployer))
+	}
+
+	var domainDiagnoser diagnostics.Diagnoser
+	if opts.enableDiagnostics {
+		clientset, clientsetErr := kubernetes.NewForConfig(restConfig)
+		if clientsetErr != nil {
+			return fmt.Errorf("create Kubernetes log client: %w", clientsetErr)
+		}
+		collector, collectorErr := diagnostics.New(
+			kubeClient,
+			diagnostics.NewKubernetesLogReader(clientset),
+			domainObserver,
+		)
+		if collectorErr != nil {
+			return fmt.Errorf("configure service diagnostics: %w", collectorErr)
+		}
+		domainDiagnoser = collector
+		serverOptions = append(serverOptions, mcpserver.WithDiagnoser(collector))
+	}
+
+	var domainExperiments experiment.Manager
+	if opts.enableExperiments {
+		planStore, storeErr := experiment.NewFileStore(filepath.Join(opts.stateDir, "experiments"))
+		if storeErr != nil {
+			return fmt.Errorf("configure persistent experiment store: %w", storeErr)
+		}
+		controller, controllerErr := experiment.New(
+			kubeClient,
+			changeStore,
+			planStore,
+			domainDiagnoser,
+			experiment.Config{
+				TemplateNamespace:  opts.experimentTemplateNS,
+				ReadinessTimeout:   opts.experimentTimeout,
+				SoakDuration:       opts.experimentSoak,
+				PollInterval:       5 * time.Second,
+				DiagnosticInterval: opts.experimentDiagnosticInterval,
+				DiagnosticsMinutes: opts.eventSinceMinutes,
+			},
+		)
+		if controllerErr != nil {
+			return fmt.Errorf("configure progressive experiments: %w", controllerErr)
+		}
+		if controllerErr := controller.Start(ctx); controllerErr != nil {
+			return fmt.Errorf("resume progressive experiments: %w", controllerErr)
+		}
+		domainExperiments = controller
+		serverOptions = append(serverOptions, mcpserver.WithExperiments(controller))
 	}
 	server := mcpserver.New(domainObserver, version, serverOptions...)
 
@@ -236,12 +339,14 @@ func runServer() error {
 			domainRemediator,
 			snapshotStore,
 			supervisor.Config{
-				Namespaces:         namespaces,
-				Interval:           opts.scanInterval,
-				EventSinceMinutes:  opts.eventSinceMinutes,
-				EventLimit:         opts.eventLimit,
-				MaxAnalysesPerScan: opts.maxAnalysesPerScan,
-				MinCriticalScans:   opts.recoveryMinScans,
+				Namespaces:            namespaces,
+				Interval:              opts.scanInterval,
+				EventSinceMinutes:     opts.eventSinceMinutes,
+				EventLimit:            opts.eventLimit,
+				MaxAnalysesPerScan:    opts.maxAnalysesPerScan,
+				MaxDiagnosticsPerScan: opts.maxDiagnosticsPerScan,
+				MinCriticalScans:      opts.recoveryMinScans,
+				Diagnoser:             domainDiagnoser,
 			},
 		)
 		if scannerErr != nil {
@@ -259,7 +364,11 @@ func runServer() error {
 	case "streamable-http":
 		var dashboardHandler http.Handler
 		if strings.TrimSpace(opts.dashboardListen) != "" {
-			dashboardHandler = dashboard.New(snapshotStore)
+			dashboardOptions := make([]dashboard.Option, 0, 1)
+			if domainExperiments != nil {
+				dashboardOptions = append(dashboardOptions, dashboard.WithExperiments(domainExperiments))
+			}
+			dashboardHandler = dashboard.New(snapshotStore, dashboardOptions...)
 		}
 		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler)
 	default:
