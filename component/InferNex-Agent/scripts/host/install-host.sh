@@ -363,7 +363,7 @@ for scan_namespace in "${scan_namespaces[@]}"; do
   if [[ "$enable_log_diagnostics" == "true" ]]; then
     [[ "$(
       kubectl --kubeconfig "$kubeconfig_source" auth can-i \
-        get pods/log --namespace "$scan_namespace"
+        get pods --subresource=log --namespace "$scan_namespace"
     )" == "yes" ]] ||
       bundle_die "kubeconfig cannot read Pod logs in ${scan_namespace}"
   fi

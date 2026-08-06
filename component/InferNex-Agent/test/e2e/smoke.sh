@@ -82,13 +82,27 @@ count: 1
 EOF
 
 service_account="system:serviceaccount:${agent_namespace}:${release_name}"
-test "$(kubectl auth can-i list events --as="${service_account}" -n "${model_namespace}")" = "yes"
-test "$(kubectl auth can-i get pods/log --as="${service_account}" -n "${model_namespace}")" = "yes"
-test "$(kubectl auth can-i create infernexservices.infernex.infernex.io --as="${service_account}" -n "${model_namespace}")" = "yes"
-test "$(kubectl auth can-i delete infernexservices.infernex.infernex.io --as="${service_account}" -n "${model_namespace}")" = "yes"
-test "$(kubectl auth can-i get infernexserviceconfigs.infernex.infernex.io --as="${service_account}" -n infernex-bridge-system)" = "yes"
-test "$(kubectl auth can-i get secrets --as="${service_account}" -n "${model_namespace}")" = "no"
-test "$(kubectl auth can-i create deployments --as="${service_account}" -n "${model_namespace}")" = "no"
+assert_can_i() {
+  local expected="$1"
+  local description="$2"
+  shift 2
+  local actual="no"
+  if kubectl auth can-i "$@" --as="${service_account}" --quiet; then
+    actual="yes"
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "RBAC assertion failed: ${description}; expected=${expected} actual=${actual}" >&2
+    return 1
+  fi
+}
+
+assert_can_i yes "list Events" list events -n "${model_namespace}"
+assert_can_i yes "read Pod logs" get pods --subresource=log -n "${model_namespace}"
+assert_can_i yes "create experiment candidates" create infernexservices.infernex.infernex.io -n "${model_namespace}"
+assert_can_i yes "delete experiment candidates" delete infernexservices.infernex.infernex.io -n "${model_namespace}"
+assert_can_i yes "read approved feature profiles" get infernexserviceconfigs.infernex.infernex.io -n infernex-bridge-system
+assert_can_i no "read Secrets" get secrets -n "${model_namespace}"
+assert_can_i no "create Deployments" create deployments -n "${model_namespace}"
 
 port_forward_log="$(mktemp)"
 dashboard_port_forward_log="$(mktemp)"
