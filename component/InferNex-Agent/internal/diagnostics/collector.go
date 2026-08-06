@@ -267,7 +267,7 @@ func (c *Collector) classifyLog(
 			Message:   "container log contains invalid UTF-8 bytes",
 		})
 	}
-	text := strings.ToValidUTF8(string(contents), "?")
+	text := strings.ToValidUTF8(string(contents), "�")
 	for _, line := range strings.Split(text, "\n") {
 		timestamp, message := parseTimestampedLine(line, fallback)
 		category, severity, matched := classifyMessage(message)
@@ -382,42 +382,42 @@ var classificationRules = []classificationRule{
 	{
 		category: "npu-device-failure", severity: SeverityCritical, rank: 0,
 		pattern:        regexp.MustCompile(`(?i)(npu|ascend|acl|hbm|device).*(lost|fault|error|failed|out of memory|ecc)|(?:EZ|EE)\d{4}|rt(?:Stream|Device|Mem)[A-Za-z]*.*(?:error|fail)`),
-		recommendation: "????????? NPU ?????/CANN ??????????????????",
+		recommendation: "优先检查对应节点的 NPU 健康、驱动/CANN 日志和设备隔离状态，再重启推理实例。",
 	},
 	{
 		category: "collective-communication-failure", severity: SeverityCritical, rank: 1,
 		pattern:        regexp.MustCompile(`(?i)(hccl|collective|all[-_ ]?reduce|rdma).*(timeout|abort|error|failed|disconnect|unreachable)`),
-		recommendation: "??????? HCCL/RDMA/?????rank ?????????????????????",
+		recommendation: "核对涉事节点间 HCCL/RDMA/灵衢网络、rank 映射和超时参数，按时间线定位最早失败节点。",
 	},
 	{
 		category: "resource-exhausted", severity: SeverityCritical, rank: 1,
 		pattern:        regexp.MustCompile(`(?i)(out of memory|oomkilled|cannot allocate memory|resource exhausted|hbm allocation.*fail)`),
-		recommendation: "??????????/????????? KV cache ????????????????",
+		recommendation: "比较基线与候选的显存/内存占用、并行度和 KV cache 参数，降低单实例资源需求后重试。",
 	},
 	{
 		category: "kv-transport-failure", severity: SeverityCritical, rank: 2,
 		pattern:        regexp.MustCompile(`(?i)(mooncake|nixl|kv.?cache|transfer engine).*(timeout|abort|error|failed|disconnect|corrupt)`),
-		recommendation: "?? Mooncake/NIXL ?????KV connector ???????? prefill/decode ???????",
+		recommendation: "检查 Mooncake/NIXL 两端版本、KV connector 参数、传输网络和 prefill/decode 地址发现结果。",
 	},
 	{
 		category: "engine-worker-failure", severity: SeverityCritical, rank: 3,
 		pattern:        regexp.MustCompile(`(?i)(engine core|vllm|worker|executor).*(died|dead|crash|abort|error|failed)|segmentation fault|sigsegv|process exited`),
-		recommendation: "??????? engine/worker ????????? NPU?HCCL?Mooncake ?????????",
+		recommendation: "定位首个退出的 engine/worker 容器，并将其之前的 NPU、HCCL、Mooncake 证据作为上游根因。",
 	},
 	{
 		category: "stream-interrupted", severity: SeverityCritical, rank: 5,
 		pattern:        regexp.MustCompile(`(?i)(broken pipe|connection reset|unexpected eof|stream.*interrupt|response.*truncat|client disconnect|abort request|socket.*closed)`),
-		recommendation: "? router/proxy ? decode engine ??????????????? worker ????????????????",
+		recommendation: "沿 router/proxy → decode engine 的同一时间窗检查连接关闭和上游 worker 退出，确认是否只在候选配置出现。",
 	},
 	{
 		category: "output-corruption", severity: SeverityCritical, rank: 5,
 		pattern:        regexp.MustCompile(`(?i)(unicode.*decode|invalid utf-?8|invalid byte sequence|replacement character|mojibake|garbled|decode.*failed|json.*invalid)`),
-		recommendation: "?????????tokenizer/???????????????????????????????????",
+		recommendation: "检查流式分片边界、tokenizer/协议版本和代理编码转换；保留原始字节样本但不要在诊断界面暴露敏感内容。",
 	},
 	{
 		category: "operation-timeout", severity: SeverityWarning, rank: 4,
 		pattern:        regexp.MustCompile(`(?i)(deadline exceeded|operation timed out|request timeout|read timeout|startup timeout)`),
-		recommendation: "????????????????????????????????????",
+		recommendation: "对照基线耗时、队列深度与各组件超时设置，确认是性能回退还是上游故障症状。",
 	},
 }
 
@@ -477,7 +477,7 @@ func bounded(value string, limit int) string {
 		return value
 	}
 	runes := []rune(value)
-	return string(runes[:limit]) + "?"
+	return string(runes[:limit]) + "…"
 }
 
 func correlate(service ServiceReference, evidence []Evidence) []Incident {
@@ -604,7 +604,7 @@ func categoryRecommendation(category string) string {
 			return rule.recommendation
 		}
 	}
-	return "??????????????????? Kubernetes Event ??????"
+	return "结合最早时间点、组件和节点继续检查相关 Kubernetes Event 与容器日志。"
 }
 
 func incidentID(service ServiceReference, category string, timestamp time.Time) string {

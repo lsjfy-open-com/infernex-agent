@@ -737,5 +737,5 @@ func boundedRunes(value string, limit int) string {
 		return value
 	}
 	runes := []rune(value)
-	return string(runes[:limit]) + "?"
+	return string(runes[:limit]) + "…"
 }

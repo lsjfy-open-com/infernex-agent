@@ -208,13 +208,13 @@ const indexHTML = `<!doctype html>
   <header>
     <div>
       <h1>InferNex <span>Agent</span></h1>
-      <p class="subtitle">PD ??????????????????</p>
+      <p class="subtitle">PD 推理服务持续巡检、证据汇总与分析建议</p>
     </div>
-    <div class="connection"><span id="dot" class="dot"></span><span id="connection">????</span></div>
+    <div class="connection"><span id="dot" class="dot"></span><span id="connection">正在连接</span></div>
   </header>
   <section id="metrics" class="metrics"></section>
 	<section id="experiments"></section>
-  <section id="content"><div class="empty">?????????</div></section>
+  <section id="content"><div class="empty">等待首次巡检结果…</div></section>
   <footer id="footer"></footer>
 </main>
 <script>
@@ -231,30 +231,30 @@ const indexHTML = `<!doctype html>
     return card;
   };
   const badge = (text, tone) => el("span", "badge " + (tone || ""), text);
-  const fmtTime = value => value ? new Date(value).toLocaleString() : "????";
+  const fmtTime = value => value ? new Date(value).toLocaleString() : "尚未完成";
 
   function render(data) {
     const summary = data.summary || {};
     const metrics = byId("metrics");
     metrics.replaceChildren(
-      metric(summary.services, "??"),
-      metric(summary.readyServices, "??", "good"),
-      metric(summary.degradedServices, "??", summary.degradedServices ? "critical" : ""),
-      metric(summary.issues, "??"),
-      metric(summary.criticalIssues, "??", summary.criticalIssues ? "critical" : ""),
-      metric(summary.warningIssues, "??", summary.warningIssues ? "warning" : "")
+      metric(summary.services, "服务"),
+      metric(summary.readyServices, "健康", "good"),
+      metric(summary.degradedServices, "异常", summary.degradedServices ? "critical" : ""),
+      metric(summary.issues, "问题"),
+      metric(summary.criticalIssues, "严重", summary.criticalIssues ? "critical" : ""),
+      metric(summary.warningIssues, "告警", summary.warningIssues ? "warning" : "")
     );
 
     const content = byId("content");
     content.replaceChildren();
     const namespaces = data.namespaces || [];
     if (!data.ready || namespaces.length === 0) {
-      content.append(el("div", "empty", "?????????"));
+      content.append(el("div", "empty", "等待首次巡检结果…"));
     }
     for (const ns of namespaces) {
       const section = el("section", "namespace");
       const head = el("div", "namespace-head");
-      head.append(el("h2", "", ns.name), el("div", "meta", (ns.total || 0) + " ??? ? " + ns.scanMillis + " ms"));
+      head.append(el("h2", "", ns.name), el("div", "meta", (ns.total || 0) + " 个服务 · " + ns.scanMillis + " ms"));
       section.append(head);
       if (ns.error) section.append(el("p", "error", ns.error));
       const services = el("div", "services");
@@ -271,12 +271,12 @@ const indexHTML = `<!doctype html>
         card.append(badges);
 
         const issues = item.issues || [];
-        if (issues.length === 0) card.append(el("div", "meta", "????????"));
+        if (issues.length === 0) card.append(el("div", "meta", "未发现控制面异常"));
         for (const issue of issues) {
           const row = el("div", "issue");
           row.append(el("span", "issue-dot " + issue.severity));
           const body = el("div");
-          const resource = issue.resource ? " ? " + issue.resource : "";
+          const resource = issue.resource ? " · " + issue.resource : "";
           body.append(el("div", "issue-code", issue.code + resource), el("div", "", issue.message));
           row.append(body);
           card.append(row);
@@ -284,46 +284,46 @@ const indexHTML = `<!doctype html>
 		const incidents = item.diagnostics ? (item.diagnostics.incidents || []) : [];
 		for (const incident of incidents) {
 		  const diagnostic = el("div", "analysis");
-		  diagnostic.append(el("div", "analysis-title", "???? ? " + incident.rootCategory + " ? " + incident.confidence));
+		  diagnostic.append(el("div", "analysis-title", "关联诊断 · " + incident.rootCategory + " · " + incident.confidence));
 		  const scope = [];
-		  if ((incident.components || []).length) scope.push("?? " + incident.components.join(", "));
-		  if ((incident.nodes || []).length) scope.push("?? " + incident.nodes.join(", "));
-		  diagnostic.append(el("div", "meta", scope.join(" ? ")));
-		  diagnostic.append(el("div", "analysis-body", incident.recommendation || "????????"));
+		  if ((incident.components || []).length) scope.push("组件 " + incident.components.join(", "));
+		  if ((incident.nodes || []).length) scope.push("节点 " + incident.nodes.join(", "));
+		  diagnostic.append(el("div", "meta", scope.join(" · ")));
+		  diagnostic.append(el("div", "analysis-body", incident.recommendation || "请检查关联时间线"));
 		  card.append(diagnostic);
 		}
         if (item.analysis) {
           const analysis = el("div", "analysis");
           const title = item.analysis.status === "complete"
-            ? "???? ? " + (item.analysis.model || "OpenAI-compatible")
-            : "???? ? " + item.analysis.status;
+            ? "模型分析 · " + (item.analysis.model || "OpenAI-compatible")
+            : "模型分析 · " + item.analysis.status;
           analysis.append(el("div", "analysis-title", title));
-          analysis.append(el("div", "analysis-body " + (item.analysis.error ? "error" : ""), item.analysis.content || item.analysis.error || "???????"));
+          analysis.append(el("div", "analysis-body " + (item.analysis.error ? "error" : ""), item.analysis.content || item.analysis.error || "等待下一轮分析"));
           card.append(analysis);
         }
         if (item.remediation) {
           const remediation = el("div", "analysis");
           const target = item.remediation.name
-            ? " ? " + item.remediation.namespace + "/" + item.remediation.name
+            ? " · " + item.remediation.namespace + "/" + item.remediation.name
             : "";
           const change = item.remediation.changeId
-            ? " ? change " + item.remediation.changeId.slice(0, 12)
+            ? " · change " + item.remediation.changeId.slice(0, 12)
             : "";
-          remediation.append(el("div", "analysis-title", "???? ? " + item.remediation.status + target + change));
+          remediation.append(el("div", "analysis-title", "自动恢复 · " + item.remediation.status + target + change));
           const detail = item.remediation.error || item.remediation.message ||
-            ("?????? " + item.remediation.failureScans + " ?");
+            ("连续严重巡检 " + item.remediation.failureScans + " 次");
           remediation.append(el("div", "analysis-body " + (item.remediation.error ? "error" : ""), detail));
           card.append(remediation);
         }
         services.append(card);
       }
-      if ((ns.services || []).length === 0) services.append(el("div", "empty", "??????? InferNexService"));
+      if ((ns.services || []).length === 0) services.append(el("div", "empty", "该命名空间没有 InferNexService"));
       section.append(services);
       content.append(section);
     }
-    byId("footer").textContent = "?? " + data.version + " ? ???? " + fmtTime(data.generatedAt) + " ? ?? " + data.scanInterval;
+    byId("footer").textContent = "版本 " + data.version + " · 最近巡检 " + fmtTime(data.generatedAt) + " · 周期 " + data.scanInterval;
     byId("dot").className = "dot " + (data.ready ? "ok" : "");
-    byId("connection").textContent = data.ready ? "?????" : "??????";
+    byId("connection").textContent = data.ready ? "巡检运行中" : "等待首次巡检";
   }
 
 	function renderExperiments(plans) {
@@ -332,7 +332,7 @@ const indexHTML = `<!doctype html>
 	  if (!plans || plans.length === 0) return;
 	  const section = el("section", "namespace");
 	  const head = el("div", "namespace-head");
-	  head.append(el("h2", "", "???????"), el("div", "meta", plans.length + " ???"));
+	  head.append(el("h2", "", "渐进式特性实验"), el("div", "meta", plans.length + " 个计划"));
 	  section.append(head);
 	  const cards = el("div", "services");
 	  for (const plan of plans) {
@@ -341,7 +341,7 @@ const indexHTML = `<!doctype html>
 		cardHead.append(el("h3", "", plan.namespace + "/" + plan.candidatePrefix), badge(plan.status, plan.status === "completed" ? "good" : (plan.status === "failed" ? "critical" : "")));
 		card.append(cardHead);
 		const badges = el("div", "badges");
-		badges.append(badge("?? " + plan.baselineName), badge("???? " + plan.stableService), badge("?? " + plan.currentStage + "/" + (plan.stages || []).length));
+		badges.append(badge("基线 " + plan.baselineName), badge("当前稳定 " + plan.stableService), badge("阶段 " + plan.currentStage + "/" + (plan.stages || []).length));
 		card.append(badges);
 		if (plan.message) card.append(el("div", "meta", plan.message));
 		const stages = el("div", "experiment-stages");
@@ -349,9 +349,9 @@ const indexHTML = `<!doctype html>
 		  const row = el("div", "issue");
 		  row.append(el("span", "issue-dot " + (stage.status === "passed" ? "" : (stage.status === "rolled-back" ? "critical" : "warning"))));
 		  const body = el("div");
-		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " ? " + stage.featureProfile + " ? " + stage.status));
-		  body.append(el("div", "", stage.baselineName + " ? " + stage.candidateName));
-		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "????: " + stage.comparison.regressionCategories.join(", ")));
+		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " · " + stage.featureProfile + " · " + stage.status));
+		  body.append(el("div", "", stage.baselineName + " → " + stage.candidateName));
+		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "新增异常: " + stage.comparison.regressionCategories.join(", ")));
 		  if (stage.message) body.append(el("div", "meta", stage.message));
 		  row.append(body);
 		  stages.append(row);
@@ -372,7 +372,7 @@ const indexHTML = `<!doctype html>
 	  if (experiments.ok) renderExperiments(await experiments.json());
     } catch (error) {
       byId("dot").className = "dot error";
-      byId("connection").textContent = "????";
+      byId("connection").textContent = "连接失败";
     }
   }
   refresh();
