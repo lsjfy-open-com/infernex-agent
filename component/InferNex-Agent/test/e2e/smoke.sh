@@ -17,9 +17,20 @@ local_port="${AGENT_LOCAL_PORT:-18080}"
 dashboard_local_port="${AGENT_DASHBOARD_LOCAL_PORT:-18081}"
 
 kubectl apply --server-side -f "${config_crd}"
-kubectl wait --for=condition=Established \
-  crd/infernexserviceconfigs.infernex.infernex.io \
-  --timeout=60s
+config_crd_established=""
+for _ in $(seq 1 60); do
+  config_crd_established="$(
+    kubectl get crd infernexserviceconfigs.infernex.infernex.io \
+      -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' \
+      2>/dev/null || true
+  )"
+  [[ "$config_crd_established" == "True" ]] && break
+  sleep 1
+done
+[[ "$config_crd_established" == "True" ]] || {
+  echo "InferNexServiceConfig CRD was not Established within 60s" >&2
+  exit 1
+}
 kubectl apply -f "${fixture_file}"
 
 helm upgrade --install "${release_name}" "${chart_dir}" \
