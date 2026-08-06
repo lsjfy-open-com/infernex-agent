@@ -36,14 +36,32 @@ kubectl get nodes -o wide
 helm version
 ```
 
+### 2.1 已发布包与自动下载器
+
+版本 `0.3.0-rc.6` 的集群/宿主机、amd64/arm64 四种归档及对应校验文件位于
+[固定 Release 页面](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)。
+联网 Linux 推荐使用仓内下载器：
+
+```bash
+curl --fail --location --remote-name \
+  https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/download-bundle.sh
+chmod +x download-bundle.sh
+./download-bundle.sh --mode host     # systemd 宿主机包
+./download-bundle.sh --mode cluster  # 集群内 Pod 包
+```
+
+下载器自动将 `x86_64` 映射为 `amd64`、`aarch64` 映射为 `arm64`，下载归档与
+`.sha256`，校验后解压。它不会执行安装、导入镜像或修改集群。完全离线时，在联网机
+完成下载后把归档和校验文件一起传入目标网络。
+
 ## 3. 集群内在线安装（Helm）
 
 ### 3.1 获取与版本固定
 
-生产环境不要直接跟随未固定的分支。以下示例固定到 `0.3.0-rc.5`：
+生产环境不要直接跟随未固定的分支。以下示例固定到 `0.3.0-rc.6`：
 
 ```bash
-git clone --branch infernex-agent-v0.3.0-rc.5 --depth 1 \
+git clone --branch infernex-agent-v0.3.0-rc.6 --depth 1 \
   https://github.com/lsjfy-open-com/infernex-agent.git
 cd infernex-agent/component/InferNex-Agent
 ```
@@ -55,7 +73,7 @@ Chart 默认镜像地址记录在 `chart/infernex-agent/values.yaml`。如果集
 
 ```bash
 export AGENT_IMAGE_REPOSITORY=registry.internal.example/ai/infernex-agent
-export AGENT_IMAGE_TAG=0.3.0-rc.5
+export AGENT_IMAGE_TAG=0.3.0-rc.6
 
 make \
   IMG="${AGENT_IMAGE_REPOSITORY}:${AGENT_IMAGE_TAG}" \
@@ -134,9 +152,9 @@ curl --fail http://127.0.0.1:8081/api/v1/snapshot
 
 ```bash
 sha256sum --check \
-  infernex-agent-offline-0.3.0-rc.5-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-offline-0.3.0-rc.5-linux-arm64.tar.gz
-cd infernex-agent-offline-0.3.0-rc.5-linux-arm64
+  infernex-agent-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
+tar -xzf infernex-agent-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-offline-0.3.0-rc.6-linux-arm64
 ```
 
 ### 4.2 安装到本地 containerd 所在 master
@@ -170,7 +188,7 @@ Dashboard 快照验收。
   --target-namespace models \
   --dashboard-cidr 10.20.0.0/16 \
   --skip-image-import \
-  --agent-image registry.internal.example/ai/infernex-agent:0.3.0-rc.5
+  --agent-image registry.internal.example/ai/infernex-agent:0.3.0-rc.6
 ```
 
 完整的多 master、额外镜像、containerd socket、更新和常见问题见
@@ -184,13 +202,13 @@ Dashboard 快照验收。
 交叉编译后把静态二进制和 `scripts/` 目录传到目标主机：
 
 ```bash
-git clone --branch infernex-agent-v0.3.0-rc.5 --depth 1 \
+git clone --branch infernex-agent-v0.3.0-rc.6 --depth 1 \
   https://github.com/lsjfy-open-com/infernex-agent.git
 cd infernex-agent/component/InferNex-Agent
 
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath \
-  -ldflags='-s -w -X main.version=0.3.0-rc.5' \
+  -ldflags='-s -w -X main.version=0.3.0-rc.6' \
   -o ./bin/infernex-agent ./cmd/infernex-agent
 ```
 
@@ -218,9 +236,9 @@ sudo ./scripts/host/install-host.sh \
 
 ```bash
 sha256sum --check \
-  infernex-agent-host-offline-0.3.0-rc.5-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-host-offline-0.3.0-rc.5-linux-arm64.tar.gz
-cd infernex-agent-host-offline-0.3.0-rc.5-linux-arm64
+  infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
+tar -xzf infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-host-offline-0.3.0-rc.6-linux-arm64
 
 ./bin/create-kubeconfig.sh \
   --target-namespace models \
@@ -249,6 +267,37 @@ sudo /opt/infernex-agent/bin/verify-host.sh \
 systemctl status infernex-agent --no-pager
 journalctl -u infernex-agent -n 100 --no-pager
 ```
+
+### 5.3 在 XShell/SSH 中自然语言操作
+
+先配置一个同时支持 OpenAI Chat Completions 和 function/tool calling 的模型接口：
+
+```bash
+sudo /opt/infernex-agent/bin/configure-model.sh \
+  --base-url http://10.20.0.30:8000/v1 \
+  --model ops-model \
+  --api-key-file /root/infernex-openai.key \
+  --test-tools --show
+```
+
+然后进入交互终端：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+可直接输入“列出 models 中不健康的推理服务”“关联 qwen-pd 各组件最近日志并解释
+流中断”。`/clear` 清空会话，`/exit` 退出。只读工具可自动执行；每个写工具都会在
+本机显示名称和 JSON 参数并要求精确输入 `yes`。以下命令适合脚本查询，但永远不会
+批准写操作：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh --ask '扫描 models 并总结异常'
+```
+
+自然语言终端只调用 Agent 已注册的受限 MCP 工具，不提供任意 kubectl、Shell、YAML、
+镜像 URL 或模型 URL 执行面。当前部署能力只支持固定 catalog 或管理员预先批准的
+`InferNexServiceConfig`；模型不能自行生成生产配置。
 
 在内网开放 Dashboard 时，必须同时使用主机防火墙限制来源：
 

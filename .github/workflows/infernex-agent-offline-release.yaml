@@ -11,7 +11,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.3.0"
+        default: "0.3.0-rc.6"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.3.0' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.3.0-rc.6' }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +49,12 @@ jobs:
           VERSION: ${{ env.BUNDLE_VERSION }}
         run: |
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+
+      - name: Test bundle scripts
+        working-directory: component/InferNex-Agent
+        run: |
+          bash -n scripts/*.sh scripts/offline/*.sh scripts/host/*.sh test/scripts/*.sh
+          bash test/scripts/download-bundle.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -151,4 +157,4 @@ jobs:
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "Offline deployment bundles for existing InferNex clusters. Verify the architecture-specific outer SHA256 before extraction."
+            --notes "Installable cluster and host/systemd bundles for existing InferNex clusters. Host bundles include the XShell/SSH natural-language terminal; read tools run automatically and write tools require local approval. Agent bundles do not contain vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify the architecture-specific outer SHA256 before extraction."

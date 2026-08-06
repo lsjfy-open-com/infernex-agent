@@ -7,6 +7,25 @@ InferNex control plane. It reuses the existing `InferNexService` API and
 Bridge-generated status instead of reimplementing serving lifecycle or
 readiness logic.
 
+Published `linux-amd64` and `linux-arm64` bundles for both in-cluster and
+host/systemd installation are available on the
+[0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6).
+The repository's `scripts/download-bundle.sh` downloads the matching archive
+and checksum, verifies it, and extracts it without changing the cluster.
+
+Host installations also provide an interactive terminal:
+
+```bash
+sudo /opt/infernex-agent/bin/configure-model.sh \
+  --base-url http://model.internal:8000/v1 \
+  --model ops-model --api-key-file /secure/model.key --test-tools
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+The model must support OpenAI-compatible function/tool calling. Read-only MCP
+tools run automatically; every mutating tool requires an exact local `yes`.
+One-shot `--ask` mode always denies writes.
+
 The default installation publishes four typed, read-only tools:
 
 - `infernex_list_services`

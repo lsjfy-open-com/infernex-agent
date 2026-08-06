@@ -12,7 +12,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Configure optional OpenAI-compatible analysis for a host InferNex Agent.
+Configure optional OpenAI-compatible analysis and interactive chat.
 
 Usage:
   sudo configure-model.sh [options]
@@ -25,6 +25,7 @@ Actions:
   --timeout DURATION      Set request timeout, for example 60s or 2m
   --disable               Disable model analysis and remove its API key
   --test                  Send a small chat-completions request before applying
+  --test-tools            Force a harmless function call for terminal compatibility
   --show                  Print effective non-secret model configuration
 
 Control:
@@ -35,6 +36,7 @@ The model is optional. Without it, deterministic collection, issue
 classification, MCP, the snapshot API, and the dashboard continue to work.
 Configuration is stored in /etc/infernex-agent/agent.conf. The API key is
 stored separately as /etc/infernex-agent/openai-api-key and is never printed.
+Interactive chat additionally requires OpenAI-compatible function/tool calling.
 EOF
 }
 
@@ -54,6 +56,7 @@ api_key_set="false"
 clear_api_key="false"
 disable_model="false"
 test_model="false"
+test_tools="false"
 show_model="false"
 restart_service="true"
 
@@ -93,6 +96,11 @@ while (($#)); do
       ;;
     --test)
       test_model="true"
+      shift
+      ;;
+    --test-tools)
+      test_model="true"
+      test_tools="true"
       shift
       ;;
     --show)
@@ -245,6 +253,7 @@ test_endpoint() (
   local value_base_url="$1"
   local value_model="$2"
   local key_file="$3"
+  local test_tools="$4"
   local endpoint response_file header_file http_code escaped_model payload
 
   [[ -n "$value_base_url" && -n "$value_model" ]] ||
@@ -257,10 +266,17 @@ test_endpoint() (
 
   escaped_model="${value_model//\\/\\\\}"
   escaped_model="${escaped_model//\"/\\\"}"
-  payload="$(
-    printf '{"model":"%s","messages":[{"role":"user","content":"Reply with OK."}],"temperature":0,"stream":false,"max_tokens":8}' \
-      "$escaped_model"
-  )"
+  if [[ "$test_tools" == "true" ]]; then
+    payload="$(
+      printf '{"model":"%s","messages":[{"role":"user","content":"Call the supplied test tool."}],"tools":[{"type":"function","function":{"name":"infernex_test_tool","description":"Harmless compatibility test","parameters":{"type":"object","properties":{},"additionalProperties":false}}}],"tool_choice":{"type":"function","function":{"name":"infernex_test_tool"}},"temperature":0,"stream":false,"max_tokens":32}' \
+        "$escaped_model"
+    )"
+  else
+    payload="$(
+      printf '{"model":"%s","messages":[{"role":"user","content":"Reply with OK."}],"temperature":0,"stream":false,"max_tokens":8}' \
+        "$escaped_model"
+    )"
+  fi
 
   declare -a curl_args=(
     --silent
@@ -293,11 +309,18 @@ test_endpoint() (
     bundle_die "model endpoint returned HTTP ${http_code}"
   grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
     bundle_die "model endpoint response does not contain choices"
+  if [[ "$test_tools" == "true" ]]; then
+    grep -Eq '"tool_calls"[[:space:]]*:' "$response_file" ||
+      bundle_die "model endpoint does not return OpenAI-compatible tool_calls"
+    grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file" ||
+      bundle_die "model endpoint returned an unexpected tool call"
+  fi
   bundle_info "model endpoint test succeeded: ${endpoint}"
 )
 
 if [[ "$test_model" == "true" ]]; then
-  test_endpoint "$candidate_base_url" "$candidate_model" "$effective_key_file"
+  test_endpoint \
+    "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools"
 fi
 
 show_configuration() {
@@ -398,6 +421,10 @@ fi
 
 if [[ "$show_model" == "true" || "$modify_requested" == "true" ]]; then
   show_configuration
+fi
+
+if [[ -n "$candidate_base_url" && -x /opt/infernex-agent/bin/chat.sh ]]; then
+  bundle_info "interactive terminal: sudo /opt/infernex-agent/bin/chat.sh"
 fi
 
 if [[ "$modify_requested" == "false" &&

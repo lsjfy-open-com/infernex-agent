@@ -49,7 +49,8 @@ jobs:
         run: |
           go test -race ./...
           go vet ./...
-          bash -n scripts/offline/*.sh scripts/host/*.sh
+          bash -n scripts/*.sh scripts/offline/*.sh scripts/host/*.sh test/scripts/*.sh
+          bash test/scripts/download-bundle.sh
 
       - name: Set up Helm
         uses: azure/setup-helm@v5
@@ -185,6 +186,8 @@ jobs:
             cd "${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
             sha256sum --check SHA256SUMS
             ./payload/infernex-agent --help >/dev/null
+            test -x ./bin/chat.sh
+            test -f ./docs/install-and-modes-zh.md
           )
 
       - name: Install test CRDs
@@ -230,6 +233,7 @@ jobs:
             --target-namespace models
           sudo test -x /opt/infernex-agent/bin/configure-model.sh
           sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
+          sudo test -x /opt/infernex-agent/bin/chat.sh
           recovery_point="$(sudo sh -c \
             'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
           sudo /opt/infernex-agent/bin/infernex-agent cluster-state verify \
@@ -247,11 +251,28 @@ jobs:
           class Handler(BaseHTTPRequestHandler):
               def do_POST(self):
                   length = int(self.headers.get("content-length", "0"))
-                  self.rfile.read(length)
+                  request = json.loads(self.rfile.read(length))
+                  message = {"role": "assistant", "content": "OK"}
+                  if any(
+                      item.get("function", {}).get("name") == "infernex_test_tool"
+                      for item in request.get("tools", [])
+                  ):
+                      message = {
+                          "role": "assistant",
+                          "content": None,
+                          "tool_calls": [{
+                              "id": "ci-tool-call",
+                              "type": "function",
+                              "function": {
+                                  "name": "infernex_test_tool",
+                                  "arguments": "{}",
+                              },
+                          }],
+                      }
                   body = json.dumps({
                       "model": "ci-diagnostic-model",
                       "choices": [{
-                          "message": {"role": "assistant", "content": "OK"}
+                          "message": message
                       }],
                   }).encode()
                   self.send_response(200)
@@ -280,7 +301,7 @@ jobs:
             --model ci-diagnostic-model \
             --api-key-file "${RUNNER_TEMP}/host-model.key" \
             --timeout 30s \
-            --test \
+            --test-tools \
             --show |
             grep -q 'model_analysis=enabled'
           sudo grep -q \
@@ -290,6 +311,8 @@ jobs:
             /etc/infernex-agent/agent.conf \
             /etc/systemd/system/infernex-agent.service
           sudo systemctl is-active --quiet infernex-agent.service
+          sudo /opt/infernex-agent/bin/chat.sh --ask 'Reply with OK.' |
+            grep -q 'OK'
 
           sudo "${host_bundle}/bin/install-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \

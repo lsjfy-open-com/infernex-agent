@@ -398,6 +398,7 @@ agent_config="${config_root}/agent.conf"
 installed_configurator="${install_root}/bin/configure-model.sh"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
+installed_chat="${install_root}/bin/chat.sh"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -437,6 +438,7 @@ host_backup_targets=(
   "$installed_restorer"
   "$installed_bundle_lib"
   "$unit_path"
+  "$installed_chat"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -518,6 +520,7 @@ if [[ ! -f "$bundle_lib_source" ]]; then
   bundle_lib_source="${script_dir}/../offline/bundle-lib.sh"
 fi
 [[ -f "${script_dir}/configure-model.sh" &&
+  -f "${script_dir}/chat.sh" &&
   -f "${script_dir}/restore-host-install.sh" &&
   -f "$bundle_lib_source" ]] ||
   bundle_die "host configuration and restore tools are missing"
@@ -530,6 +533,9 @@ install -m 0755 -o root -g root \
 install -m 0644 -o root -g root \
   "$bundle_lib_source" \
   "$installed_bundle_lib"
+install -m 0755 -o root -g root \
+  "${script_dir}/chat.sh" \
+  "$installed_chat"
 
 if [[ -f "$installed_binary" ]]; then
   install -m 0755 -o root -g root "$installed_binary" "${installed_binary}.previous"
@@ -774,3 +780,4 @@ if [[ -n "$openai_base_url" || "$preserve_model_config" == "true" ]]; then
 else
   bundle_info "model analysis is disabled; configure it later with ${installed_configurator}"
 fi
+bundle_info "interactive terminal: sudo ${installed_chat}"

@@ -38,6 +38,33 @@ RBAC、固定目录、所有权校验或确认参数。
 完整的前置检查、安装矩阵、模式配置和验收步骤见：
 [在线、离线安装与运行模式指南](docs/install-and-modes-zh.md)。
 
+## 下载即用（0.3.0-rc.6）
+
+[Release 页面](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)
+提供四个可安装包；每个包旁边都有同名 `.sha256`：
+
+| 目标 | x86_64 / amd64 | aarch64 / arm64 |
+| --- | --- | --- |
+| 集群内 Pod | [集群 amd64 Bundle](https://github.com/lsjfy-open-com/infernex-agent/releases/download/infernex-agent-v0.3.0-rc.6/infernex-agent-offline-0.3.0-rc.6-linux-amd64.tar.gz) | [集群 arm64 Bundle](https://github.com/lsjfy-open-com/infernex-agent/releases/download/infernex-agent-v0.3.0-rc.6/infernex-agent-offline-0.3.0-rc.6-linux-arm64.tar.gz) |
+| master/引导节点 systemd | [宿主机 amd64 Bundle](https://github.com/lsjfy-open-com/infernex-agent/releases/download/infernex-agent-v0.3.0-rc.6/infernex-agent-host-offline-0.3.0-rc.6-linux-amd64.tar.gz) | [宿主机 arm64 Bundle](https://github.com/lsjfy-open-com/infernex-agent/releases/download/infernex-agent-v0.3.0-rc.6/infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz) |
+
+联网 Linux 可以让下载器自动识别 CPU 架构、下载 `.sha256`、校验并解压：
+
+```bash
+curl --fail --location --remote-name \
+  https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/download-bundle.sh
+chmod +x download-bundle.sh
+
+# 在 master/引导节点安装 systemd 服务
+./download-bundle.sh --mode host
+
+# 或准备集群内安装包
+./download-bundle.sh --mode cluster
+```
+
+下载器不会自行安装或修改集群。完全离线时，在联网机执行以上下载，将归档和
+`.sha256` 一起传入内网，再按下文安装。
+
 ## 集群内在线安装
 
 前提是 InferNex 与 Bridge 已经部署，并且集群存在
@@ -45,7 +72,7 @@ RBAC、固定目录、所有权校验或确认参数。
 命名空间，不读取 Secret、不读取 Pod 日志，也不创建或删除业务资源：
 
 ```bash
-git clone --branch infernex-agent-v0.3.0-rc.5 --depth 1 \
+git clone --branch infernex-agent-v0.3.0-rc.6 --depth 1 \
   https://github.com/lsjfy-open-com/infernex-agent.git
 cd infernex-agent/component/InferNex-Agent
 
@@ -77,9 +104,9 @@ kubectl --namespace infernex-system port-forward \
 
 ```bash
 sha256sum --check \
-  infernex-agent-offline-0.3.0-rc.5-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-offline-0.3.0-rc.5-linux-arm64.tar.gz
-cd infernex-agent-offline-0.3.0-rc.5-linux-arm64
+  infernex-agent-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
+tar -xzf infernex-agent-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-offline-0.3.0-rc.6-linux-arm64
 
 ./bin/install-agent.sh \
   --target-node master-01 \
@@ -99,9 +126,9 @@ cluster-admin。以 openEuler aarch64 为例：
 
 ```bash
 sha256sum --check \
-  infernex-agent-host-offline-0.3.0-rc.5-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-host-offline-0.3.0-rc.5-linux-arm64.tar.gz
-cd infernex-agent-host-offline-0.3.0-rc.5-linux-arm64
+  infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
+tar -xzf infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-host-offline-0.3.0-rc.6-linux-arm64
 
 ./bin/create-kubeconfig.sh \
   --target-namespace models \
@@ -160,8 +187,25 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
   --base-url http://llm.internal:8000/v1 \
   --model ops-model \
   --api-key-file /secure/infernex-agent-openai.key \
-  --test --show
+  --test-tools --show
 ```
+
+然后直接在 XShell/SSH 会话中进入自然语言终端：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+例如输入“扫描 models 命名空间并解释异常”“分析 qwen-pd 最近一次中断”。只读
+工具自动执行；部署、删除、恢复和实验等写工具会显示工具名与参数，只有本地运维
+人员精确输入 `yes` 才执行。`--ask '问题'` 可用于一次性查询，但该模式固定拒绝
+所有写操作。
+
+交互模型除兼容 Chat Completions 外，还必须支持 OpenAI function/tool calling。
+当前自然语言部署仍遵守固定目录和批准 profile 边界，不能输入任意 YAML、镜像或
+Shell。现有 openEuler vLLM-Ascend 0.23.0 镜像无需重新下载：已运行的实例可直接被
+扫描和诊断，新增候选可通过引用该镜像的既有、管理员批准
+`InferNexServiceConfig` 交给 InferNex Bridge 拉起。
 
 详见[模型配置手册](docs/model-configuration-zh.md)。
 
