@@ -293,4 +293,9 @@ jq -e --arg pass "${experiment_id}" --arg failed "${rollback_experiment_id}" '
   any(.[]; .id == $failed and .status == "failed")
 ' <<<"${experiment_snapshot}" >/dev/null
 
+# A passed candidate is deliberately retained in production. This smoke test
+# shares its namespace with the following tiny-model E2E, so remove only the
+# synthetic candidate after all retention and dashboard assertions complete.
+kubectl -n "${model_namespace}" delete infernexservice smoke-pass-s01 --wait=true
+
 echo "InferNex Agent Kind smoke test passed"
