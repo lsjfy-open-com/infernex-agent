@@ -38,6 +38,16 @@ type stubDiagnoser struct{}
 
 type stubExperiments struct{}
 
+func (stubDeployer) ListSources(context.Context) (deployer.SourceList, error) {
+	return deployer.SourceList{
+		TargetNamespace: "infernex-agent-workspace",
+		Sources: []deployer.Source{{
+			SourceID: "service:models:stable", Kind: "stable-service",
+			Namespace: "models", Name: "stable", TargetNamespace: "infernex-agent-workspace",
+		}},
+	}, nil
+}
+
 func (stubDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (diagnostics.Report, error) {
 	return diagnostics.Report{
 		Service: diagnostics.ServiceReference{Namespace: request.Namespace, Name: request.Name},
@@ -67,7 +77,7 @@ func (stubDeployer) Deploy(_ context.Context, request deployer.Request) (deploye
 	return deployer.Result{
 		Namespace:    request.Namespace,
 		Name:         request.Name,
-		CatalogID:    request.CatalogID,
+		SourceID:     request.SourceID,
 		Operation:    "created",
 		ResourceKind: "InferNexService",
 	}, nil
@@ -77,7 +87,7 @@ func (stubDeployer) Delete(_ context.Context, request deployer.Request) (deploye
 	return deployer.Result{
 		Namespace:    request.Namespace,
 		Name:         request.Name,
-		CatalogID:    request.CatalogID,
+		SourceID:     request.SourceID,
 		Operation:    "deleted",
 		ResourceKind: "InferNexService",
 	}, nil
@@ -171,8 +181,8 @@ func TestServerPublishesOnlyReadOnlyDomainTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 4 {
-		t.Fatalf("tool count = %d, want 4", len(list.Tools))
+	if len(list.Tools) != 5 {
+		t.Fatalf("tool count = %d, want 5", len(list.Tools))
 	}
 	for _, tool := range list.Tools {
 		if tool.Annotations == nil ||
@@ -258,8 +268,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 7 {
-		t.Fatalf("tool count = %d, want 7", len(list.Tools))
+	if len(list.Tools) != 9 {
+		t.Fatalf("tool count = %d, want 9", len(list.Tools))
 	}
 	tools := make(map[string]*mcp.Tool, len(list.Tools))
 	for _, tool := range list.Tools {
@@ -268,7 +278,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	deployTool := tools["infernex_deploy_model"]
 	deleteTool := tools["infernex_delete_model"]
 	changeTool := tools["infernex_get_change"]
-	if deployTool == nil || deleteTool == nil || changeTool == nil {
+	sourcesTool := tools["infernex_list_deployment_sources"]
+	if deployTool == nil || deleteTool == nil || changeTool == nil || sourcesTool == nil {
 		t.Fatalf("deployment tools missing: %#v", tools)
 	}
 	if deployTool.Annotations == nil ||
@@ -290,10 +301,9 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "infernex_deploy_model",
 		Arguments: map[string]any{
-			"namespace": "models",
-			"name":      "tiny",
-			"catalogId": deployer.TinyModelCatalogID,
-			"confirm":   true,
+			"name":     "qwen-copy",
+			"sourceId": "service:models:stable",
+			"confirm":  true,
 		},
 	})
 	if err != nil {
@@ -310,7 +320,7 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	if err := json.Unmarshal(payload, &deployment); err != nil {
 		t.Fatalf("unmarshal deploy result: %v", err)
 	}
-	if deployment.Operation != "created" || deployment.Name != "tiny" {
+	if deployment.Operation != "created" || deployment.Name != "qwen-copy" {
 		t.Fatalf("deploy result = %#v", deployment)
 	}
 }
@@ -341,8 +351,8 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 8 {
-		t.Fatalf("tool count = %d, want 8", len(list.Tools))
+	if len(list.Tools) != 9 {
+		t.Fatalf("tool count = %d, want 9", len(list.Tools))
 	}
 	tools := make(map[string]*mcp.Tool, len(list.Tools))
 	for _, tool := range list.Tools {

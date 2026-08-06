@@ -32,11 +32,14 @@ for the actual managed workloads and pods. Use infernex_get_events for recent
 causal evidence. Do not infer a successful rollout from desired state alone.`
 
 const deploymentInstructions = `
-Catalog deployment is explicitly enabled. It only accepts a fixed catalogId,
-namespace, and name; it never accepts arbitrary images, commands, URLs, or
-Kubernetes objects. Deployment and deletion both require confirm=true. Inspect
-the resulting service and topology before reporting a successful rollout.
-Use infernex_get_change with the returned changeId to observe commit or rollback.`
+Conversational deployment is explicitly enabled. First call
+infernex_list_deployment_sources, then select its opaque sourceId. The Agent
+reuses only an existing Ready service or an administrator-created
+InferNexServiceConfig in its fixed workspace namespace; it never accepts
+arbitrary images, commands, model URLs, namespaces, or Kubernetes objects.
+Deployment and deletion both require confirm=true. Inspect the resulting
+service and topology before reporting a successful rollout. Use
+infernex_get_change with the returned changeId to observe commit or rollback.`
 
 const diagnosticInstructions = `
 Bounded service diagnostics are enabled. infernex_diagnose_service reads only
@@ -68,10 +71,21 @@ type eventInput struct {
 }
 
 type deploymentInput struct {
-	Namespace string `json:"namespace" jsonschema:"Kubernetes namespace approved by the Agent RBAC scope"`
-	Name      string `json:"name" jsonschema:"DNS-compatible name for the InferNexService instance"`
-	CatalogID string `json:"catalogId" jsonschema:"Fixed deployment catalog identifier; currently smollm2-135m-q4"`
-	Confirm   bool   `json:"confirm" jsonschema:"Must be true after reviewing namespace, name, and catalogId"`
+	Name     string `json:"name" jsonschema:"DNS-compatible name for the new InferNexService instance"`
+	SourceID string `json:"sourceId" jsonschema:"Opaque sourceId returned by infernex_list_deployment_sources"`
+	Confirm  bool   `json:"confirm" jsonschema:"Must be true after reviewing the discovered source and target name"`
+}
+
+type deletionInput struct {
+	Name    string `json:"name" jsonschema:"Name of an Agent-owned InferNexService in the fixed workspace namespace"`
+	Confirm bool   `json:"confirm" jsonschema:"Must be true after reviewing the target name"`
+}
+
+type testCatalogInput struct {
+	Namespace string `json:"namespace"`
+	Name      string `json:"name"`
+	CatalogID string `json:"catalogId"`
+	Confirm   bool   `json:"confirm"`
 }
 
 type changeInput struct {
@@ -100,6 +114,10 @@ type experimentIDInput struct {
 
 type emptyInput struct{}
 
+type allServicesOutput struct {
+	Namespaces []observer.ServiceList `json:"namespaces"`
+}
+
 type experimentListOutput struct {
 	Experiments []experiment.Plan `json:"experiments"`
 }
@@ -108,6 +126,20 @@ type serverOptions struct {
 	deployer    deployer.Deployer
 	diagnoser   diagnostics.Diagnoser
 	experiments experiment.Manager
+	namespaces  []string
+	testCatalog bool
+}
+
+func WithNamespaces(namespaces []string) Option {
+	return func(options *serverOptions) {
+		options.namespaces = append([]string(nil), namespaces...)
+	}
+}
+
+func WithTestCatalog() Option {
+	return func(options *serverOptions) {
+		options.testCatalog = true
+	}
 }
 
 func WithDiagnoser(diagnoser diagnostics.Diagnoser) Option {
@@ -169,6 +201,22 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input namespaceInput) (*mcp.CallToolResult, observer.ServiceList, error) {
 		output, err := domainObserver.ListServices(ctx, input.Namespace)
 		return nil, output, err
+	})
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "infernex_list_all_services",
+		Description: "List normalized InferNexService readiness summaries across all namespaces automatically discovered during installation.",
+		Annotations: readOnly("List all discovered InferNex services"),
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, allServicesOutput, error) {
+		output := allServicesOutput{Namespaces: make([]observer.ServiceList, 0, len(options.namespaces))}
+		for _, namespace := range options.namespaces {
+			services, err := domainObserver.ListServices(ctx, namespace)
+			if err != nil {
+				return nil, allServicesOutput{}, err
+			}
+			output.Namespaces = append(output.Namespaces, services)
+		}
+		return nil, output, nil
 	})
 
 	if options.diagnoser != nil {
@@ -233,35 +281,61 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			}
 		}
 
-		mcp.AddTool(server, &mcp.Tool{
-			Name: "infernex_deploy_model",
-			Description: "Create one Agent-owned InferNexService from the fixed CPU test-model catalog. " +
-				"Arbitrary workload fields are not accepted.",
-			Annotations: mutating("Deploy catalog model", false),
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentInput) (*mcp.CallToolResult, deployer.Result, error) {
-			output, err := options.deployer.Deploy(ctx, deployer.Request{
-				Namespace: input.Namespace,
-				Name:      input.Name,
-				CatalogID: input.CatalogID,
-				Confirm:   input.Confirm,
+		if options.testCatalog {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_deploy_model",
+				Description: "CI-only Kind fixture: deploy the fixed CPU test catalog entry.",
+				Annotations: mutating("Deploy Kind test model", false),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input testCatalogInput) (*mcp.CallToolResult, deployer.Result, error) {
+				output, err := options.deployer.Deploy(ctx, deployer.Request{
+					Namespace: input.Namespace, Name: input.Name,
+					CatalogID: input.CatalogID, Confirm: input.Confirm,
+				})
+				return nil, output, err
 			})
-			return nil, output, err
-		})
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_delete_model",
+				Description: "CI-only Kind fixture: delete an Agent-owned CPU test model.",
+				Annotations: mutating("Delete Kind test model", true),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input testCatalogInput) (*mcp.CallToolResult, deployer.Result, error) {
+				output, err := options.deployer.Delete(ctx, deployer.Request{
+					Namespace: input.Namespace, Name: input.Name,
+					CatalogID: input.CatalogID, Confirm: input.Confirm,
+				})
+				return nil, output, err
+			})
+		} else {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_list_deployment_sources",
+				Description: "Discover existing Ready InferNex services and administrator-created engine profiles that may be reused for a guarded deployment. No user-supplied YAML or namespace is accepted.",
+				Annotations: readOnly("List safe deployment sources"),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, deployer.SourceList, error) {
+				output, err := options.deployer.ListSources(ctx)
+				return nil, output, err
+			})
 
-		mcp.AddTool(server, &mcp.Tool{
-			Name: "infernex_delete_model",
-			Description: "Delete one Agent-owned catalog InferNexService. " +
-				"Resources not owned by this Agent catalog are refused.",
-			Annotations: mutating("Delete catalog model", true),
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentInput) (*mcp.CallToolResult, deployer.Result, error) {
-			output, err := options.deployer.Delete(ctx, deployer.Request{
-				Namespace: input.Namespace,
-				Name:      input.Name,
-				CatalogID: input.CatalogID,
-				Confirm:   input.Confirm,
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_deploy_model",
+				Description: "Create one Agent-owned InferNexService in the fixed workspace by reusing a source returned by infernex_list_deployment_sources. Arbitrary workload fields are not accepted.",
+				Annotations: mutating("Deploy model from existing InferNex source", false),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentInput) (*mcp.CallToolResult, deployer.Result, error) {
+				output, err := options.deployer.Deploy(ctx, deployer.Request{
+					Name: input.Name, SourceID: input.SourceID, Confirm: input.Confirm,
+				})
+				return nil, output, err
 			})
-			return nil, output, err
-		})
+
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_delete_model",
+				Description: "Delete one Agent-owned InferNexService from the fixed workspace. Resources without matching Agent change ownership are refused.",
+				Annotations: mutating("Delete Agent-owned model", true),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input deletionInput) (*mcp.CallToolResult, deployer.Result, error) {
+				output, err := options.deployer.Delete(ctx, deployer.Request{
+					Name: input.Name, Confirm: input.Confirm,
+				})
+				return nil, output, err
+			})
+		}
 
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "infernex_get_change",

@@ -1,5 +1,9 @@
 # openEuler 管理/引导节点宿主机部署
 
+> 普通用户请优先阅读[产品使用指南](product-guide-zh.md)，解压宿主机包后只需执行
+> `sudo ./install.sh`。本文后续的 namespace、kubeconfig、RBAC 和 systemd 参数是安全
+> 审计及定制环境的高级手工接口，不是正常安装必填项；`model-a` 等名称仅为示例。
+
 本文说明如何把 InferNex Agent 作为普通 Linux systemd 服务安装到
 Kubernetes master 或集群引导节点，而不是安装为集群内 Pod。
 

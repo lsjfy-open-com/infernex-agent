@@ -15,6 +15,17 @@
 
 <hr>
 
+## InferNex Agent：自然语言管理入口
+
+InferNex Agent 是运行在 master、引导节点或独立管理节点上的 AI Agent，不是要求用户手工拼接 Kubernetes 参数的工具。它自动发现既有 InferNex 环境，用户只配置 Agent 背后的 OpenAI 兼容模型接口，然后直接通过自然语言完成扫描、诊断、基于稳定配置的部署、观察和失败回退。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+sudo infernex-agent chat
+```
+
+离线包同样只需解压后执行 `sudo ./install.sh`。`model-a`、`models` 等名称只是旧的高级手工示例，不是普通安装参数。完整说明见 [InferNex Agent 中文产品指南](component/InferNex-Agent/docs/product-guide-zh.md)。
+
 ## Updates
  - [26-06] 推理后端切换为 LeaderWorkerSet（LWS）部署编排，原生支持多 DP 协同；PD-Orchestrator 的 elastic-scaler 新增 APA 扩缩算法，支持多样指标扩缩；Hermes-router 新增基于算力饱和度与时延预测的路由策略；cache-indexer 实现 L3 级 KV-aware 感知，与 Mooncake 联动支撑全局 KVCache 索引；eagle-eye 新增权重分发及灵衢网络动态指标获取；InferNex 新增 Helm 部署前置校验工具，覆盖 NPU 驱动、硬件资源及网络通信等环境检查，提前发现部署风险。
  - [26-05] 新增 InferNex-Bridge 组件，兼容 KServe 接入 InferNex 推理套件，支持 LLMInferenceService 与 InferNexService 双 CRD 声明式部署，适配层自动完成编排与路由打通。

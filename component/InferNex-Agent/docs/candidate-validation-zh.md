@@ -4,6 +4,21 @@
 不会生成新的集群离线 Bundle，也不会重新打包 vLLM、vLLM-Ascend、Mooncake、CANN、
 模型权重或已有推理镜像。
 
+若本次改动涉及首次安装和自动发现，请从对应 CI 运行下载完整的
+`infernex-agent-host-offline-0.3.0-linux-arm64` Artifact，而不只是裸二进制。校验并
+解压后，在既有 InferNex 管理节点执行：
+
+```bash
+sudo ./install.sh --skip-model-setup
+sudo infernex-agent doctor --config /etc/infernex-agent/agent.conf --skip-model
+sudo infernex-agent setup
+sudo infernex-agent chat
+```
+
+这个候选宿主机包用于验证一键安装、环境发现、专用 RBAC、Agentic 对话和稳定基线
+部署；验证通过后才发布新的正式/预发布包。旧 `0.3.0-rc.6` 不包含 `install.sh`，
+不能用于验证这一入口。
+
 ## 1. 两条相互独立的流水线
 
 | 阶段 | 产物 | 用途 | 保留策略 |

@@ -142,6 +142,9 @@ install -m 0755 \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
+install -m 0755 \
+  "${agent_dir}/scripts/host/quick-install.sh" \
+  "${bundle_root}/install.sh"
 install -m 0644 \
   "${agent_dir}/docs/host-install-openeuler-zh.md" \
   "${bundle_root}/README.md"

@@ -59,7 +59,8 @@ helm upgrade --install "${release_name}" "${agent_chart}" \
   --set "image.tag=${agent_image_tag}" \
   --set "image.pullPolicy=Never" \
   --set "rbac.targetNamespaces[0]=${model_namespace}" \
-  --set "tools.deployment.enabled=true"
+  --set "tools.deployment.enabled=true" \
+  --set "tools.deployment.testCatalog=true"
 
 kubectl -n "${agent_namespace}" rollout status \
   "deployment/${release_name}" \

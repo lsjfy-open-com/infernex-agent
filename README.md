@@ -12,6 +12,20 @@ InferNex domain tools to MCP-compatible runtimes while reusing the existing
 
 ## Agent v0.3
 
+For normal management-node use, InferNex Agent is an agentic runtime rather
+than a parameter-driven Kubernetes utility. Install it with one command, let it
+discover the existing InferNex environment, configure only its
+OpenAI-compatible model interface, then work through natural language:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+sudo infernex-agent chat
+```
+
+See the [Chinese product guide](component/InferNex-Agent/docs/product-guide-zh.md).
+Manual namespaces and values such as `model-a` in advanced documents are
+examples, not normal installation inputs.
+
 The Agent can now run continuously on an InferNex management or Kubernetes
 control-plane node. Its supervisor scans explicit namespaces, correlates
 InferNex status, managed topology, Pod evidence, and recent Events, and serves
@@ -27,17 +41,20 @@ tools:
 - `infernex_get_topology`
 - `infernex_get_events`
 
-An explicit, namespace-scoped deployment mode adds two catalog tools:
+An explicit, namespace-scoped deployment mode adds source discovery plus two
+guarded write tools:
 
+- `infernex_list_deployment_sources` (read-only)
 - `infernex_deploy_model`
 - `infernex_delete_model`
 
-The deployment input is limited to a namespace, instance name, fixed catalog
-ID, and explicit confirmation. It cannot accept arbitrary images, commands,
-URLs, YAML, shell, or `kubectl`. The first catalog entry is a CPU-only
-SmolLM2-135M Q4 model for free Kind testing. The Agent creates only the
-canonical `InferNexService`; InferNex Bridge remains responsible for the
-Deployment, Service, status, and garbage collection.
+The Agent automatically chooses from existing Ready services or
+administrator-created `InferNexServiceConfig` engine profiles and deploys into
+its fixed workspace. The normal user does not provide a namespace or catalog
+ID. It cannot accept arbitrary images, commands, URLs, YAML, shell, or
+`kubectl`. The Agent creates only the canonical `InferNexService`; InferNex
+Bridge remains responsible for the Deployment, Service, status, and garbage
+collection. A CPU-only SmolLM fixture remains for free Kind CI only.
 
 The default Helm configuration has deployment mode disabled, uses
 namespace-scoped read-only RBAC, and has no permission to read Secrets or

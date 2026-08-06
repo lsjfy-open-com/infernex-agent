@@ -1,5 +1,9 @@
 # InferNex Agent 在线、离线安装与运行模式指南
 
+> 普通管理节点用户请使用[产品使用指南的一键安装](product-guide-zh.md)：安装器会自动
+> 发现 kubeconfig、InferNex 环境和业务命名空间，只要求配置 Agent 模型接口。本文的
+> 显式 namespace、Helm values 和 RBAC 参数用于高级定制与审计。
+
 本文提供统一的安装与使用入口，覆盖 Kubernetes 集群内、master/引导节点宿主机、
 联网和完全离线四类环境。深入的安全、回退和实验语义通过文末链接继续说明。
 
@@ -417,11 +421,14 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 模型不可用时，确定性诊断和其他 Agent 功能继续运行。详见
 [模型配置手册](model-configuration-zh.md)。
 
-### 6.4 模式 D：固定目录部署
+### 6.4 模式 D：基于稳定来源的 Agentic 部署
 
-该模式只接受 `namespace`、`name`、固定 `catalogId` 和 `confirm: true`，不能接收任意
-镜像、URL、命令、Patch 或 YAML。新服务未在超时内 Ready 或当前 generation 报告
-Degraded 时，Agent 校验所有权与 `changeId` 后删除本次新建服务。
+正常使用时，用户只需用自然语言描述目标。Agent 自动发现当前代 Ready、没有
+Degraded 的既有 `InferNexService`，以及包含完整 engine 的 Bridge profile，选择
+稳定来源并说明计划。用户不需要填写 namespace、`catalogId`、镜像、命令或 YAML。
+写操作经本机确认后只在 `infernex-agent-workspace` 创建标准 `InferNexService`；
+未在超时内 Ready 或当前 generation 报告 Degraded 时，Agent 校验所有权与
+`changeId` 后仅删除本次新建服务。
 
 生产 Helm 配置：
 
@@ -433,6 +440,8 @@ rbac:
 tools:
   deployment:
     enabled: true
+    workspaceNamespace: infernex-agent-workspace
+    templateNamespace: infernex-bridge-system
 changeSafety:
   persistence:
     enabled: true

@@ -18,6 +18,7 @@ Usage:
   sudo configure-model.sh [options]
 
 Actions:
+  --interactive           Prompt only for the Agent model interface
   --base-url URL          Set or replace the OpenAI-compatible base URL
   --model MODEL           Set or replace the diagnostic model
   --api-key-file FILE     Install or rotate the protected API key
@@ -59,9 +60,15 @@ test_model="false"
 test_tools="false"
 show_model="false"
 restart_service="true"
+interactive="false"
+interactive_key_file=""
 
 while (($#)); do
   case "$1" in
+    --interactive)
+      interactive="true"
+      shift
+      ;;
     --base-url)
       [[ $# -ge 2 ]] || bundle_die "--base-url requires a value"
       base_url="$2"
@@ -123,6 +130,39 @@ done
 
 [[ ${EUID} -eq 0 ]] ||
   bundle_die "configure-model.sh must run as root"
+
+cleanup_interactive_key() {
+  [[ -z "$interactive_key_file" ]] || rm -f -- "$interactive_key_file"
+}
+trap cleanup_interactive_key EXIT
+
+if [[ "$interactive" == "true" ]]; then
+  [[ "$disable_model" == "false" && "$show_model" == "false" ]] ||
+    bundle_die "--interactive cannot be combined with --disable or --show"
+  printf 'OpenAI 兼容接口地址（例如以 /v1 结尾；请填写真实地址）: '
+  IFS= read -r base_url
+  base_url="${base_url%/}"
+  [[ -n "$base_url" ]] || bundle_die "model interface URL cannot be empty"
+  printf '接口中的真实模型名（不是示例名称）: '
+  IFS= read -r model
+  [[ -n "$model" ]] || bundle_die "model name cannot be empty"
+  printf 'API Key（无鉴权直接回车）: '
+  IFS= read -r -s interactive_key
+  printf '\n'
+  base_url_set="true"
+  model_set="true"
+  test_model="true"
+  test_tools="true"
+  if [[ -n "$interactive_key" ]]; then
+    interactive_key_file="$(mktemp /tmp/infernex-agent-model-key.XXXXXX)"
+    chmod 0600 "$interactive_key_file"
+    printf '%s\n' "$interactive_key" >"$interactive_key_file"
+    unset interactive_key
+    api_key_source="$interactive_key_file"
+    api_key_set="true"
+  fi
+fi
+
 [[ -r "$config_file" ]] ||
   bundle_die "${config_file} is missing; install the host Agent first"
 id "$service_user" >/dev/null 2>&1 ||

@@ -3,22 +3,21 @@
 ## Decision
 
 InferNex Agent is an InferNex control-plane component on a management node. It
-is not part of the inference request data path. The component is a typed MCP
-server with an optional continuous supervisor and read-only dashboard.
-kubectl-ai remains a replaceable interactive runtime; the supervisor uses only
-a narrow OpenAI-compatible analysis client for unattended advisory runs.
-Observation is the default; a fixed deployment catalog is an explicit,
-namespace-scoped opt-in.
+is not part of the inference request data path. Its primary product interface
+is a model-driven conversation loop: understand intent, discover the current
+environment, form a plan, call bounded domain tools, observe the outcome,
+diagnose or roll back, and explain the evidence. The same typed tools are also
+available over MCP for optional external runtimes. A continuous supervisor and
+read-only dashboard keep deterministic observation alive without the model.
 
 ```text
-Operator
+Operator (natural language)
    |
    v
-kubectl-ai (conversation, LLM, session, approval UX)
-   |
-   | MCP
-   v
-InferNex Agent (typed domain tools, policy/catalog boundary)
+InferNex Agent conversation orchestrator
+   +-- OpenAI-compatible model: intent, planning, tool selection, explanation
+   +-- local approval gate for write tools
+   +-- typed domain tools, policy, ownership and rollback boundary
    |
    | Kubernetes API, namespace-scoped identity
    v
@@ -52,8 +51,8 @@ Immutable in-memory snapshot
 
 | Capability | Owner | Agent behavior |
 | --- | --- | --- |
-| Conversation, model providers, session UI | kubectl-ai | Reuse through MCP client mode |
-| Desired serving topology | `InferNexService` | Read canonical CRD fields; create only fixed catalog objects when enabled |
+| Conversation, model provider, terminal session | Agent `chat` runtime | Run the Agentic loop in the standalone binary; optionally expose the same tools to external MCP clients |
+| Desired serving topology | `InferNexService` | Read canonical CRD fields; clone only discovered stable sources into an isolated workspace |
 | Lifecycle and readiness | InferNex-Bridge | Reuse `.status`; do not recompute control-plane readiness |
 | Actual group topology | LeaderWorkerSet / Kubernetes | Return a compact evidence view |
 | Routing and cache state | Hermes / Cache Indexer | Add domain adapters when their stable APIs are available |
@@ -70,35 +69,34 @@ quietly becoming a second cluster administration interface.
 
 ## Recommended management-node composition
 
-For an in-cluster management node, the preferred production composition is one
-Pod with two separately built containers:
+For an in-cluster management node, the standalone Agent can run directly. An
+external runtime remains an optional integration, not a dependency:
 
 ```text
 Pod network namespace
-  kubectl-ai runtime
-    - web/terminal session and LLM provider
+  infernex-agent
+    - conversation/model runtime and typed domain tools
+    - projected, short-lived, namespace-scoped ServiceAccount token
+    - write calls pass policy and explicit approval gates
+
+  optional external Agent runtime
     - MCP client -> http://127.0.0.1:8080/mcp
     - no Kubernetes ServiceAccount token mount
-
-  infernex-agent domain sidecar
-    - typed MCP tools
-    - projected, short-lived, read-only ServiceAccount token
 ```
 
 Pod-wide ServiceAccount token automount must remain disabled. The chart
 projects the token and cluster CA only into the InferNex Agent container,
-which prepares this isolation before kubectl-ai is optionally co-scheduled.
-This allows kubectl-ai's conversation and provider implementation to be reused
-without granting its generic kubectl or shell tools a Kubernetes identity.
+which keeps an optionally co-scheduled generic runtime away from Kubernetes
+credentials.
 
 For a fixed master/bootstrap host, the same Agent binary can instead run as a
 non-root systemd service:
 
 ```text
 openEuler management host
-  local Agent Runtime -> http://127.0.0.1:8080/mcp
   infernex-agent.service
-    - static binary, no container/NPU runtime dependency
+    - standalone chat/model runtime and MCP server in one static binary
+    - no container/NPU runtime dependency
     - dedicated namespace-scoped kubeconfig
     - loopback MCP and dashboard by default
     - optional internal OpenAI-compatible endpoint
@@ -107,7 +105,8 @@ openEuler management host
         Kubernetes apiserver -> InferNexService / Bridge status
 ```
 
-The host mode uses the same observer, catalog, remediator, and supervisor. It
+The host mode uses the same conversation loop, observer, source-aware deployer,
+remediator, and supervisor. It
 does not introduce SSH execution or direct node/NPU access. A one-time
 bootstrap command may use an administrator kubeconfig to create the dedicated
 ServiceAccount and Roles; the long-running service must not use `admin.conf`.
@@ -285,7 +284,7 @@ does not switch traffic. Bridge still owns all workload reconciliation.
 
 ## Implemented change-safety slice
 
-The fixed catalog now has a durable, bounded rollback contract:
+Stable-source deployment has a durable, bounded rollback contract:
 
 1. append a `planned` event containing the exact pre-change state;
 2. create only an Agent-owned `InferNexService` carrying the same change ID;
@@ -314,8 +313,9 @@ Suggested permission levels:
 
 - L0: default read-only observation.
 - L1: recommendation and immutable plans.
-- L2: approved low-risk changes. The fixed test-model catalog is the first
-  constrained L2 slice; bounded replica updates still require a plan contract.
+- L2: approved low-risk changes. Stable-source deployment in the isolated
+  workspace is the first constrained L2 slice; bounded replica updates still
+  require a plan contract. The tiny CPU catalog is Kind CI-only.
 - L3: privileged break-glass actions with external approval and audit.
 
 The first mutation should target an InferNex-owned API, not raw Pod deletion or

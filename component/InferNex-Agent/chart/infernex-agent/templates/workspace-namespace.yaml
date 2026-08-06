@@ -1,0 +1,18 @@
+{{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) }}
+{{- $workspace := lookup "v1" "Namespace" "" .Values.tools.deployment.workspaceNamespace }}
+{{- if $workspace }}
+{{- if ne (dig "metadata" "labels" "agent.infernex.io/workspace" "" $workspace) "true" }}
+{{- fail (printf "deployment workspace namespace %q already exists without agent.infernex.io/workspace=true" .Values.tools.deployment.workspaceNamespace) }}
+{{- end }}
+{{- else }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.tools.deployment.workspaceNamespace }}
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    agent.infernex.io/workspace: "true"
+{{- end }}
+{{- end }}

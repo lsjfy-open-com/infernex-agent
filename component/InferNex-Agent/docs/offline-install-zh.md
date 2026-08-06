@@ -1,5 +1,9 @@
 # InferNex Agent 离线构建与既有集群安装
 
+> 在 master/引导节点安装第一版 Agent 时，请优先使用[产品使用指南](product-guide-zh.md)
+> 中的宿主机离线包：校验、解压后执行 `sudo ./install.sh`，无需填写 namespace。
+> 本文主要保留集群内 Pod/Helm 形态和高级离线维护流程。
+
 本文适用于已经在内网 Kubernetes 中部署 InferNex、InferNex Bridge 和
 PD 分离推理服务，仅新增管理节点 Agent 的场景。
 

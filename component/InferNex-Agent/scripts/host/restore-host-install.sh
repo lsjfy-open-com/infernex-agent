@@ -107,6 +107,7 @@ host_targets=(
   /opt/infernex-agent/bin/bundle-lib.sh
   /etc/systemd/system/infernex-agent.service
   /opt/infernex-agent/bin/chat.sh
+  /usr/local/bin/infernex-agent
 )
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"

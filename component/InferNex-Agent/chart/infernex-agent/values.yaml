@@ -85,6 +85,10 @@ tools:
     # only create/delete InferNexService resources in targetNamespaces; it
     # still cannot submit arbitrary Kubernetes objects.
     enabled: false
+    # CI-only compatibility fixture. Never enable in production.
+    testCatalog: false
+    workspaceNamespace: infernex-agent-workspace
+    templateNamespace: infernex-bridge-system
 
 changeSafety:
   # Newly created catalog services that do not become Ready in this window

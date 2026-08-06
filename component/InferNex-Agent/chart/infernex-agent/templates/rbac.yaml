@@ -50,6 +50,9 @@ subjects:
 {{- if not $targetNamespaces }}
 {{- $targetNamespaces = list .Release.Namespace }}
 {{- end }}
+{{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) }}
+{{- $targetNamespaces = uniq (append $targetNamespaces .Values.tools.deployment.workspaceNamespace) }}
+{{- end }}
 {{- range $index, $namespace := $targetNamespaces }}
 {{- if $index }}
 ---
@@ -65,7 +68,7 @@ rules:
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs: ["get", "list"]
-  {{- if or $root.Values.tools.deployment.enabled $root.Values.supervisor.remediation.enabled $root.Values.experiments.enabled }}
+  {{- if or $root.Values.tools.deployment.testCatalog $root.Values.supervisor.remediation.enabled $root.Values.experiments.enabled (and $root.Values.tools.deployment.enabled (eq $namespace $root.Values.tools.deployment.workspaceNamespace)) }}
   - apiGroups: ["infernex.infernex.io"]
     resources: ["infernexservices"]
     verbs:
@@ -133,6 +136,36 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: {{ include "infernex-agent.fullname" . }}-experiment-profiles
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "infernex-agent.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-deployment-profiles
+  namespace: {{ .Values.tools.deployment.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexserviceconfigs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "infernex-agent.fullname" . }}-deployment-profiles
+  namespace: {{ .Values.tools.deployment.templateNamespace }}
+  labels:
+    {{- include "infernex-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "infernex-agent.fullname" . }}-deployment-profiles
 subjects:
   - kind: ServiceAccount
     name: {{ include "infernex-agent.serviceAccountName" . }}

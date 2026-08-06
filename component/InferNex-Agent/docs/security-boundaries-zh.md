@@ -74,20 +74,24 @@ ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允�
 - 模型 URI 中的用户名、密码、query 和 fragment；
 - 任意原始 Kubernetes 对象遍历能力。
 
-模型输出仅作为文本建议保存到内存快照。它不会进入自动恢复条件，也不能
-决定 catalog、对象名称、镜像、URL、命令或 YAML。
+后台 Supervisor 的分析模型输出仅作为文本建议保存到内存快照，不进入自动恢复
+或回退条件。交互式对话模型可以提出 typed tool 调用和对象名称，但它不持有集群
+凭据；调用仍须通过工具 schema、稳定来源、固定 workspace、RBAC、所有权检查和
+本机批准。模型永远不能提供任意镜像、URL、命令、Patch 或 YAML。
 
 ## 6. 写能力边界
 
-### 固定目录部署
+### 稳定来源部署
 
-显式启用后，Agent 只能在批准命名空间创建/删除
+显式启用后，Agent 只能在固定 `infernex-agent-workspace` 创建/删除
 `InferNexService`，且必须满足：
 
-- 请求使用编译进二进制的 catalog ID；
+- 来源是 Agent 刚发现并在执行时重新校验的 Ready 既有服务，或包含完整 engine
+  的 Bridge profile；
 - 调用者显式 `confirm=true`；
 - 对象带 Agent 所有权标签；
 - 重名对象的所有权和 spec 必须完全匹配；
+- 来源命名空间只有只读权限，写权限仅存在于独立 workspace；
 - Agent 不直接创建下游 Deployment 或 Service。
 
 ### 自动恢复

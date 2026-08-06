@@ -1,5 +1,15 @@
 # InferNex Agent 模型配置手册
 
+普通宿主机用户只需执行：
+
+```bash
+sudo infernex-agent setup
+```
+
+按提示填写 OpenAI 兼容接口的真实 Base URL、真实 model ID 和可选 API Key。不要把
+文档中的示例域名或模型名原样复制。`setup` 会测试 Chat Completions 和 tool calling，
+失败时恢复原配置。后文命令用于非交互自动化、密钥轮换和高级维护。
+
 ## 1. 模型是否必需
 
 不必需。InferNex Agent 的确定性采集、问题分类、MCP 工具、Dashboard 和

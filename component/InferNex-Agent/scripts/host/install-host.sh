@@ -36,6 +36,8 @@ Options:
   --experiment-soak-duration D     Default: 5m
   --experiment-diagnostic-interval D Default: 30s
   --enable-deployment              Enable constrained catalog tools
+  --deployment-namespace N         Fixed Agent workspace namespace
+  --deployment-template-namespace N Existing InferNexServiceConfig namespace
   --deployment-readiness-timeout D Roll back a failed new deployment (default: 10m)
   --enable-recovery                Enable guarded recovery
   --recovery-template-namespace N  Profile namespace
@@ -67,6 +69,8 @@ experiment_readiness_timeout="20m"
 experiment_soak_duration="5m"
 experiment_diagnostic_interval="30s"
 enable_deployment="false"
+deployment_namespace="infernex-agent-workspace"
+deployment_template_namespace="infernex-bridge-system"
 deployment_readiness_timeout="10m"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
@@ -165,6 +169,16 @@ while (($#)); do
       enable_deployment="true"
       shift
       ;;
+    --deployment-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-namespace requires a value"
+      deployment_namespace="$2"
+      shift 2
+      ;;
+    --deployment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-template-namespace requires a value"
+      deployment_template_namespace="$2"
+      shift 2
+      ;;
     --deployment-readiness-timeout)
       [[ $# -ge 2 ]] || bundle_die "--deployment-readiness-timeout requires a value"
       deployment_readiness_timeout="$2"
@@ -251,6 +265,10 @@ for scan_namespace in "${scan_namespaces[@]}"; do
   validate_dns_label "$scan_namespace" ||
     bundle_die "invalid scan namespace: ${scan_namespace}"
 done
+validate_dns_label "$deployment_namespace" ||
+  bundle_die "invalid deployment namespace: ${deployment_namespace}"
+validate_dns_label "$deployment_template_namespace" ||
+  bundle_die "invalid deployment template namespace: ${deployment_template_namespace}"
 validate_dns_label "$recovery_template_namespace" ||
   bundle_die "invalid recovery template namespace: ${recovery_template_namespace}"
 validate_dns_label "$experiment_template_namespace" ||
@@ -345,7 +363,8 @@ for scan_namespace in "${scan_namespaces[@]}"; do
       list infernexservices.infernex.infernex.io --namespace "$scan_namespace"
   )" == "yes" ]] ||
     bundle_die "kubeconfig cannot list InferNexService in ${scan_namespace}"
-  if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
+  if [[ "$enable_experiments" == "true" ||
+    ( "$enable_deployment" == "true" && "$scan_namespace" == "$deployment_namespace" ) ]]; then
     for verb in create delete; do
       [[ "$(
         kubectl --kubeconfig "$kubeconfig_source" auth can-i \
@@ -368,6 +387,16 @@ for scan_namespace in "${scan_namespaces[@]}"; do
       bundle_die "kubeconfig cannot read Pod logs in ${scan_namespace}"
   fi
 done
+if [[ "$enable_deployment" == "true" ]]; then
+  for verb in get list; do
+    [[ "$(
+      kubectl --kubeconfig "$kubeconfig_source" auth can-i \
+        "$verb" infernexserviceconfigs.infernex.infernex.io \
+        --namespace "$deployment_template_namespace"
+    )" == "yes" ]] ||
+      bundle_die "kubeconfig cannot ${verb} deployment profiles in ${deployment_template_namespace}"
+  done
+fi
 if [[ "$enable_recovery" == "true" ]]; then
   [[ "$(
     kubectl --kubeconfig "$kubeconfig_source" auth can-i \
@@ -399,6 +428,7 @@ installed_configurator="${install_root}/bin/configure-model.sh"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 installed_chat="${install_root}/bin/chat.sh"
+installed_cli="/usr/local/bin/infernex-agent"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -439,6 +469,7 @@ host_backup_targets=(
   "$installed_bundle_lib"
   "$unit_path"
   "$installed_chat"
+  "$installed_cli"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -543,6 +574,16 @@ fi
 temporary_binary="${installed_binary}.new"
 install -m 0755 -o root -g root "$binary_source" "$temporary_binary"
 mv -f -- "$temporary_binary" "$installed_binary"
+install -d -m 0755 -o root -g root /usr/local/bin
+temporary_cli="$(mktemp /usr/local/bin/.infernex-agent.XXXXXX)"
+cat >"$temporary_cli" <<EOF
+#!/usr/bin/env bash
+# Managed by InferNex Agent host installer.
+exec ${installed_binary@Q} "\$@"
+EOF
+chmod 0755 "$temporary_cli"
+chown root:root "$temporary_cli"
+mv -f -- "$temporary_cli" "$installed_cli"
 source_kubeconfig_resolved="$(readlink -f -- "$kubeconfig_source")"
 installed_kubeconfig_resolved="$(
   readlink -f -- "$installed_kubeconfig" 2>/dev/null || true
@@ -631,8 +672,12 @@ if [[ "$preserve_model_config" == "true" ]]; then
     bundle_die "${agent_config} references a missing OpenAI API key"
 fi
 if [[ "$enable_deployment" == "true" ]]; then
+  scan_namespaces_csv="$(IFS=,; printf '%s' "${scan_namespaces[*]}")"
   agent_args+=(
     "--enable-deployment"
+    "--deployment-namespace=${deployment_namespace}"
+    "--deployment-template-namespace=${deployment_template_namespace}"
+    "--deployment-source-namespaces=${scan_namespaces_csv}"
     "--deployment-readiness-timeout=${deployment_readiness_timeout}"
   )
 fi

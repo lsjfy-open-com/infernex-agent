@@ -58,6 +58,10 @@ type options struct {
 	dashboardListen              string
 	kubeconfig                   string
 	enableDeployment             bool
+	enableTestCatalog            bool
+	deploymentNamespace          string
+	deploymentTemplateNS         string
+	deploymentSourceNamespaces   string
 	stateDir                     string
 	deploymentTimeout            time.Duration
 	scanNamespaces               string
@@ -106,6 +110,8 @@ func run() error {
 			return runCandidate(os.Args[2:])
 		case "version":
 			return runVersion(os.Args[2:])
+		case "setup":
+			return runSetup(os.Args[2:])
 		}
 	}
 	return runServer(os.Args[1:])
@@ -136,12 +142,36 @@ func parseServerOptions(args []string) (options, error) {
 		"",
 		"Dashboard HTTP listen address; empty disables the dashboard",
 	)
+	flags.BoolVar(
+		&opts.enableTestCatalog,
+		"enable-test-catalog",
+		false,
+		"Expose the built-in CPU Kind fixture instead of production deployment-source tools",
+	)
 	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
 	flags.BoolVar(
 		&opts.enableDeployment,
 		"enable-deployment",
 		false,
 		"Enable constrained catalog deploy/delete tools; disabled by default",
+	)
+	flags.StringVar(
+		&opts.deploymentNamespace,
+		"deployment-namespace",
+		"infernex-agent-workspace",
+		"Agent-managed namespace for conversational deployments",
+	)
+	flags.StringVar(
+		&opts.deploymentTemplateNS,
+		"deployment-template-namespace",
+		"infernex-bridge-system",
+		"Namespace containing existing InferNexServiceConfig deployment profiles",
+	)
+	flags.StringVar(
+		&opts.deploymentSourceNamespaces,
+		"deployment-source-namespaces",
+		"",
+		"Comma-separated namespaces containing stable deployment baselines; defaults to scan namespaces",
 	)
 	flags.StringVar(
 		&opts.stateDir,
@@ -253,6 +283,9 @@ func parseServerOptions(args []string) (options, error) {
 	if opts.enableExperiments && !opts.enableDiagnostics {
 		return options{}, fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
 	}
+	if opts.enableTestCatalog && !opts.enableDeployment {
+		return options{}, fmt.Errorf("--enable-test-catalog requires --enable-deployment")
+	}
 	return opts, nil
 }
 
@@ -281,6 +314,8 @@ func serveAgent(opts options) error {
 
 	domainObserver := observer.New(kubeClient)
 	serverOptions := make([]mcpserver.Option, 0, 3)
+	namespaces := parseNamespaces(opts.scanNamespaces)
+	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -294,15 +329,29 @@ func serveAgent(opts options) error {
 		changeStore = fileStore
 	}
 	if opts.enableDeployment {
-		domainDeployer := deployer.New(
-			kubeClient,
+		sourceNamespaces := parseNamespaces(opts.deploymentSourceNamespaces)
+		if len(sourceNamespaces) == 0 {
+			sourceNamespaces = namespaces
+		}
+		deployerOptions := []deployer.Option{
 			deployer.WithStore(changeStore),
 			deployer.WithReadiness(opts.deploymentTimeout, 2*time.Second),
-		)
+		}
+		if !opts.enableTestCatalog {
+			deployerOptions = append(deployerOptions, deployer.WithDeploymentScope(
+				opts.deploymentNamespace,
+				opts.deploymentTemplateNS,
+				sourceNamespaces,
+			))
+		}
+		domainDeployer := deployer.New(kubeClient, deployerOptions...)
 		if err := domainDeployer.Start(ctx); err != nil {
 			return fmt.Errorf("resume deployment safety monitoring: %w", err)
 		}
 		serverOptions = append(serverOptions, mcpserver.WithDeployer(domainDeployer))
+		if opts.enableTestCatalog {
+			serverOptions = append(serverOptions, mcpserver.WithTestCatalog())
+		}
 	}
 
 	var domainDiagnoser diagnostics.Diagnoser
@@ -374,7 +423,6 @@ func serveAgent(opts options) error {
 		domainRemediator = profileRemediator
 	}
 	snapshotStore := supervisor.NewSnapshotStore(version, opts.scanInterval, domainAnalyzer != nil)
-	namespaces := parseNamespaces(opts.scanNamespaces)
 	if len(namespaces) > 0 {
 		scanner, scannerErr := supervisor.New(
 			domainObserver,

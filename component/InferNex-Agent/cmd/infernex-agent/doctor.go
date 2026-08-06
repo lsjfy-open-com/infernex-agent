@@ -148,6 +148,30 @@ func runDoctor(args []string) error {
 					add("namespace/"+namespace, "pass", fmt.Sprintf("InferNexService list allowed; sampled %d", len(services.Items)))
 				}
 			}
+			if opts.enableDeployment && !opts.enableTestCatalog {
+				profileResource := schema.GroupVersionResource{
+					Group:    infernexv1alpha1.GroupVersion.Group,
+					Version:  infernexv1alpha1.GroupVersion.Version,
+					Resource: "infernexserviceconfigs",
+				}
+				profiles, listErr := dynamicClient.Resource(profileResource).
+					Namespace(opts.deploymentTemplateNS).
+					List(ctx, metav1.ListOptions{Limit: 100})
+				if listErr != nil {
+					add("deployment-sources", "fail", listErr.Error())
+				} else {
+					add(
+						"deployment-sources",
+						"pass",
+						fmt.Sprintf(
+							"workspace %s; %d Bridge profiles sampled from %s",
+							opts.deploymentNamespace,
+							len(profiles.Items),
+							opts.deploymentTemplateNS,
+						),
+					)
+				}
+			}
 		}
 	}
 

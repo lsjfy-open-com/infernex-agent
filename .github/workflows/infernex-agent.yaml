@@ -186,6 +186,8 @@ jobs:
             cd "${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
             sha256sum --check SHA256SUMS
             ./payload/infernex-agent --help >/dev/null
+            test -x ./install.sh
+            ./install.sh --help >/dev/null
             test -x ./bin/chat.sh
             test -f ./docs/install-and-modes-zh.md
           )
@@ -219,30 +221,31 @@ jobs:
       - name: Install host Agent with dedicated identity
         run: |
           host_bundle="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
-          sudo "${host_bundle}/bin/create-kubeconfig.sh" \
+          sudo "${host_bundle}/install.sh" \
             --admin-kubeconfig "${HOME}/.kube/config" \
-            --target-namespace models \
-            --output "${RUNNER_TEMP}/infernex-agent-host.kubeconfig"
-          sudo "${host_bundle}/bin/install-host.sh" \
-            --kubeconfig "${RUNNER_TEMP}/infernex-agent-host.kubeconfig" \
-            --scan-namespace models
+            --skip-model-setup
           sudo systemd-analyze verify \
             /etc/systemd/system/infernex-agent.service
           sudo "${host_bundle}/bin/verify-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \
-            --target-namespace models
+            --target-namespace infernex-agent-workspace
           sudo /opt/infernex-agent/bin/infernex-agent doctor \
             --config /etc/infernex-agent/agent.conf \
             --skip-model
           sudo test -x /opt/infernex-agent/bin/configure-model.sh
           sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
           sudo test -x /opt/infernex-agent/bin/chat.sh
+          sudo test -x /usr/local/bin/infernex-agent
+          sudo /usr/local/bin/infernex-agent version --json |
+            grep -q '0.3.0'
+          sudo grep -q -- '--deployment-namespace=infernex-agent-workspace' \
+            /etc/infernex-agent/agent.conf
           recovery_point="$(sudo sh -c \
             'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
           sudo /opt/infernex-agent/bin/infernex-agent cluster-state verify \
             --input "${recovery_point}/cluster-state.json" |
             grep -q '"valid": true'
-          sudo grep -q -- '--scan-namespaces=models' \
+          sudo grep -q -- '--scan-namespaces=infernex-agent-workspace' \
             /etc/infernex-agent/agent.conf
           sudo /opt/infernex-agent/bin/configure-model.sh --show |
             grep -q 'model_analysis=disabled'
@@ -321,7 +324,7 @@ jobs:
 
           sudo "${host_bundle}/bin/install-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \
-            --scan-namespace models
+            --scan-namespace infernex-agent-workspace
           sudo grep -q \
             -- '--openai-model=ci-diagnostic-model' \
             /etc/infernex-agent/agent.conf
