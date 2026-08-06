@@ -72,6 +72,7 @@ jobs:
           docker buildx build \
             --platform "linux/${ARCHITECTURE}" \
             --build-arg "VERSION=${VERSION}" \
+            --build-arg "COMMIT=${GITHUB_SHA}" \
             --file component/InferNex-Agent/Dockerfile \
             --tag "docker.io/library/infernex-agent:${VERSION}" \
             --output "type=docker,dest=${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar" \
@@ -94,6 +95,15 @@ jobs:
           ARCHITECTURE: ${{ matrix.architecture }}
           VERSION: ${{ env.BUNDLE_VERSION }}
         run: |
+          mkdir -p "${RUNNER_TEMP}/offline-dist"
+          raw_name="infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
+          install -m 0755 \
+            "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+            "${RUNNER_TEMP}/offline-dist/${raw_name}"
+          (
+            cd "${RUNNER_TEMP}/offline-dist"
+            sha256sum "${raw_name}" >"${raw_name}.sha256"
+          )
           component/InferNex-Agent/scripts/offline/build-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
@@ -127,6 +137,8 @@ jobs:
           path: |
             ${{ runner.temp }}/offline-dist/*.tar.gz
             ${{ runner.temp }}/offline-dist/*.tar.gz.sha256
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -157,4 +169,4 @@ jobs:
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "Installable cluster and host/systemd bundles for existing InferNex clusters. Host bundles include the XShell/SSH natural-language terminal; read tools run automatically and write tools require local approval. Agent bundles do not contain vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify the architecture-specific outer SHA256 before extraction."
+            --notes "Static standalone linux/amd64 and linux/arm64 binaries plus installable cluster and host/systemd bundles for existing InferNex clusters. Validate candidate binaries against an existing cluster before production rollout. Host bundles include the XShell/SSH natural-language terminal; read tools run automatically and write tools require local approval. Agent assets do not contain vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify the architecture-specific SHA256 before use."

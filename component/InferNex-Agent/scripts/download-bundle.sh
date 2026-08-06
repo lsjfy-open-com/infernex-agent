@@ -6,23 +6,24 @@ repository="lsjfy-open-com/infernex-agent"
 
 usage() {
   cat <<'EOF'
-Download and verify one published InferNex Agent bundle.
+Download and verify one published InferNex Agent asset.
 
 Usage:
-  download-bundle.sh --mode cluster|host [options]
+  download-bundle.sh --mode standalone|cluster|host [options]
 
 Options:
-  --mode MODE              cluster: Agent Pod; host: Linux/systemd (required)
+  --mode MODE              standalone: static binary; cluster: Agent Pod;
+                           host: Linux/systemd bundle (required)
   --version VERSION        Release version (default: 0.3.0-rc.6)
   --architecture ARCH      amd64, arm64, or auto (default: auto)
   --output-dir DIR         Download directory (default: current directory)
   --no-extract             Verify the archive without extracting it
   -h, --help               Show this help
 
-The script downloads both the archive and its outer .sha256 file from the
-official GitHub release, verifies the checksum, and extracts to a new directory.
-It never installs or modifies the cluster. Review the printed next steps before
-running the bundle installer.
+The script downloads an asset and its .sha256 file from the official GitHub
+release and verifies the checksum. Bundle modes extract to a new directory;
+standalone mode leaves an executable static binary. It never installs or
+modifies the cluster.
 EOF
 }
 
@@ -78,8 +79,8 @@ while (($#)); do
 done
 
 case "$mode" in
-  cluster | host) ;;
-  *) die "--mode must be cluster or host" ;;
+  standalone | cluster | host) ;;
+  *) die "--mode must be standalone, cluster, or host" ;;
 esac
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
   die "invalid version: $version"
@@ -98,21 +99,24 @@ esac
 
 require_command curl
 require_command sha256sum
-if [[ "$extract" == "true" ]]; then
+if [[ "$extract" == "true" && "$mode" != "standalone" ]]; then
   require_command tar
 fi
 
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
-if [[ "$mode" == "host" ]]; then
+if [[ "$mode" == "standalone" ]]; then
+  asset_name="infernex-agent-${version}-linux-${architecture}"
+elif [[ "$mode" == "host" ]]; then
   bundle_name="infernex-agent-host-offline-${version}-linux-${architecture}"
+  asset_name="${bundle_name}.tar.gz"
 else
   bundle_name="infernex-agent-offline-${version}-linux-${architecture}"
+  asset_name="${bundle_name}.tar.gz"
 fi
-archive_name="${bundle_name}.tar.gz"
-checksum_name="${archive_name}.sha256"
+checksum_name="${asset_name}.sha256"
 release_base="https://github.com/${repository}/releases/download/infernex-agent-v${version}"
-archive_path="${output_dir}/${archive_name}"
+asset_path="${output_dir}/${asset_name}"
 checksum_path="${output_dir}/${checksum_name}"
 
 download() {
@@ -128,11 +132,11 @@ download() {
   mv -f -- "$temporary" "$target"
 }
 
-if [[ ! -f "$archive_path" || ! -f "$checksum_path" ]]; then
-  download "$archive_name" "$archive_path"
+if [[ ! -f "$asset_path" || ! -f "$checksum_path" ]]; then
+  download "$asset_name" "$asset_path"
   download "$checksum_name" "$checksum_path"
 else
-  printf 'using existing download %s\n' "$archive_path"
+  printf 'using existing download %s\n' "$asset_path"
 fi
 
 printf 'verifying %s\n' "$checksum_name"
@@ -141,7 +145,20 @@ printf 'verifying %s\n' "$checksum_name"
   sha256sum --check "$checksum_name"
 ) || die "checksum verification failed; remove both downloaded files and retry"
 
-if [[ "$extract" == "true" ]]; then
+if [[ "$mode" == "standalone" ]]; then
+  chmod 0755 "$asset_path"
+  cat <<EOF
+
+verified standalone binary: ${asset_path}
+
+Inspect it without changing the server:
+  '${asset_path}' version --json
+  sudo '${asset_path}' doctor --config /etc/infernex-agent/agent.conf
+
+For an existing host installation, follow the candidate validation guide
+before using 'candidate apply'.
+EOF
+elif [[ "$extract" == "true" ]]; then
   bundle_dir="${output_dir}/${bundle_name}"
   if [[ -e "$bundle_dir" ]]; then
     die "refusing to overwrite existing extraction path: $bundle_dir"
@@ -154,11 +171,11 @@ if [[ "$extract" == "true" ]]; then
     case "/${entry}/" in
       */../*) die "archive contains a parent-directory path: $entry" ;;
     esac
-  done < <(tar -tzf "$archive_path")
-  printf 'extracting %s\n' "$archive_name"
+  done < <(tar -tzf "$asset_path")
+  printf 'extracting %s\n' "$asset_name"
   tar -C "$output_dir" \
     --no-same-owner --no-same-permissions \
-    -xzf "$archive_path"
+    -xzf "$asset_path"
   [[ -d "$bundle_dir" && ! -L "$bundle_dir" ]] || {
     die "archive did not create the expected bundle directory: $bundle_dir"
   }
@@ -188,5 +205,5 @@ Next step for an in-cluster installation:
 EOF
   fi
 else
-  printf 'verified archive: %s\n' "$archive_path"
+  printf 'verified archive: %s\n' "$asset_path"
 fi

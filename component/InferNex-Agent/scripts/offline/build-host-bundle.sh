@@ -148,6 +148,7 @@ install -m 0644 \
 install -m 0644 \
   "${agent_dir}/docs/product-guide-zh.md" \
   "${agent_dir}/docs/product-design-zh.md" \
+  "${agent_dir}/docs/candidate-validation-zh.md" \
   "${agent_dir}/docs/install-and-modes-zh.md" \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \

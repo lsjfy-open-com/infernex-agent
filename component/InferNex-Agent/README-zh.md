@@ -253,6 +253,7 @@ go build ./cmd/infernex-agent
 
 ## 文档
 
+- [单二进制候选版本灰度验证](docs/candidate-validation-zh.md)
 - [在线、离线安装与运行模式指南](docs/install-and-modes-zh.md)
 - [产品使用、部署选型与验收](docs/product-guide-zh.md)
 - [产品设计与故障语义](docs/product-design-zh.md)

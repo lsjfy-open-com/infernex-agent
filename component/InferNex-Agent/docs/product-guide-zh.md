@@ -211,6 +211,7 @@ curl --fail http://127.0.0.1:8081/api/v1/experiments
 
 ## 9. 文档地图
 
+- [单二进制候选版本灰度验证](candidate-validation-zh.md)
 - [产品设计](product-design-zh.md)
 - [渐进式特性实验与跨节点故障关联](progressive-experiments-zh.md)
 - [变更保护、备份与回退](change-safety-zh.md)

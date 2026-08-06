@@ -231,6 +231,9 @@ jobs:
           sudo "${host_bundle}/bin/verify-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \
             --target-namespace models
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf \
+            --skip-model
           sudo test -x /opt/infernex-agent/bin/configure-model.sh
           sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
           sudo test -x /opt/infernex-agent/bin/chat.sh
@@ -311,6 +314,8 @@ jobs:
             /etc/infernex-agent/agent.conf \
             /etc/systemd/system/infernex-agent.service
           sudo systemctl is-active --quiet infernex-agent.service
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf
           sudo /opt/infernex-agent/bin/chat.sh --ask 'Reply with OK.' |
             grep -q 'OK'
 
@@ -342,6 +347,30 @@ jobs:
           sudo systemctl is-active --quiet infernex-agent.service
 
           sudo /opt/infernex-agent/bin/configure-model.sh --disable
+
+          candidate_binary="${RUNNER_TEMP}/infernex-agent-systemd-candidate"
+          (
+            cd component/InferNex-Agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=0.4.0-candidate.ci -X main.commit=${GITHUB_SHA}" \
+              -o "${candidate_binary}" \
+              ./cmd/infernex-agent
+          )
+          chmod 0755 "${candidate_binary}"
+          baseline_sha="$(sudo sha256sum /opt/infernex-agent/bin/infernex-agent | awk '{print $1}')"
+          sudo "${candidate_binary}" candidate verify \
+            --file "${candidate_binary}"
+          sudo "${candidate_binary}" candidate apply \
+            --file "${candidate_binary}" \
+            --timeout 60s
+          sudo /opt/infernex-agent/bin/infernex-agent version --json |
+            grep -q '0.4.0-candidate.ci'
+          sudo /opt/infernex-agent/bin/infernex-agent candidate rollback \
+            --timeout 60s
+          restored_sha="$(sudo sha256sum /opt/infernex-agent/bin/infernex-agent | awk '{print $1}')"
+          test "${restored_sha}" = "${baseline_sha}"
+          sudo systemctl is-active --quiet infernex-agent.service
 
           kill "${model_server_pid}" >/dev/null 2>&1 || true
           wait "${model_server_pid}" 2>/dev/null || true
@@ -397,3 +426,66 @@ jobs:
               --purge-user || true
           fi
           kind delete cluster --name infernex-agent
+
+  candidate:
+    name: Candidate linux/${{ matrix.architecture }}
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: component/InferNex-Agent/go.sum
+
+      - name: Build static candidate binary
+        working-directory: component/InferNex-Agent
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="0.4.0-candidate.${short_sha}"
+          candidate_name="infernex-agent-${candidate_version}-linux-${ARCHITECTURE}"
+          CGO_ENABLED=0 GOOS=linux GOARCH="${ARCHITECTURE}" \
+            go build -trimpath \
+            -ldflags="-s -w -X main.version=${candidate_version} -X main.commit=${GITHUB_SHA}" \
+            -o "${RUNNER_TEMP}/${candidate_name}" \
+            ./cmd/infernex-agent
+          chmod 0755 "${RUNNER_TEMP}/${candidate_name}"
+          (
+            cd "${RUNNER_TEMP}"
+            sha256sum "${candidate_name}" >"${candidate_name}.sha256"
+          )
+          if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+            "${RUNNER_TEMP}/${candidate_name}" version --json | tee "${RUNNER_TEMP}/version.json"
+            grep -q '"cgoEnabled":"0"' "${RUNNER_TEMP}/version.json"
+            grep -q "${GITHUB_SHA}" "${RUNNER_TEMP}/version.json"
+            bash test/scripts/candidate-smoke.sh "${RUNNER_TEMP}/${candidate_name}"
+          fi
+          if readelf -l "${RUNNER_TEMP}/${candidate_name}" | grep -q 'Requesting program interpreter'; then
+            echo "candidate unexpectedly contains a dynamic interpreter"
+            exit 1
+          fi
+          printf 'CANDIDATE_NAME=%s\n' "${candidate_name}" >>"${GITHUB_ENV}"
+
+      - name: Upload tested candidate binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CANDIDATE_NAME }}
+          path: |
+            ${{ runner.temp }}/${{ env.CANDIDATE_NAME }}
+            ${{ runner.temp }}/${{ env.CANDIDATE_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14

@@ -495,5 +495,20 @@ Use the returned `changeId` with `infernex_get_change` until its status is
 `infernex_delete_model`; deletion is refused unless the existing service
 carries the Agent catalog ownership labels.
 
+## Tested standalone candidates
+
+Successful CI runs publish static `linux-amd64` and `linux-arm64` candidate
+binaries with SHA256 files. They are intended for validation on an existing
+management host before a formal release is assembled; the target server needs
+no Go, Python, Node.js, compiler, or source checkout.
+
+The binary provides `version`, `serve --config`, `doctor`, `chat`, and guarded
+`candidate verify|apply|rollback` commands. Candidate activation preserves the
+installed configuration, backs up the current binary, restarts systemd, waits
+for the health endpoint, and automatically restores the previous binary if the
+new process does not become healthy. See the
+[Chinese candidate validation guide](docs/candidate-validation-zh.md) for the
+operator workflow and acceptance gates.
+
 See [docs/architecture.md](docs/architecture.md) for component boundaries and
 the broader mutation roadmap.

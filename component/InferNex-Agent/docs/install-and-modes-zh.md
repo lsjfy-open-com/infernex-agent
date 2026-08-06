@@ -196,7 +196,18 @@ Dashboard 快照验收。
 
 ## 5. master/引导节点宿主机安装
 
-### 5.1 在线源码构建
+### 5.1 无编译环境的单二进制候选验证
+
+日常开发验证不重新制作 Bundle。完整 CI 通过后会生成临时的静态
+`linux-amd64`、`linux-arm64` 候选二进制及 SHA256；把对应文件传到已有管理节点后，
+可直接执行 `version`、`doctor`、`serve --config`，或通过 `candidate apply` 原子替换
+现有 Agent。服务器不需要 Go、Python、Node、GCC 或源码目录，已有配置和凭据不变。
+
+候选启动或健康检查失败时自动恢复旧二进制；已成功运行的候选可通过
+`candidate rollback` 人工回退。完整命令、状态记录和正式发布门禁见
+[单二进制候选版本灰度验证](candidate-validation-zh.md)。
+
+### 5.2 在线源码构建
 
 要求 Go 1.24.5 或兼容版本。可以在目标 Linux 主机直接构建，也可以在联网构建机
 交叉编译后把静态二进制和 `scripts/` 目录传到目标主机：
@@ -229,7 +240,7 @@ sudo ./scripts/host/install-host.sh \
   --scan-namespace models
 ```
 
-### 5.2 离线宿主机 Bundle
+### 5.3 离线宿主机 Bundle
 
 下载 `infernex-agent-host-offline-<版本>-linux-<架构>.tar.gz` 及其 `.sha256`，
 传入目标主机：
@@ -268,7 +279,7 @@ systemctl status infernex-agent --no-pager
 journalctl -u infernex-agent -n 100 --no-pager
 ```
 
-### 5.3 在 XShell/SSH 中自然语言操作
+### 5.4 在 XShell/SSH 中自然语言操作
 
 先配置一个同时支持 OpenAI Chat Completions 和 function/tool calling 的模型接口：
 
@@ -647,6 +658,7 @@ RBAC，并为写状态启用 PVC。
 
 ## 10. 延伸文档
 
+- [单二进制候选版本灰度验证](candidate-validation-zh.md)
 - [产品使用、部署选型与验收](product-guide-zh.md)
 - [产品设计与故障语义](product-design-zh.md)
 - [变更保护、备份与回退](change-safety-zh.md)

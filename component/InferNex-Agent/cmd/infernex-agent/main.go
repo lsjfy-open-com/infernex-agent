@@ -47,7 +47,10 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
-var version = "0.3.0-dev"
+var (
+	version = "0.3.0-dev"
+	commit  = "unknown"
+)
 
 type options struct {
 	transport                    string
@@ -80,6 +83,9 @@ type options struct {
 
 func main() {
 	if err := run(); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		slog.Error("infernex-agent stopped", "error", err)
 		os.Exit(1)
 	}
@@ -92,133 +98,165 @@ func run() error {
 			return runClusterState(os.Args[2:])
 		case "chat":
 			return runChat(os.Args[2:])
+		case "serve":
+			return runServer(os.Args[2:])
+		case "doctor":
+			return runDoctor(os.Args[2:])
+		case "candidate":
+			return runCandidate(os.Args[2:])
+		case "version":
+			return runVersion(os.Args[2:])
 		}
 	}
-	return runServer()
+	return runServer(os.Args[1:])
 }
 
-func runServer() error {
+func runServer(args []string) error {
+	opts, err := parseServerOptions(args)
+	if err != nil {
+		return err
+	}
+	return serveAgent(opts)
+}
+
+func parseServerOptions(args []string) (options, error) {
 	opts := options{}
-	flag.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
-	flag.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
-	flag.StringVar(
+	mergedArgs, configPath, err := mergeServerConfigArgs(args)
+	if err != nil {
+		return options{}, err
+	}
+	flags := flag.NewFlagSet("infernex-agent serve", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	flags.String("config", configPath, "read server arguments from an Agent configuration file")
+	flags.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
+	flags.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
+	flags.StringVar(
 		&opts.dashboardListen,
 		"dashboard-listen-address",
 		"",
 		"Dashboard HTTP listen address; empty disables the dashboard",
 	)
-	flag.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
-	flag.BoolVar(
+	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
+	flags.BoolVar(
 		&opts.enableDeployment,
 		"enable-deployment",
 		false,
 		"Enable constrained catalog deploy/delete tools; disabled by default",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.stateDir,
 		"state-dir",
 		"/var/lib/infernex-agent",
 		"Protected persistent directory for change records and rollback state",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.deploymentTimeout,
 		"deployment-readiness-timeout",
 		10*time.Minute,
 		"Rollback a newly created catalog service if it is not Ready within this duration",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
 		"",
 		"Comma-separated namespaces for continuous InferNex scans; empty disables scanning",
 	)
-	flag.DurationVar(&opts.scanInterval, "scan-interval", time.Minute, "Continuous scan interval")
-	flag.IntVar(&opts.eventSinceMinutes, "event-since-minutes", 60, "Recent event lookback for supervisor scans")
-	flag.IntVar(&opts.eventLimit, "event-limit", 25, "Maximum recent events collected for one service")
-	flag.IntVar(
+	flags.DurationVar(&opts.scanInterval, "scan-interval", time.Minute, "Continuous scan interval")
+	flags.IntVar(&opts.eventSinceMinutes, "event-since-minutes", 60, "Recent event lookback for supervisor scans")
+	flags.IntVar(&opts.eventLimit, "event-limit", 25, "Maximum recent events collected for one service")
+	flags.IntVar(
 		&opts.maxAnalysesPerScan,
 		"max-analyses-per-scan",
 		10,
 		"Maximum new OpenAI analyses in one scan; unchanged evidence is cached",
 	)
-	flag.IntVar(
+	flags.IntVar(
 		&opts.maxDiagnosticsPerScan,
 		"max-diagnostics-per-scan",
 		10,
 		"Maximum degraded services whose Pod logs are collected in one supervisor scan",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.openAIBaseURL,
 		"openai-base-url",
 		"",
 		"OpenAI-compatible base URL; requires --openai-model and enables advisory analysis",
 	)
-	flag.StringVar(&opts.openAIModel, "openai-model", "", "OpenAI-compatible model name")
-	flag.StringVar(
+	flags.StringVar(&opts.openAIModel, "openai-model", "", "OpenAI-compatible model name")
+	flags.StringVar(
 		&opts.openAIAPIKeyFile,
 		"openai-api-key-file",
 		"",
 		"Read the OpenAI-compatible API key from this file; intended for host/systemd installs",
 	)
-	flag.DurationVar(&opts.openAITimeout, "openai-timeout", time.Minute, "OpenAI-compatible request timeout")
-	flag.BoolVar(
+	flags.DurationVar(&opts.openAITimeout, "openai-timeout", time.Minute, "OpenAI-compatible request timeout")
+	flags.BoolVar(
 		&opts.enableAutoRecovery,
 		"enable-auto-recovery",
 		false,
 		"Create a new recovery InferNexService from an approved profile after consecutive critical scans",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.recoveryTemplateNS,
 		"recovery-template-namespace",
 		"",
 		"Namespace containing approved InferNexServiceConfig recovery profiles",
 	)
-	flag.IntVar(
+	flags.IntVar(
 		&opts.recoveryMinScans,
 		"recovery-min-critical-scans",
 		3,
 		"Consecutive critical scans required before ensuring a recovery service",
 	)
-	flag.BoolVar(
+	flags.BoolVar(
 		&opts.enableDiagnostics,
 		"enable-log-diagnostics",
 		false,
 		"Read bounded logs only from Pods owned by scanned InferNexServices and correlate cross-component incidents",
 	)
-	flag.BoolVar(
+	flags.BoolVar(
 		&opts.enableExperiments,
 		"enable-experiments",
 		false,
 		"Enable durable progressive experiments using approved sparse InferNexServiceConfig feature profiles",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.experimentTemplateNS,
 		"experiment-template-namespace",
 		"infernex-bridge-system",
 		"Namespace containing approved experiment feature profiles",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentTimeout,
 		"experiment-readiness-timeout",
 		20*time.Minute,
 		"Maximum duration for one experiment stage to pass readiness, diagnostics, and soak gates",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentSoak,
 		"experiment-soak-duration",
 		5*time.Minute,
 		"Continuous healthy duration required before an experiment candidate becomes the next stable baseline",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentDiagnosticInterval,
 		"experiment-diagnostic-interval",
 		30*time.Second,
 		"Interval between candidate-versus-baseline log diagnostic comparisons during soak",
 	)
-	flag.Parse()
-	if opts.enableExperiments && !opts.enableDiagnostics {
-		return fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	if err := flags.Parse(mergedArgs); err != nil {
+		return options{}, err
 	}
+	if flags.NArg() != 0 {
+		return options{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if opts.enableExperiments && !opts.enableDiagnostics {
+		return options{}, fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	}
+	return opts, nil
+}
+
+func serveAgent(opts options) error {
 
 	restConfig, err := kube.Config(opts.kubeconfig)
 	if err != nil {
