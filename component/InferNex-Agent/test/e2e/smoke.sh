@@ -217,7 +217,7 @@ candidate_generation="$(kubectl -n "${model_namespace}" get infernexservice smok
 kubectl -n "${model_namespace}" patch infernexservice smoke-pass-s01 \
   --subresource=status \
   --type=merge \
-  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation},\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"ExperimentReady\",\"observedGeneration\":${candidate_generation},\"lastTransitionTime\":\"2026-08-06T00:00:00Z\"}]}}"
+  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation}}}"
 
 pass_plan=""
 for _ in $(seq 1 30); do
@@ -267,7 +267,7 @@ EOF
 kubectl -n "${model_namespace}" patch infernexservice smoke-fail-s01 \
   --subresource=status \
   --type=merge \
-  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation},\"conditions\":[{\"type\":\"Ready\",\"status\":\"True\",\"reason\":\"ExperimentReady\",\"observedGeneration\":${candidate_generation},\"lastTransitionTime\":\"2026-08-06T00:00:00Z\"}]}}"
+  --patch="{\"status\":{\"mode\":\"aggregate\",\"ready\":true,\"observedGeneration\":${candidate_generation}}}"
 
 failed_plan=""
 for _ in $(seq 1 30); do
