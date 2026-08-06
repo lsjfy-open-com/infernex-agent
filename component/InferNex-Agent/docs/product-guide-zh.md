@@ -35,6 +35,7 @@ API 和控制器完成。
 | MCP 只读工具 | 开启 | 查询服务、拓扑和事件 |
 | Web Dashboard / JSON 快照 | 开启 | 展示归一化运维证据 |
 | OpenAI 兼容模型分析 | 关闭 | 可选的诊断建议，不参与控制决策 |
+| XShell/SSH 自然语言终端 | 配置模型后可用 | 实时调用受限 MCP；本机逐项批准写操作 |
 | 固定目录部署工具 | 关闭 | 仅创建/删除受 Agent 所有权保护的 `InferNexService` |
 | 安装前备份和部署失败回退 | 写能力启用时强制 | 持久变更记录、超时/Degraded 自动撤销本次新建 |
 | 受控自动恢复 | 关闭 | 多重显式授权后创建新的恢复服务 |
@@ -42,7 +43,8 @@ API 和控制器完成。
 | 单特性渐进实验 | 关闭 | 基线加一个批准 profile，自动门禁并精确回退当前候选 |
 
 模型不是产品启动条件。未配置模型时，扫描、规则诊断、MCP、Dashboard 和
-JSON API 均正常工作。模型只在服务存在问题时接收受限证据并产生建议。
+JSON API 均正常工作。后台模型只在服务存在问题时接收受限证据并产生建议；
+自然语言终端要求模型额外支持 OpenAI function/tool calling。
 
 MCP 工具契约：
 
@@ -77,15 +79,24 @@ Dashboard 验收，再接入内网模型。
 
 ## 4. openEuler aarch64 快速安装
 
-从 Release 下载 `linux-arm64` 宿主机包及对应 `.sha256` 文件，传入内网后：
+联网目标机可自动下载、校验并解压 `linux-arm64` 宿主机包：
 
 ```bash
 uname -m
 
+curl --fail --location --remote-name \
+  https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/download-bundle.sh
+chmod +x download-bundle.sh
+./download-bundle.sh --mode host
+```
+
+完全离线时，在联网机下载归档及对应 `.sha256`，一起传入内网后执行：
+
+```bash
 sha256sum --check \
-  infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz
-cd infernex-agent-host-offline-0.3.0-linux-arm64
+  infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
+tar -xzf infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-host-offline-0.3.0-rc.6-linux-arm64
 ```
 
 一次性使用管理员身份创建专用、命名空间级运行身份：
@@ -127,12 +138,12 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
   --model ops-diagnostic-model \
   --api-key-file /root/infernex-openai.key \
   --timeout 60s \
-  --test \
+  --test-tools \
   --show
 ```
 
-`--test` 会发送一次很小的 `chat/completions` 请求，可能产生少量模型
-Token。完整说明见 [模型配置手册](model-configuration-zh.md)。
+`--test-tools` 会发送一次很小的 `chat/completions` 请求并强制调用无副作用测试
+工具，可能产生少量 Token。完整说明见 [模型配置手册](model-configuration-zh.md)。
 
 ## 6. 访问入口
 
@@ -145,6 +156,15 @@ Token。完整说明见 [模型配置手册](model-configuration-zh.md)。
 | Dashboard | `http://127.0.0.1:8081/` | 运维展示 |
 | 快照 API | `http://127.0.0.1:8081/api/v1/snapshot` | 只读 JSON 证据 |
 
+XShell/SSH 登录管理节点后，不需要额外端口即可使用本机交互终端：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+只读工具自动运行；写工具显示名称和参数并要求精确输入 `yes`。这不是通用 Shell
+或 kubectl 入口，模型不能提交任意 YAML、镜像或命令。
+
 MCP 和 Dashboard 本身不是认证边界。跨主机开放时必须使用管理网 ACL、
 防火墙或带身份认证的反向代理。
 
@@ -155,6 +175,7 @@ sudo systemctl status infernex-agent --no-pager
 sudo journalctl -u infernex-agent -f
 
 sudo /opt/infernex-agent/bin/configure-model.sh --show
+sudo /opt/infernex-agent/bin/chat.sh
 
 curl --fail http://127.0.0.1:8080/readyz
 curl --fail http://127.0.0.1:8081/readyz
@@ -181,11 +202,12 @@ curl --fail http://127.0.0.1:8081/api/v1/experiments
 3. 专用 kubeconfig 只能访问批准命名空间；
 4. Dashboard 只从批准管理网可达；
 5. 未启用写能力时不存在 mutation RBAC；
-6. 配置模型时 `configure-model.sh --test` 成功；
+6. 配置交互模型时 `configure-model.sh --test-tools` 成功；
 7. 断开模型端点后，规则扫描和 Dashboard 仍持续工作；
 8. 凭据文件权限、备份、轮换和卸载策略符合内部要求；
 9. 如启用实验，确认状态目录持久、模板已审批、集群有并行候选容量；
 10. 人为注入候选日志回归时，只删除当前候选且稳定基线仍为 Ready。
+11. 写工具未输入精确 `yes` 时不产生集群变更，`--ask` 模式始终拒绝写操作。
 
 ## 9. 文档地图
 

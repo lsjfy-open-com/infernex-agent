@@ -86,8 +86,13 @@ func main() {
 }
 
 func run() error {
-	if len(os.Args) > 1 && os.Args[1] == "cluster-state" {
-		return runClusterState(os.Args[2:])
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "cluster-state":
+			return runClusterState(os.Args[2:])
+		case "chat":
+			return runChat(os.Args[2:])
+		}
 	}
 	return runServer()
 }

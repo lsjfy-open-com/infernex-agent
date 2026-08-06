@@ -45,13 +45,24 @@ Kubernetes：Agent 仍通过 apiserver 读取 `InferNexService`、Pod、Event
 
 ## 3. 宿主机离线包
 
+已发布的 `0.3.0-rc.6` 包可从
+[Release 页面](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)
+下载。联网主机可自动选择架构、校验并解压：
+
+```bash
+curl --fail --location --remote-name \
+  https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/download-bundle.sh
+chmod +x download-bundle.sh
+./download-bundle.sh --mode host
+```
+
 联网 Linux 构建机需要 Go 1.24+、Bash、`tar` 和 `sha256sum`：
 
 ```bash
 cd component/InferNex-Agent
 
 ./scripts/offline/build-host-bundle.sh \
-  --version 0.3.0 \
+  --version 0.3.0-rc.6 \
   --architecture arm64 \
   --output-dir ./dist
 ```
@@ -59,15 +70,15 @@ cd component/InferNex-Agent
 输出：
 
 ```text
-infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz
-infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz.sha256
+infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
+infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
 ```
 
 已有 CI 交叉编译二进制时可复用：
 
 ```bash
 ./scripts/offline/build-host-bundle.sh \
-  --version 0.3.0 \
+  --version 0.3.0-rc.6 \
   --architecture arm64 \
   --binary /secure/build/infernex-agent-linux-arm64 \
   --output-dir ./dist
@@ -80,10 +91,10 @@ infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz.sha256
 
 ```bash
 sha256sum --check \
-  infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz.sha256
+  infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
 
-tar -xzf infernex-agent-host-offline-0.3.0-linux-arm64.tar.gz
-cd infernex-agent-host-offline-0.3.0-linux-arm64
+tar -xzf infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
+cd infernex-agent-host-offline-0.3.0-rc.6-linux-arm64
 
 ./bin/verify-host.sh --help
 ```
@@ -221,7 +232,7 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
   --model ops-diagnostic-model \
   --api-key-file /root/infernex-openai.key \
   --timeout 60s \
-  --test \
+  --test-tools \
   --show
 ```
 
@@ -234,6 +245,40 @@ sudo /opt/infernex-agent/bin/configure-model.sh --disable --show
 模型配置位于 `/etc/infernex-agent/agent.conf`，API Key 单独存储。升级时若
 没有向安装器传入任何 `--openai-*` 参数，会保留现有模型配置。完整说明见
 [模型配置手册](model-configuration-zh.md)。
+
+### 7.1 在 XShell/SSH 中自然语言交互
+
+模型配置测试通过后，在同一管理节点执行：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+`chat.sh` 使用 `runuser` 切换到受限的 `infernex-agent` 身份，因此能读取专用
+kubeconfig 和 `0600` 模型密钥，但不会获得 root 或 cluster-admin。可以输入：
+
+```text
+扫描 model-a 中所有推理服务并总结异常
+分析 qwen-pd 最近的流中断，关联 prefill、decode 和 Mooncake 日志
+从批准的配置启动一次单特性实验
+```
+
+查询类 MCP 工具自动运行。部署、删除、恢复、开始实验等写工具会先显示工具名与
+参数，只有当前终端精确输入 `yes` 才执行。一次性 `--ask` 模式固定拒绝写工具。
+模型必须支持 OpenAI function/tool calling；只支持纯文本补全的接口仍可用于后台
+诊断建议，但不能驱动交互工具。
+
+### 7.2 复用既有 vLLM-Ascend 0.23.0 镜像
+
+Agent 宿主机包不包含、也不会下载 vLLM、vLLM-Ascend、Mooncake、CANN 或模型
+权重。已由 InferNex 拉起的 vLLM-Ascend 0.23.0 实例会直接进入资产扫描和诊断范围。
+需要新建候选时，应由管理员先在既有 `InferNexServiceConfig` 中固定该内网镜像和
+完整运行参数，再把配置标记为批准的实验/恢复 profile；Agent 只引用 profile 创建
+`InferNexService`，实际 Pod 仍由 InferNex Bridge 调和。
+
+当前自然语言部署工具不接受任意镜像字符串，因此不会因为交互请求去公网拉取新的
+推理镜像。把现有生产镜像纳入通用受控 catalog 是后续能力，不应通过扩大为任意
+Kubernetes 写入来绕过。
 
 ## 8. 启用受控恢复
 

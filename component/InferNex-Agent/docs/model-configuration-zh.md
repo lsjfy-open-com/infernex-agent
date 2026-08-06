@@ -7,7 +7,8 @@ JSON 快照都不依赖模型。
 
 配置模型后，只有存在问题的服务才会调用 OpenAI 兼容
 `chat/completions` 接口。相同证据在同一进程生命周期内复用缓存，以减少
-重复请求。模型输出只是建议，不能触发部署、恢复或其他写操作。
+重复请求。后台扫描中的模型输出只是建议，不能触发部署、恢复或其他写操作。交互
+终端中的模型可以提出受限 MCP 工具调用，但每个写工具仍必须由本机运维人员批准。
 
 推荐上线顺序：
 
@@ -35,6 +36,11 @@ POST <base-url>/chat/completions
 - 响应包含非空 `choices[0].message.content`；
 - 支持 `temperature: 0` 和 `stream: false`；
 - 如需认证，使用 Bearer API Key。
+
+仅使用后台诊断时，普通 Chat Completions 文本响应即可。使用 XShell/SSH 自然语言
+终端时，模型还必须支持 OpenAI `tools`、`tool_choice` 和
+`message.tool_calls`（function/tool calling）。Agent 不使用模型厂商私有的 Agent
+协议。
 
 ## 3. 宿主机安装时配置
 
@@ -78,12 +84,14 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
   --model ops-diagnostic-model \
   --api-key-file /root/infernex-openai.key \
   --timeout 60s \
-  --test \
+  --test-tools \
   --show
 ```
 
-`--test` 在写入和重启之前发送固定的短提示词，验证网络、鉴权、模型名和响应
-结构。该操作会产生少量 Token。
+`--test` 在写入和重启之前发送固定的短提示词，验证网络、鉴权、模型名和普通响应
+结构。`--test-tools` 会进一步强制调用无副作用的 `infernex_test_tool`，验证交互终端
+依赖的 OpenAI tool-calling 响应结构。两种操作都会产生少量 Token；计划使用自然
+语言终端时应使用 `--test-tools`。
 
 ### 换模型或端点
 
@@ -131,6 +139,25 @@ sudo systemctl restart infernex-agent
 ```
 
 正常变更不建议使用 `--no-restart`。它主要用于维护窗口内合并多项操作。
+
+### XShell/SSH 自然语言终端
+
+配置和 `--test` 成功后：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh
+```
+
+交互命令包括 `/help`、`/clear` 和 `/exit`。只读工具自动执行；写工具在本地显示
+名称与 JSON 参数并要求精确输入 `yes`。自动化查询可使用：
+
+```bash
+sudo /opt/infernex-agent/bin/chat.sh \
+  --ask '检查 models 中是否存在异常实例，并给出证据'
+```
+
+`--ask` 是无人值守模式，固定拒绝全部写工具。若模型不支持 tool calling，后台
+诊断仍可工作，但交互查询无法取得实时集群证据，应更换模型或兼容网关。
 
 ## 5. 宿主机配置文件
 
@@ -200,6 +227,7 @@ Chart 不创建 API Key，只引用运维人员管理的 Secret。
 | 响应过大/格式错误 | 拒绝该响应，扫描继续 |
 | 请求超时 | 取消请求，扫描继续 |
 | 模型未配置 | 完全不发起模型请求 |
+| 模型不支持 tool calling | 后台建议仍可用；自然语言终端无法调用实时 MCP 工具 |
 
 模型不可用不会影响已有推理服务，也不会触发自动恢复。
 

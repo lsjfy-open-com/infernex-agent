@@ -106,8 +106,12 @@ host_targets=(
   /opt/infernex-agent/bin/restore-host-install.sh
   /opt/infernex-agent/bin/bundle-lib.sh
   /etc/systemd/system/infernex-agent.service
+  /opt/infernex-agent/bin/chat.sh
 )
 
+manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"
+[[ "$manifest_count" =~ ^[0-9]+$ && "$manifest_count" -le "${#host_targets[@]}" ]] ||
+  bundle_die "recovery manifest has an unsupported target count"
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"
   manifest_status="$(
@@ -115,6 +119,10 @@ for target_index in "${!host_targets[@]}"; do
       '$1 == item_index && $3 == target {print $2}' \
       "${backup_dir}/host/manifest"
   )"
+  if [[ -z "$manifest_status" && "$target_index" -ge "$manifest_count" ]]; then
+    # Targets appended by a newer Agent version were absent in an older baseline.
+    manifest_status="absent"
+  fi
   [[ "$manifest_status" == "present" || "$manifest_status" == "absent" ]] ||
     bundle_die "recovery manifest does not match target ${target}"
   if [[ "$manifest_status" == "present" ]]; then
@@ -150,6 +158,9 @@ for target_index in "${!host_targets[@]}"; do
       '$1 == item_index && $3 == target {print $2}' \
       "${backup_dir}/host/manifest"
   )"
+  if [[ -z "$manifest_status" && "$target_index" -ge "$manifest_count" ]]; then
+    manifest_status="absent"
+  fi
   if [[ "$manifest_status" == "present" ]]; then
     cp --archive --no-dereference -- \
       "${backup_dir}/host/${target_index}" "$target"
