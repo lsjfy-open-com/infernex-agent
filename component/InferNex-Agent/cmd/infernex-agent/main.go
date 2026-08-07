@@ -444,6 +444,17 @@ func serveAgent(opts options) error {
 			return fmt.Errorf("configure supervisor: %w", scannerErr)
 		}
 		go scanner.Run(ctx)
+	} else {
+		// A Bridge-less Helm installation intentionally has no InferNexService
+		// namespaces to scan. The HTTP service is nevertheless ready to serve MCP
+		// and the dashboard, so publish a valid empty snapshot instead of leaving
+		// dashboard readiness waiting forever for a scanner that was not started.
+		snapshotStore.Store(supervisor.Snapshot{
+			GeneratedAt: time.Now().UTC(),
+			Ready:       true,
+			Namespaces:  make([]supervisor.NamespaceSnapshot, 0),
+		})
+		slog.Info("running without InferNex Bridge namespace scanner")
 	}
 
 	switch opts.transport {
