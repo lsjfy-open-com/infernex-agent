@@ -8,10 +8,10 @@ InferNex Agent 将 InferNex 已有能力组织成一个长期运行、证据驱�
 1. 复用 `InferNexService` 和 Bridge 的权威状态，不建立第二套编排器；
 2. 由模型驱动“理解意图 → 主动发现 → 形成计划 → 调用领域工具 → 观察结果
    → 诊断/回退 → 解释”的 Agentic 闭环；
-3. 模型不持有集群凭据，也不能绕过 typed tools、RBAC、所有权检查、本机批准
-   和回退门禁；
-4. 同时支持 Kubernetes 原生部署和固定运维节点部署；
-5. 所有写能力都需要显式启用，并受 RBAC、目录、所有权和确认机制约束；
+3. 模型不持有集群凭据，也不能绕过 typed tools、Kubernetes 鉴权、所有权检查、
+   本机批准和回退门禁；
+4. V1 默认是管理节点上的本地 Linux Agent，复用当前 kubeconfig，不要求集群内 Pod；
+5. 所有写能力都需要显式启用，并受权限、目录、所有权和确认机制约束；
 6. 在模型不可用时，确定性扫描、分类、展示、变更监控和回退仍持续运行；
 7. 离线包可校验、可升级、可回退并自带完整产品文档。
 
@@ -44,7 +44,7 @@ Agent 不负责：
 | Periodic supervisor + Dashboard/API             |
 +------------------------------------------------+
           |
-          | namespace-scoped Kubernetes API
+          | current kubeconfig + typed Kubernetes API
           v
 InferNexService + status + managed workloads + Events
           |
@@ -95,26 +95,27 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 模型超时、鉴权失败或返回格式错误只影响该次建议，错误会记录在分析结果中。
 扫描循环、MCP 和 Dashboard 不因模型故障停止。
 
-## 6. 部署设计
+## 6. 运行与交付设计
 
-### 6.1 宿主机 systemd
+### 6.1 默认：管理节点 systemd
 
-推荐用于固定 openEuler master/引导节点：
+适用于 openEuler master/引导节点以及其他可执行 kubectl 的 Linux 管理节点：
 
 - 单个 CGO-disabled 静态二进制；
 - `infernex-agent` 非登录系统用户；
-- 专用、命名空间级 kubeconfig；
+- 默认展开并保护当前 kubeconfig；高合规环境可创建专用 namespace-scoped 身份；
 - MCP/Dashboard 默认回环地址；
 - systemd capability 清空和文件系统保护；
 - 模型参数位于 `/etc/infernex-agent/agent.conf`；
 - Kubernetes 凭据和模型密钥分别保存为 `0600` 文件。
 
-安装器只在引导阶段使用传入的管理员 kubeconfig 检查权限。长期服务不读取
-`admin.conf`。
+安装器自动发现环境，普通用户只配置模型接口。模型只通过 typed tools 间接使用凭据。
+安装器创建空的 Agent workspace Namespace，但不创建 Agent Pod、Controller 或 CRD。
 
-### 6.2 集群内 Helm
+### 6.2 高级：集群内 Helm
 
-适用于 Kubernetes 原生部署：
+该形态只保留给强制使用 Kubernetes 管理 Agent 生命周期的环境，不作为 V1 默认
+Release 资产：
 
 - 使用投射的短期 ServiceAccount Token；
 - Pod 级自动 Token 挂载关闭；
@@ -124,7 +125,7 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 
 ## 7. 配置设计
 
-宿主机有效参数以“一行一个 CLI 参数”的形式写入
+管理节点有效参数以“一行一个 CLI 参数”的形式写入
 `/etc/infernex-agent/agent.conf`。启动器使用 Bash 数组读取，不执行配置
 内容，因此参数中的 shell 元字符不会被解释为命令。
 

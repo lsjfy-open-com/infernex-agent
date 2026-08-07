@@ -11,7 +11,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.3.0-rc.6"
+        default: "0.4.0-rc.1"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -32,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.3.0-rc.6' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.4.0-rc.1' }}
     strategy:
       fail-fast: false
       matrix:
@@ -123,10 +123,10 @@ jobs:
             --output-dir "${RUNNER_TEMP}/offline-dist"
           mkdir -p "${RUNNER_TEMP}/verify-host"
           tar -xzf \
-            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
             -C "${RUNNER_TEMP}/verify-host"
           (
-            cd "${RUNNER_TEMP}/verify-host/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}"
+            cd "${RUNNER_TEMP}/verify-host/infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
             sha256sum --check SHA256SUMS
             test -x ./install.sh
             ./install.sh --help >/dev/null
@@ -135,12 +135,10 @@ jobs:
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: infernex-agent-offline-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
+          name: infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
           path: |
-            ${{ runner.temp }}/offline-dist/*.tar.gz
-            ${{ runner.temp }}/offline-dist/*.tar.gz.sha256
-            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
-            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.sha256
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -156,7 +154,7 @@ jobs:
       - name: Download architecture bundles
         uses: actions/download-artifact@v4
         with:
-          pattern: infernex-agent-offline-${{ inputs.version }}-linux-*
+          pattern: infernex-agent-${{ inputs.version }}-linux-*
           path: release-assets
           merge-multiple: true
 
@@ -166,9 +164,10 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           gh release create "infernex-agent-v${VERSION}" \
-            release-assets/* \
+            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz \
+            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz.sha256 \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "Static standalone linux/amd64 and linux/arm64 binaries plus installable cluster and host/systemd bundles for existing InferNex clusters. Validate candidate binaries against an existing cluster before production rollout. Host bundles include the XShell/SSH natural-language terminal; read tools run automatically and write tools require local approval. Agent assets do not contain vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify the architecture-specific SHA256 before use."
+            --notes "One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."

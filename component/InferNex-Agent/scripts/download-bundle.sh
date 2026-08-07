@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-default_version="0.3.0-rc.6"
 repository="lsjfy-open-com/infernex-agent"
 
 usage() {
@@ -9,21 +8,19 @@ usage() {
 Download and verify one published InferNex Agent asset.
 
 Usage:
-  download-bundle.sh --mode standalone|cluster|host [options]
+  download-bundle.sh [options]
 
 Options:
-  --mode MODE              standalone: static binary; cluster: Agent Pod;
-                           host: Linux/systemd bundle (required)
-  --version VERSION        Release version (default: 0.3.0-rc.6)
+  --version VERSION        Required Release version
   --architecture ARCH      amd64, arm64, or auto (default: auto)
   --output-dir DIR         Download directory (default: current directory)
   --no-extract             Verify the archive without extracting it
   -h, --help               Show this help
 
-The script downloads an asset and its .sha256 file from the official GitHub
-release and verifies the checksum. Bundle modes extract to a new directory;
-standalone mode leaves an executable static binary. It never installs or
-modifies the cluster.
+Normal users do not need this helper: use the one-line installer. This script
+downloads and verifies the single management-node Agent package. Kubernetes
+development bundles are intentionally not downloadable from the normal
+Release.
 EOF
 }
 
@@ -36,19 +33,13 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command is missing: $1"
 }
 
-mode=""
-version="$default_version"
+version=""
 architecture="auto"
 output_dir="."
 extract="true"
 
 while (($#)); do
   case "$1" in
-    --mode)
-      [[ $# -ge 2 ]] || die "--mode requires a value"
-      mode="$2"
-      shift 2
-      ;;
     --version)
       [[ $# -ge 2 ]] || die "--version requires a value"
       version="$2"
@@ -78,10 +69,7 @@ while (($#)); do
   esac
 done
 
-case "$mode" in
-  standalone | cluster | host) ;;
-  *) die "--mode must be standalone, cluster, or host" ;;
-esac
+[[ -n "$version" ]] || die "--version is required"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] ||
   die "invalid version: $version"
 
@@ -99,21 +87,14 @@ esac
 
 require_command curl
 require_command sha256sum
-if [[ "$extract" == "true" && "$mode" != "standalone" ]]; then
+if [[ "$extract" == "true" ]]; then
   require_command tar
 fi
 
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
-if [[ "$mode" == "standalone" ]]; then
-  asset_name="infernex-agent-${version}-linux-${architecture}"
-elif [[ "$mode" == "host" ]]; then
-  bundle_name="infernex-agent-host-offline-${version}-linux-${architecture}"
-  asset_name="${bundle_name}.tar.gz"
-else
-  bundle_name="infernex-agent-offline-${version}-linux-${architecture}"
-  asset_name="${bundle_name}.tar.gz"
-fi
+bundle_name="infernex-agent-${version}-linux-${architecture}"
+asset_name="${bundle_name}.tar.gz"
 checksum_name="${asset_name}.sha256"
 release_base="https://github.com/${repository}/releases/download/infernex-agent-v${version}"
 asset_path="${output_dir}/${asset_name}"
@@ -145,20 +126,7 @@ printf 'verifying %s\n' "$checksum_name"
   sha256sum --check "$checksum_name"
 ) || die "checksum verification failed; remove both downloaded files and retry"
 
-if [[ "$mode" == "standalone" ]]; then
-  chmod 0755 "$asset_path"
-  cat <<EOF
-
-verified standalone binary: ${asset_path}
-
-Inspect it without changing the server:
-  '${asset_path}' version --json
-  sudo '${asset_path}' doctor --config /etc/infernex-agent/agent.conf
-
-For an existing host installation, follow the candidate validation guide
-before using 'candidate apply'.
-EOF
-elif [[ "$extract" == "true" ]]; then
+if [[ "$extract" == "true" ]]; then
   bundle_dir="${output_dir}/${bundle_name}"
   if [[ -e "$bundle_dir" ]]; then
     die "refusing to overwrite existing extraction path: $bundle_dir"
@@ -181,29 +149,12 @@ elif [[ "$extract" == "true" ]]; then
   }
 
   printf '\nverified bundle: %s\n' "$bundle_dir"
-  if [[ "$mode" == "host" ]]; then
-    cat <<EOF
+  cat <<EOF
 
-Next steps for a host/systemd installation:
+Next step for the management-node Agent:
   cd '${bundle_dir}'
-  ./bin/create-kubeconfig.sh --target-namespace models \\
-    --output /root/infernex-agent-host.kubeconfig
-  sudo ./bin/install-host.sh \\
-    --kubeconfig /root/infernex-agent-host.kubeconfig \\
-    --scan-namespace models
+  sudo ./install.sh
 EOF
-  else
-    cat <<EOF
-
-Next step for an in-cluster installation:
-  cd '${bundle_dir}'
-  ./bin/install-agent.sh \\
-    --target-node <master-node-name> \\
-    --target-namespace models \\
-    --dashboard-cidr <operations-CIDR> \\
-    --runtime ctr
-EOF
-  fi
 else
   printf 'verified archive: %s\n' "$asset_path"
 fi

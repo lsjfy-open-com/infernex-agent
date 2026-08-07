@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/bundle-lib.sh" ]]; then
-  # Extracted host bundle.
+  # Extracted Agent package.
   # shellcheck source=/dev/null
   source "${script_dir}/bundle-lib.sh"
 else

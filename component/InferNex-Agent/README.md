@@ -15,21 +15,24 @@ The intended management-node installation is one command:
 curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 ```
 
-The installer discovers kubeconfig, InferNex CRDs, Bridge templates, existing
-service namespaces, and CPU architecture. It creates a dedicated identity and
-workspace, installs the static binary/systemd service, then prompts only for
-the OpenAI-compatible model interface. See the
+The installer discovers the current kubeconfig, InferNex CRDs, Bridge
+templates, existing service namespaces, and CPU architecture. It installs one
+static binary/systemd service, then prompts only for the OpenAI-compatible
+model interface. By default it creates no Agent Pod, controller, CRD,
+ServiceAccount, or RBAC. It creates only an empty Agent workspace Namespace for
+future approved model deployments. See the
 [Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 
 The older
 [0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)
-contains the advanced/manual host installer, but not the zero-parameter entry
-point described above. Validate this branch's CI host bundle on an existing
+contains the legacy/manual installer, but not the unified package name or
+zero-parameter entry
+point described above. Validate this branch's CI Agent package on an existing
 cluster before publishing or merging the next release; the online one-liner
 must not be advertised as usable until that bundle is published.
 
-Host installations provide one Agentic terminal:
+The management-node installation provides one Agentic terminal:
 
 ```bash
 sudo infernex-agent setup
@@ -86,7 +89,7 @@ Use `infernex_get_change` to distinguish `committed`, `rolled-back`,
 `rollback-failed`, and `apply-failed`. Pending changes resume after an Agent
 restart.
 
-The host installer also creates a checksummed pre-install recovery point under
+The management-node installer also creates a checksummed pre-install recovery point under
 `/var/lib/infernex-agent/backups/` before replacing any Agent files. If
 installation or verification fails, it restores the previous host files,
 systemd state, and Agent-managed cluster source resources automatically.

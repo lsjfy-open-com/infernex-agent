@@ -14,12 +14,12 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 
 ## 2. 默认权限
 
-默认只读身份按明确目标命名空间授予：
+默认安装复用运维人员当前 kubeconfig，因此 Kubernetes 层的有效权限与该身份一致；
+安装器不额外创建 ServiceAccount 或 RBAC。Agent 对模型暴露的能力仍由 typed tools
+收窄，只读取 InferNexService、关联的 Deployment/DaemonSet/LeaderWorkerSet、Pod、
+Event，以及明确启用时的有界 Pod 日志。
 
-- `get/list` `InferNexService`；
-- `list` Deployment、DaemonSet、LeaderWorkerSet、Pod 和 Event。
-
-默认不允许：
+无论当前 kubeconfig 权限多大，模型工具都不提供：
 
 - 读取 Secret；
 - 读取 Node；
@@ -29,12 +29,14 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 - 任意 patch/delete Kubernetes 对象；
 - shell、SSH 或宿主机命令执行。
 
-启用日志诊断时只额外授予目标命名空间 `get pods/log`。采集器仍通过
+启用日志诊断要求当前身份已有目标命名空间 `get pods/log`。采集器仍通过
 `infernex.io/owner` 标签限定一个服务，限制 Pod、时间窗、尾部行数和字节数，
 只保留匹配的分类证据。Pod 日志可能包含 Prompt、响应和业务数据，因此该权限
 默认关闭；常见凭据脱敏不能替代组织的数据分级和访问审计。
 
-长期 systemd 服务不得使用 `/etc/kubernetes/admin.conf`。
+高合规或最小权限环境应使用 `sudo ./install.sh --hardened-identity`，由安装器创建
+namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便利路径的权限风险
+必须由部署组织接受；模型工具边界不能替代 Kubernetes 最小权限策略。
 
 ## 3. 网络边界
 
@@ -59,7 +61,7 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 - 模型配置查看命令不打印密钥；
 - 模型测试通过临时 Header 文件传递密钥，密钥不出现在 curl 进程参数中。
 
-离线包、Helm values、Dashboard 和日志不得包含密钥。宿主机专用
+离线包、Helm values、Dashboard 和日志不得包含密钥。可选的专用
 ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允许时优先
 使用企业 PKI/OIDC 的等价最小权限 kubeconfig。
 

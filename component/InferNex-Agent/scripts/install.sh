@@ -23,17 +23,17 @@ esac
 version="${INFERNEX_AGENT_VERSION:-}"
 if [[ -n "$version" ]]; then
   [[ "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]] || die "invalid INFERNEX_AGENT_VERSION"
-  asset="infernex-agent-host-offline-${version}-linux-${architecture}.tar.gz"
+  asset="infernex-agent-${version}-linux-${architecture}.tar.gz"
   asset_url="https://github.com/${repository}/releases/download/infernex-agent-v${version}/${asset}"
 else
   releases="$(curl --fail --location --silent --show-error \
     --retry 3 "https://api.github.com/repos/${repository}/releases?per_page=20")"
   asset_url="$(
     printf '%s' "$releases" |
-      grep -o "https://github.com/${repository}/releases/download/[^\"]*/infernex-agent-host-offline-[^\"]*-linux-${architecture}\.tar\.gz" |
+      grep -o "https://github.com/${repository}/releases/download/[^\"]*/infernex-agent-[0-9][^\"]*-linux-${architecture}\.tar\.gz" |
       awk 'NR == 1 {print; exit}'
   )"
-  [[ -n "$asset_url" ]] || die "no published linux/${architecture} host bundle was found"
+  [[ -n "$asset_url" ]] || die "no published InferNex Agent package for linux/${architecture} was found"
   asset="${asset_url##*/}"
 fi
 

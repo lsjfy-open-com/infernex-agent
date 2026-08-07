@@ -12,9 +12,8 @@ cleanup() {
 trap cleanup EXIT
 
 version="0.3.0-rc.6"
-bundle_name="infernex-agent-host-offline-${version}-linux-amd64"
+bundle_name="infernex-agent-${version}-linux-amd64"
 archive_name="${bundle_name}.tar.gz"
-standalone_name="infernex-agent-${version}-linux-amd64"
 mkdir -p \
   "${work_dir}/fixtures/${bundle_name}" \
   "${work_dir}/bin" \
@@ -26,13 +25,6 @@ tar -C "${work_dir}/fixtures" -czf \
   cd -- "${work_dir}/fixtures"
   sha256sum "$archive_name"
 ) >"${work_dir}/fixtures/${archive_name}.sha256"
-printf '#!/usr/bin/env bash\nprintf "standalone fixture\\n"\n' \
-  >"${work_dir}/fixtures/${standalone_name}"
-chmod 0755 "${work_dir}/fixtures/${standalone_name}"
-(
-  cd -- "${work_dir}/fixtures"
-  sha256sum "$standalone_name"
-) >"${work_dir}/fixtures/${standalone_name}.sha256"
 
 cat >"${work_dir}/bin/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -59,7 +51,6 @@ chmod 0755 "${work_dir}/bin/curl"
 
 PATH="${work_dir}/bin:${PATH}" FIXTURE_DIR="${work_dir}/fixtures" \
   bash "${agent_dir}/scripts/download-bundle.sh" \
-  --mode host \
   --version "$version" \
   --architecture amd64 \
   --output-dir "${work_dir}/download"
@@ -68,18 +59,9 @@ PATH="${work_dir}/bin:${PATH}" FIXTURE_DIR="${work_dir}/fixtures" \
 grep -q '^verified fixture$' \
   "${work_dir}/download/${bundle_name}/marker"
 
-PATH="${work_dir}/bin:${PATH}" FIXTURE_DIR="${work_dir}/fixtures" \
-  bash "${agent_dir}/scripts/download-bundle.sh" \
-  --mode standalone \
-  --version "$version" \
-  --architecture amd64 \
-  --output-dir "${work_dir}/download"
-[[ -x "${work_dir}/download/${standalone_name}" ]]
-
 if bash "${agent_dir}/scripts/download-bundle.sh" \
-  --mode invalid --version "$version" \
   --output-dir "${work_dir}/download" >/dev/null 2>&1; then
-  printf 'invalid mode unexpectedly succeeded\n' >&2
+  printf 'missing version unexpectedly succeeded\n' >&2
   exit 1
 fi
 

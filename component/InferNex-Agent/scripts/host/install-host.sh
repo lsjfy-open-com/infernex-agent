@@ -18,8 +18,8 @@ Usage:
   sudo install-host.sh --kubeconfig FILE --scan-namespace NAMESPACE [options]
 
 Options:
-  --bundle-dir DIR                 Extracted host bundle root
-  --binary FILE                   Agent binary outside a host bundle
+  --bundle-dir DIR                 Extracted Agent package root
+  --binary FILE                   Agent binary outside a package
   --kubeconfig FILE               Dedicated, self-contained kubeconfig
   --scan-namespace NAMESPACE      Namespace to scan (repeatable)
   --listen-address ADDRESS        MCP bind (default: 127.0.0.1:8080)
@@ -42,7 +42,7 @@ Options:
   --enable-recovery                Enable guarded recovery
   --recovery-template-namespace N  Profile namespace
   --recovery-min-critical-scans N  Default: 3
-  --skip-checksums                  Skip host bundle checksum verification
+  --skip-checksums                  Skip Agent package checksum verification
   --no-start                        Install files without starting the service
   -h, --help                        Show this help
 
@@ -235,11 +235,13 @@ if [[ -n "$bundle_root" ]]; then
   if [[ "$verify_checksums" == "true" ]]; then
     bundle_verify_checksums "$bundle_root"
   fi
-  [[ "$(bundle_property "$bundle_root" format)" == "infernex-agent-host-offline-v1" ]] ||
-    bundle_die "unsupported host bundle format"
+  bundle_format="$(bundle_property "$bundle_root" format)"
+  [[ "$bundle_format" == "infernex-agent-linux-v1" ||
+    "$bundle_format" == "infernex-agent-host-offline-v1" ]] ||
+    bundle_die "unsupported Agent bundle format"
   bundle_architecture="$(bundle_property "$bundle_root" architecture)"
   [[ "$bundle_architecture" == "$(bundle_host_architecture)" ]] ||
-    bundle_die "host bundle architecture ${bundle_architecture} does not match this host"
+    bundle_die "Agent package architecture ${bundle_architecture} does not match this host"
   if [[ -z "$binary_source" ]]; then
     binary_relative="$(bundle_property "$bundle_root" binary)"
     bundle_safe_relative_path "$binary_relative" ||
@@ -249,7 +251,7 @@ if [[ -n "$bundle_root" ]]; then
 fi
 
 [[ -n "$binary_source" && -f "$binary_source" ]] ||
-  bundle_die "an Agent --binary or extracted host bundle is required"
+  bundle_die "an Agent --binary or extracted Agent package is required"
 [[ -x "$binary_source" ]] ||
   bundle_die "Agent binary is not executable: ${binary_source}"
 [[ -n "$kubeconfig_source" && -r "$kubeconfig_source" ]] ||

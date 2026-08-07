@@ -23,16 +23,17 @@ Install InferNex Agent on an existing InferNex management node.
 Normal usage (no parameters):
   sudo ./install.sh
 
-The installer automatically discovers the management kubeconfig, InferNex
-CRDs, Bridge template namespace, existing InferNexService namespaces, and host
-CPU architecture. It creates a dedicated least-privilege Agent identity and a
-fixed Agent workspace. The only interactive configuration is the
+The installer automatically discovers the current kubeconfig, InferNex CRDs,
+Bridge profiles, existing InferNexService namespaces, and host CPU
+architecture. It installs one local Agent process and no Kubernetes Pod,
+controller, or CRD. The only interactive configuration is the
 OpenAI-compatible model endpoint used by the Agent.
 
 Advanced recovery/automation options:
   --admin-kubeconfig FILE       Override kubeconfig discovery
-  --bundle-dir DIR              Override extracted host bundle directory
+  --bundle-dir DIR              Override the extracted Agent package directory
   --dashboard-listen-address A  Default: 127.0.0.1:8081
+  --hardened-identity          Create a dedicated ServiceAccount/RBAC identity
   --skip-model-setup            Install first; configure the model later
   --non-interactive             Do not read from the terminal
   -h, --help                    Show this help
@@ -43,6 +44,7 @@ admin_kubeconfig=""
 dashboard_listen_address="127.0.0.1:8081"
 skip_model_setup="false"
 non_interactive="false"
+hardened_identity="false"
 workspace_namespace="infernex-agent-workspace"
 
 while (($#)); do
@@ -66,6 +68,10 @@ while (($#)); do
       skip_model_setup="true"
       shift
       ;;
+    --hardened-identity)
+      hardened_identity="true"
+      shift
+      ;;
     --non-interactive)
       non_interactive="true"
       skip_model_setup="true"
@@ -84,15 +90,20 @@ bundle_require_command kubectl
 bundle_require_command sort
 bundle_require_command mktemp
 bundle_require_command readlink
+bundle_require_command awk
+bundle_require_command grep
 
 [[ -n "$bundle_root" && -d "$bundle_root" ]] ||
-  bundle_die "an extracted host bundle is required"
+  bundle_die "an extracted InferNex Agent package is required"
 bundle_root="$(cd -- "$bundle_root" && pwd)"
-create_kubeconfig="${bundle_root}/bin/create-kubeconfig.sh"
 install_host="${bundle_root}/bin/install-host.sh"
 configure_model="${bundle_root}/bin/configure-model.sh"
-[[ -x "$create_kubeconfig" && -x "$install_host" && -x "$configure_model" ]] ||
+create_kubeconfig="${bundle_root}/bin/create-kubeconfig.sh"
+[[ -x "$install_host" && -x "$configure_model" ]] ||
   bundle_die "bundle is incomplete; expected install helpers under ${bundle_root}/bin"
+if [[ "$hardened_identity" == "true" && ! -x "$create_kubeconfig" ]]; then
+  bundle_die "bundle lacks the optional hardened-identity helper"
+fi
 
 kubeconfig_works() {
   local candidate="$1"
@@ -134,7 +145,7 @@ discover_kubeconfig() {
 admin_kubeconfig="$(discover_kubeconfig || true)"
 [[ -n "$admin_kubeconfig" ]] || bundle_die \
   "no working management kubeconfig was found (checked the invoking user's ~/.kube/config, /etc/kubernetes/admin.conf, and k3s)"
-bundle_info "discovered Kubernetes management identity: ${admin_kubeconfig}"
+bundle_info "using the current Kubernetes context from: ${admin_kubeconfig}"
 
 kubectl_admin=(kubectl --kubeconfig "$admin_kubeconfig" --request-timeout=15s)
 "${kubectl_admin[@]}" get crd infernexservices.infernex.infernex.io >/dev/null ||
@@ -188,24 +199,44 @@ discovered_namespaces+=("$workspace_namespace")
 mapfile -t discovered_namespaces < <(printf '%s\n' "${discovered_namespaces[@]}" | awk 'NF' | sort -u)
 
 bundle_info "discovered InferNex workload namespaces: ${discovered_namespaces[*]}"
-bootstrap_kubeconfig="$(mktemp /tmp/infernex-agent-bootstrap-kubeconfig.XXXXXX)"
+runtime_kubeconfig="$(mktemp /tmp/infernex-agent-runtime-kubeconfig.XXXXXX)"
 cleanup() {
-  rm -f -- "$bootstrap_kubeconfig"
+  rm -f -- "$runtime_kubeconfig"
 }
 trap cleanup EXIT
 
-create_args=(
-  --admin-kubeconfig "$admin_kubeconfig"
-  --output "$bootstrap_kubeconfig"
-  --force
-  --enable-deployment
-  --deployment-namespace "$workspace_namespace"
-  --deployment-template-namespace "$template_namespace"
-  --enable-log-diagnostics
-)
+if [[ "$hardened_identity" == "true" ]]; then
+  create_args=(
+    --admin-kubeconfig "$admin_kubeconfig"
+    --output "$runtime_kubeconfig"
+    --force
+    --enable-deployment
+    --deployment-namespace "$workspace_namespace"
+    --deployment-template-namespace "$template_namespace"
+    --enable-log-diagnostics
+  )
+  for namespace in "${discovered_namespaces[@]}"; do
+    create_args+=(--target-namespace "$namespace")
+  done
+  bundle_info "creating the optional dedicated Agent identity and scoped RBAC"
+  "$create_kubeconfig" "${create_args[@]}"
+else
+  # Match kubectl-ai/K8sGPT's local-CLI model: reuse the operator's current
+  # context, but flatten it into a protected service credential so the Agent
+  # never depends on the invoking user's home directory.
+  umask 077
+  kubectl --kubeconfig "$admin_kubeconfig" config view \
+    --raw --flatten --minify >"$runtime_kubeconfig"
+  [[ -s "$runtime_kubeconfig" ]] || bundle_die "could not flatten the current kubeconfig"
+  if grep -Eq '^[[:space:]]+(exec|auth-provider):' "$runtime_kubeconfig"; then
+    bundle_die "the current kubeconfig depends on an external credential plugin; rerun with --hardened-identity or provide a self-contained admin.conf"
+  fi
+  bundle_info "reusing the current kubectl identity; no ServiceAccount or RBAC objects were created"
+fi
+
 install_args=(
   --bundle-dir "$bundle_root"
-  --kubeconfig "$bootstrap_kubeconfig"
+  --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
   --enable-deployment
   --deployment-namespace "$workspace_namespace"
@@ -213,12 +244,9 @@ install_args=(
   --enable-log-diagnostics
 )
 for namespace in "${discovered_namespaces[@]}"; do
-  create_args+=(--target-namespace "$namespace")
   install_args+=(--scan-namespace "$namespace")
 done
 
-bundle_info "creating the dedicated Agent identity and automatically scoped RBAC"
-"$create_kubeconfig" "${create_args[@]}"
 bundle_info "installing the static Agent binary and systemd service"
 "$install_host" "${install_args[@]}"
 

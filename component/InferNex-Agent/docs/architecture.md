@@ -19,7 +19,7 @@ InferNex Agent conversation orchestrator
    +-- local approval gate for write tools
    +-- typed domain tools, policy, ownership and rollback boundary
    |
-   | Kubernetes API, namespace-scoped identity
+   | Kubernetes API, current kubeconfig (optional scoped identity)
    v
 InferNexService desired state + status
    |
@@ -69,35 +69,16 @@ quietly becoming a second cluster administration interface.
 
 ## Recommended management-node composition
 
-For an in-cluster management node, the standalone Agent can run directly. An
-external runtime remains an optional integration, not a dependency:
-
-```text
-Pod network namespace
-  infernex-agent
-    - conversation/model runtime and typed domain tools
-    - projected, short-lived, namespace-scoped ServiceAccount token
-    - write calls pass policy and explicit approval gates
-
-  optional external Agent runtime
-    - MCP client -> http://127.0.0.1:8080/mcp
-    - no Kubernetes ServiceAccount token mount
-```
-
-Pod-wide ServiceAccount token automount must remain disabled. The chart
-projects the token and cluster CA only into the InferNex Agent container,
-which keeps an optionally co-scheduled generic runtime away from Kubernetes
-credentials.
-
-For a fixed master/bootstrap host, the same Agent binary can instead run as a
-non-root systemd service:
+V1 runs the standalone binary directly on a Linux management, master, or
+bootstrap node. It is not installed as a Pod by default:
 
 ```text
 openEuler management host
   infernex-agent.service
     - standalone chat/model runtime and MCP server in one static binary
     - no container/NPU runtime dependency
-    - dedicated namespace-scoped kubeconfig
+    - current kubeconfig copied into a root-protected service credential
+    - optional dedicated namespace-scoped identity
     - loopback MCP and dashboard by default
     - optional internal OpenAI-compatible endpoint
                |
@@ -105,19 +86,23 @@ openEuler management host
         Kubernetes apiserver -> InferNexService / Bridge status
 ```
 
-The host mode uses the same conversation loop, observer, source-aware deployer,
+This mode uses the same conversation loop, observer, source-aware deployer,
 remediator, and supervisor. It
 does not introduce SSH execution or direct node/NPU access. A one-time
-bootstrap command may use an administrator kubeconfig to create the dedicated
-ServiceAccount and Roles; the long-running service must not use `admin.conf`.
-The provided bootstrap kubeconfig embeds a long-lived, narrowly scoped token,
-which must be stored as a credential and rotated. Enterprise PKI/OIDC
-credentials with the same Roles are preferred where available.
+bootstrap command uses the current kubeconfig by default. With
+`--hardened-identity`, it creates a dedicated ServiceAccount and Roles; that
+long-lived token must be stored as a credential and rotated. Enterprise
+PKI/OIDC credentials with equivalent scoped permissions are preferred.
+
+The Helm/Pod composition remains an advanced option for organizations that
+require Kubernetes-managed Agent lifecycle. It is not a normal V1 Release
+asset.
 
 ## Observation tool contract
 
-All tools require an explicit namespace and are marked read-only, idempotent,
-and closed-world in MCP metadata.
+Observation tools are marked read-only, idempotent, and closed-world in MCP
+metadata. The environment discovery entry point requires no namespace; more
+specific tools accept only discovered object scopes.
 
 ### `infernex_list_services`
 

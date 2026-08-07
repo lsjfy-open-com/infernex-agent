@@ -2,171 +2,144 @@
 
 [English README](../README.md) | 简体中文
 
-## 先说明：它是 Agent，不是参数生成器
+## 一句话定位
 
-InferNex Agent 运行在 InferNex 的 master、引导节点或独立管理节点上。用户通过自然语言说明目标，Agent 自己完成环境发现、计划、工具调用、状态观察、故障诊断和失败回退。
+InferNex Agent 是运行在 InferNex 管理节点、master 节点或引导节点上的本地 AI
+Agent。用户用自然语言提出目标，Agent 通过当前 `kubectl` 身份和 InferNex 已有 API
+完成环境探索、部署计划、证据采集、故障诊断、变更确认、持续观察和失败回退。
 
-正常使用时，用户不需要填写 Kubernetes namespace、`catalogId`、工作负载 YAML 或镜像参数。旧文档中的 `model-a`、`models`、`ops-model` 都只是示例占位符，不应原样复制，也不属于正常安装流程。
+它不是另一个推理框架、Kubernetes Controller 或必须常驻集群的 Pod，也不替代
+InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、PD Orchestrator、Hermes、Eagle-Eye
+或 infernex-checker。
 
-Agent 的工作闭环是：
+## 安装前提
 
-```text
-自然语言目标
-  → 自动发现 InferNex 环境和现有实例
-  → 选择稳定实例或已有 InferNexServiceConfig 作为基线
-  → 必要时只询问无法发现的业务信息
-  → 展示受限变更并由本机用户批准
-  → 交给 InferNex Bridge 拉起服务
-  → 持续检查 Ready、拓扑、事件和日志
-  → 成功提交；失败自动撤销本次新建
-  → 用自然语言给出结论和证据
-```
+- 已经建好的 InferNex 集群；
+- 能在管理节点执行 `kubectl get infernexservices -A`；
+- Linux amd64 或 arm64、systemd、`curl`、`tar` 和 `sha256sum`；
+- 一个支持 function/tool calling 的 OpenAI 兼容模型接口。
 
-Agent 不重复实现 InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、PD Orchestrator、Hermes、Eagle-Eye 或 infernex-checker。它调用并关联这些已有能力。
+不需要 Go、Python、Docker、编译环境、新推理镜像或模型权重。
 
-## 使用前提
+## 在线安装：一条命令
 
-用户先完成 InferNex 集群建设，并在管理节点上确认：
-
-```bash
-kubectl get crd infernexservices.infernex.infernex.io
-kubectl get infernexservices -A
-```
-
-管理节点需要 Linux/systemd、`kubectl`、`curl`、`tar` 和 `sha256sum`。安装 Agent 不需要 Go、Python、Docker、编译环境、NPU 驱动或新的推理镜像。
-
-Agent 的对话模型需要提供 OpenAI 兼容接口，并支持 function/tool calling。用户安装时只需要知道三项模型接口信息：
-
-- 真实 Base URL，例如内网服务的 `http://10.20.0.30:8000/v1`；
-- 接口实际接受的模型名；
-- API Key；接口不鉴权时可直接回车。
-
-这里的“模型名”是 OpenAI 接口的真实 model ID，不是待部署推理实例的名称。
-
-## 联网安装：一条命令
-
-正式发布包含一键安装器的版本后，在 InferNex 管理节点执行：
+在管理节点执行：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 ```
 
-安装器自动完成：
+脚本会自动识别 CPU 架构和可用 kubeconfig，检查 InferNex CRD，发现 Bridge profile
+和已有服务命名空间，安装静态二进制与 systemd 服务，然后只询问 Agent 自身使用的
+模型接口。默认复用当前 `kubectl` 身份，不创建 Agent Pod、Controller、CRD、
+ServiceAccount 或 RBAC。
 
-1. 根据 `uname -m` 选择 `linux-amd64` 或 `linux-arm64` 静态包；
-2. 下载发布包和 SHA256，校验后解压；
-3. 从当前用户、`/etc/kubernetes/admin.conf` 或 k3s 路径寻找可用 kubeconfig；
-4. 检查 InferNex CRD，并发现 Bridge 模板命名空间；
-5. 发现所有已有 `InferNexService` 所在命名空间；
-6. 创建 `infernex-agent-workspace` 作为 Agent 新部署的固定工作区；
-7. 创建专用 ServiceAccount、最小化 RBAC 和独立 kubeconfig，不让 Agent 长期持有 admin.conf；
-8. 安装静态二进制和 systemd 服务；
-9. 只提示填写 Agent 模型接口，并测试 chat completions 与 tool calling；
-10. 在变更前保存集群源资源和原主机安装的校验备份。
+为让后续经批准的新模型实例与已有业务隔离，安装器会创建一个空的
+`infernex-agent-workspace` Namespace；安装时不会在其中创建 Pod 或推理实例。
 
-安装过程中不需要用户选择 namespace，也不会下载 vLLM-Ascend、Mooncake 或模型权重镜像。推理实例继续复用既有 InferNex 配置中引用的镜像。
+> 当前公开的 `0.3.0-rc.6` 仍是旧版候选包，不具备本页所述的新统一包名和默认流程。
+> 在新候选完成 A2 既有集群验收并发布前，请从 Draft PR 的 CI Artifact 验证，不能把
+> 上述在线命令当作已经可用的正式交付。
 
-## 离线安装：拷入一个包，一条命令
+## Release 到底下载哪个
 
-在联网机器下载与服务器架构匹配的两个文件：
+正式 Release 只提供一种产品包，区别仅是服务器 CPU 架构：
 
-```text
-infernex-agent-host-offline-<版本>-linux-arm64.tar.gz
-infernex-agent-host-offline-<版本>-linux-arm64.tar.gz.sha256
-```
+| `uname -m` | 下载文件 |
+|---|---|
+| `x86_64` | `infernex-agent-<版本>-linux-amd64.tar.gz` |
+| `aarch64` | `infernex-agent-<版本>-linux-arm64.tar.gz` |
 
-`aarch64` 使用 `arm64` 包，`x86_64` 使用 `amd64` 包。把两个文件传到内网管理节点后执行：
+同时下载同名 `.sha256`。不存在需要普通用户选择的“宿主机包”和“集群包”。管理节点
+是否同时是 Kubernetes master 不影响选择。
+
+## 离线安装
+
+把归档和校验文件传入内网管理节点：
 
 ```bash
-sha256sum --check infernex-agent-host-offline-*-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-host-offline-*-linux-*.tar.gz
-cd infernex-agent-host-offline-*-linux-*
+sha256sum --check infernex-agent-*-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-*-linux-*.tar.gz
+cd infernex-agent-*-linux-*
 sudo ./install.sh
 ```
 
-离线包内含静态 Agent 二进制和安装脚本，不依赖编译环境。它不包含任何推理框架镜像或模型权重；已有 InferNex 集群的镜像不会被替换。
+离线包自带静态二进制和脚本，不会联网拉镜像。详细说明见
+[离线安装](offline-install-zh.md)。
 
-如果先只验证安装和自动发现，不立即配置模型：
+## 只需要配置一次的模型接口
 
-```bash
-sudo ./install.sh --skip-model-setup
-sudo infernex-agent setup
-```
+安装器会询问：
 
-`setup` 会再次只询问模型接口，测试失败时恢复原模型配置，不影响规则扫描和 Dashboard。
+- Base URL，例如 `http://10.20.0.30:8000/v1`；
+- 接口真实接受的 model ID；
+- API Key，无鉴权可留空。
 
-## 开始与 Agent 对话
+这里的 model ID 是 Agent 背后的对话/规划模型，不是要部署的推理实例名。也可先执行
+`sudo ./install.sh --skip-model-setup`，稍后运行 `sudo infernex-agent setup`。
 
-安装完成后，在 XShell/SSH 中执行：
+## 自然语言使用
+
+在 XShell/SSH 中运行：
 
 ```bash
 sudo infernex-agent chat
 ```
 
-可以直接说：
+示例：
 
 ```text
-扫描整个 InferNex 环境，告诉我有哪些实例异常，先不要修改。
-
-我想基于当前稳定的 Qwen PD 实例再部署一个测试实例，拉起后持续观察，失败就回退。
-
-比较这个候选实例和稳定实例的跨节点日志，重点看 HCCL、Mooncake 和 vLLM worker 中断。
+扫描当前 InferNex 环境，关联实例、Pod、事件和近期异常日志，先不要修改。
+基于当前稳定的 Qwen PD 实例创建一个测试实例，拉起失败就回退。
+比较候选实例与稳定实例，重点检查 HCCL、Mooncake 和 vLLM worker 中断。
 ```
 
-Agent 会先调用无参数的全环境发现工具。部署前，它会自动查找：
-
-- 当前代已 Ready、无 Degraded 状态的现有 `InferNexService`；
-- Bridge 中管理员已经创建、且包含完整 engine 的 `InferNexServiceConfig`。
-
-它不会要求用户提供 namespace 或 `sourceId`。这些是 Agent 内部工具参数。用户只需在本机看到变更摘要后输入精确的 `yes`。单次非交互 `--ask` 模式始终禁止写操作。
-
-### 为什么第一版从稳定基线部署
-
-InferNex 的真实 vLLM-Ascend/PD 配置包含镜像、容器命令、并行度、NPU、Mooncake 和网络等强关联设置。仅凭一个模型路径让大模型凭空生成生产 YAML 不安全，也会重复实现 InferNex。
-
-因此第一版的智能部署遵循“上一份稳定配置 + 一次受控变化”：优先克隆一个实际 Ready 的服务配置，或引用集群管理员已有的 Bridge profile。若环境中没有任何稳定服务或完整 engine profile，Agent 会明确说明缺少部署基线并给出建档建议，不会偷偷使用演示模型或猜测生产参数。
+Agent 会先探索当前环境，再选择已 Ready 的稳定服务或管理员已有的完整 Bridge profile
+作为部署来源。用户无需填写 namespace、`sourceId`、镜像、容器命令或 YAML。只读工具
+自动执行；任何写操作都必须在本机展示摘要，并由用户输入精确的 `yes` 批准。
 
 ## Web 展示
 
-Dashboard 默认只监听管理节点的 `127.0.0.1:8081`。从 XShell/SSH 建立本地转发：
+Dashboard 默认监听 `127.0.0.1:8081`。通过 SSH 隧道访问：
 
 ```bash
 ssh -L 8081:127.0.0.1:8081 <管理节点>
 ```
 
-然后在本机打开 `http://127.0.0.1:8081/`。这样无需把无内置登录认证的 Dashboard 暴露到整个网络。
+浏览器打开 `http://127.0.0.1:8081/`。如需绑定管理网地址，重新安装时传入
+`--dashboard-listen-address <IP>:8081`，并自行配置防火墙、ACL 或认证代理。
 
-确需绑定管理网地址时，可使用高级安装选项：
+## 自动发现、工具集与知识库
+
+V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具集”结构：
+
+- 自动发现 InferNexService、Bridge profiles、工作负载、Pod、事件和拓扑；
+- 通过 typed tools 调用 Kubernetes/InferNex API，不给模型任意 shell 或任意 YAML；
+- 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
+- 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。
+
+参见[工具集与知识库设计](toolsets-and-knowledge-zh.md)。
+
+## 回退和边界
+
+- 安装覆盖前保存 Agent 管理范围内的集群源资源和本机文件恢复点；
+- 每次部署先写持久变更记录和 `changeId`；
+- 新实例未按时 Ready 或当前代报告 Degraded 时，只撤销本次 Agent 所有的新资源；
+- Agent 不覆盖既有服务，不直接创建 Deployment/Pod/Service，不读取 Secret；
+- 模型接口不可用时，对话暂停，但确定性扫描、Dashboard、变更记录和回退仍可工作。
+
+更完整的保证见[变更保护与回退](change-safety-zh.md)和
+[安全与能力边界](security-boundaries-zh.md)。
+
+## 高级选项
+
+默认身份不适合长期服务账户策略时，可让同一个安装脚本创建专用的、namespace-scoped
+身份：
 
 ```bash
-sudo ./install.sh --dashboard-listen-address 10.20.0.10:8081
+sudo ./install.sh --hardened-identity
 ```
 
-必须同时配置主机防火墙、管理网 ACL 或带认证的反向代理。
-
-## 自动发现的范围
-
-首次安装会发现当时已有 InferNex 服务命名空间，并将它们写入专用 RBAC 和持续扫描范围；Agent 自己的新实例固定进入 `infernex-agent-workspace`。这样既接近 k9s 的开箱发现体验，也不把集群管理员权限长期交给模型。
-
-如果集群后来新增了全新的业务命名空间，重新运行同一个 `sudo ./install.sh --skip-model-setup` 即可重新发现并扩充范围；已有模型接口配置会保留。后续版本会把这一动作纳入 Agent 的受控 RBAC 扩展审批流。
-
-## 安全、回退与边界
-
-- 安装前备份 Agent 管理范围内的 `InferNexService`/`InferNexServiceConfig` 源资源和现有主机文件；安装失败自动恢复。
-- 每次 Agent 部署先写入持久变更记录和 `changeId`。
-- 新服务在超时前未 Ready，或当前代报告 Degraded 时，只删除带有相同 Agent 所有权和 `changeId` 的本次新建资源。
-- Agent 不覆盖用户已有服务，不删除无法证明所有权的对象，不直接创建 Deployment/Pod/Service。
-- 模型不能提交任意 YAML、shell、镜像或 Kubernetes 对象；真正的工作负载仍由 InferNex Bridge 编排。
-- 模型接口不可用时，自然语言对话暂停，但确定性扫描、Dashboard、快照、变更记录和回退仍工作。
-
-详细边界见[安全与能力边界](security-boundaries-zh.md)，回退机制见[变更保护、备份与回退](change-safety-zh.md)。
-
-## 高级维护接口
-
-`create-kubeconfig.sh`、`install-host.sh` 以及 Helm 参数保留给安全审计、定制 RBAC、CI 和故障恢复使用，不是普通用户的安装步骤。需要精细控制时再阅读：
-
-- [openEuler 宿主机高级安装](host-install-openeuler-zh.md)
-- [集群内与离线高级安装](offline-install-zh.md)
-- [模型接口配置与轮换](model-configuration-zh.md)
-- [生产运维手册](operations-runbook-zh.md)
-- [渐进式特性实验](progressive-experiments-zh.md)
+Helm/Pod 形态仅保留给必须由 Kubernetes 管理 Agent 生命周期的高级场景，不是 V1
+默认交付，也不出现在普通 Release 下载列表。高级维护说明见
+[安装模式与高级选项](install-and-modes-zh.md)。

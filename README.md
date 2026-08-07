@@ -22,9 +22,15 @@ curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/
 sudo infernex-agent chat
 ```
 
+> The public `0.3.0-rc.6` Release is the legacy candidate and does not yet
+> contain this unified package. Use the Draft PR CI Agent Artifact for existing
+> cluster acceptance; publish and merge only after that acceptance passes.
+
 See the [Chinese product guide](component/InferNex-Agent/docs/product-guide-zh.md).
 Manual namespaces and values such as `model-a` in advanced documents are
-examples, not normal installation inputs.
+examples, not normal installation inputs. The default product is one local
+Linux Agent on the management node, using the current kubeconfig. It does not
+install an Agent Pod, controller, CRD, ServiceAccount, or RBAC.
 
 The Agent can now run continuously on an InferNex management or Kubernetes
 control-plane node. Its supervisor scans explicit namespaces, correlates
@@ -56,9 +62,8 @@ ID. It cannot accept arbitrary images, commands, URLs, YAML, shell, or
 Bridge remains responsible for the Deployment, Service, status, and garbage
 collection. A CPU-only SmolLM fixture remains for free Kind CI only.
 
-The default Helm configuration has deployment mode disabled, uses
-namespace-scoped read-only RBAC, and has no permission to read Secrets or
-mutate workloads.
+The Helm chart remains an advanced lifecycle option and is not the default V1
+installation or a normal Release asset.
 
 An additional double-opt-in recovery mode can create a new
 `InferNexService` after repeated critical scans. The source service must name
@@ -66,20 +71,22 @@ an operator-approved `InferNexServiceConfig`; the Agent cannot create the
 profile, overwrite the source, switch traffic, or submit arbitrary workload
 fields.
 
-The management-node profile schedules the Agent on a control-plane/master node
-and exposes only the dashboard as NodePort `30081`; the MCP Service remains
-internal. See
+An advanced Kubernetes profile can schedule the Agent Pod on a
+control-plane/master node and expose only the dashboard as NodePort `30081`;
+the MCP Service remains internal. See
 [`values-master-node.yaml`](component/InferNex-Agent/chart/infernex-agent/values-master-node.yaml).
 
-The same static Agent can run outside Kubernetes as a hardened, non-root
-systemd service on an openEuler master/bootstrap host. This mode uses a
-dedicated namespace-scoped kubeconfig, keeps MCP and the dashboard on loopback
-by default, and does not require a container or NPU runtime.
+The default static Agent runs as a hardened, non-root systemd service on an
+openEuler master/bootstrap or other management host. It uses the current
+kubeconfig by default, keeps MCP and the dashboard on loopback, and does not
+require a container or NPU runtime. A dedicated namespace-scoped identity is
+an optional hardened installation policy, not a separate package.
 
 ## Documentation
 
 - [产品使用说明、部署选型和验收](component/InferNex-Agent/docs/product-guide-zh.md)
 - [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
+- [工具集、知识库与业界方案取舍](component/InferNex-Agent/docs/toolsets-and-knowledge-zh.md)
 - [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
 - [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
 - [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
