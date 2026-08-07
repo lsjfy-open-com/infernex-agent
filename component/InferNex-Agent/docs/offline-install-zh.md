@@ -44,7 +44,7 @@ sudo ./install.sh
 3. 读取当前 context 并生成受保护的本地副本；
 4. 自动识别 Bridge CRD 或 openFuyao Helm/BKE 基础兼容模式；
 5. 安装静态二进制与本地 systemd 服务；
-6. 启动持续扫描和回环地址 Dashboard；
+6. 启动 MCP、自然语言入口和回环地址 Dashboard；
 7. 只询问模型 Base URL、model ID 和可选 API Key；
 8. 测试模型 tool-calling 兼容性。
 
@@ -54,7 +54,7 @@ Kubernetes RBAC 决定；模型本身看不到该凭据。
 
 若没有 `infernexservices.infernex.infernex.io`，安装器不会报错退出，也不会要求补装
 CRD，而是关闭 Bridge 专属写能力并完成基础 Agent 安装。此模式不会创建 workspace
-Namespace 或其他集群对象。
+Namespace 或其他集群对象，也不会在尚无 Helm 资产适配器时伪报“已扫描现有实例”。
 
 ## 使用
 
@@ -79,7 +79,7 @@ ssh -L 8081:127.0.0.1:8081 <管理服务器>
 
 ## 只有两种高级情况需要额外处理
 
-### 独立最小权限身份
+### 独立最小权限身份（Bridge 模式）
 
 组织不允许长期服务使用当前运维身份时：
 
@@ -88,6 +88,7 @@ sudo ./install.sh --hardened-identity
 ```
 
 安装器才会创建专用 ServiceAccount、namespace-scoped RBAC 和独立 kubeconfig。
+Helm/BKE 基础兼容模式尚无对应的最小权限规则集，当前不接受该选项。
 
 ### 集群内 Pod 运行
 

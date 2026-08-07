@@ -15,7 +15,7 @@ InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、PD Orchestrator、Hermes、Eagle
 ## 安装前提
 
 - 已经建好的 InferNex 集群；
-- 能在管理节点执行 `kubectl get infernexservices -A`；
+- 能在管理节点通过当前 `kubectl` context 访问目标业务集群；
 - Linux amd64 或 arm64、systemd、`curl`、`tar` 和 `sha256sum`；
 - 一个支持 function/tool calling 的 OpenAI 兼容模型接口。
 
@@ -99,9 +99,13 @@ sudo infernex-agent chat
 比较候选实例与稳定实例，重点检查 HCCL、Mooncake 和 vLLM worker 中断。
 ```
 
-Agent 会先探索当前环境，再选择已 Ready 的稳定服务或管理员已有的完整 Bridge profile
-作为部署来源。用户无需填写 namespace、`sourceId`、镜像、容器命令或 YAML。只读工具
-自动执行；任何写操作都必须在本机展示摘要，并由用户输入精确的 `yes` 批准。
+在已安装 Bridge 的集群中，Agent 会先探索当前环境，再选择已 Ready 的稳定服务或管理员
+已有的完整 Bridge profile 作为部署来源。用户无需填写 namespace、`sourceId`、镜像、
+容器命令或 YAML。只读工具自动执行；任何写操作都必须在本机展示摘要，并由用户输入
+精确的 `yes` 批准。
+
+在当前 Helm/BKE 基础兼容模式中，`chat`、模型接口和 Web 入口可以使用，但尚不会声称
+已经发现或能够部署现有 Helm 模型实例；这需要后续 Helm release/LWS/Pod 资产适配器。
 
 ## Web 展示
 
@@ -140,12 +144,15 @@ V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具�
 
 ## 高级选项
 
-默认身份不适合长期服务账户策略时，可让同一个安装脚本创建专用的、namespace-scoped
-身份：
+Bridge 模式下，若默认身份不适合长期服务账户策略，可让同一个安装脚本创建专用的、
+namespace-scoped 身份：
 
 ```bash
 sudo ./install.sh --hardened-identity
 ```
+
+当前 Helm/BKE 基础兼容模式还没有对应的最小权限规则集，因此暂不接受这个选项；请使用
+当前 kubeconfig 完成首轮安装验证，后续资产适配器会同时给出所需 RBAC 清单。
 
 Helm/Pod 形态仅保留给必须由 Kubernetes 管理 Agent 生命周期的高级场景，不是 V1
 默认交付，也不出现在普通 Release 下载列表。高级维护说明见

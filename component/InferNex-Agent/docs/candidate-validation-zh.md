@@ -21,7 +21,7 @@ Artifact 内含同名 `.tar.gz` 和 `.sha256`。CI 还可能保留 Kubernetes �
 1. 从 Draft PR 最新成功的 workflow 下载 arm64 Agent Artifact；
 2. 传入 A2 管理节点并校验 SHA256；
 3. 解压后运行 `sudo ./install.sh`；
-4. 确认脚本自动发现 kubeconfig、InferNex CRD、Bridge profile 和现有实例；
+4. 确认脚本自动发现 kubeconfig，并正确区分 Bridge CRD 与无 Bridge 的 Helm/BKE 形态；
 5. 配置内网 OpenAI 兼容模型接口，确认 tool calling 测试通过；
 6. 运行 `sudo infernex-agent chat`，先做只读全环境扫描；
 7. 批准一个从稳定来源创建的测试实例，观察 Ready/Degraded、事件和日志；

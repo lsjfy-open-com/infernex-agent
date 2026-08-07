@@ -30,7 +30,8 @@ Bridge 时才创建空的 `infernex-agent-workspace`；Helm/BKE 基础兼容模�
 uname -m                       # 应为 aarch64
 systemctl --version
 kubectl get --raw=/version
-kubectl get infernexservices -A
+kubectl config current-context
+kubectl api-resources | grep -i infernex  # 仅用于识别形态；没有输出也不阻止安装
 ```
 
 若使用 `/etc/kubernetes/admin.conf`：
@@ -39,13 +40,14 @@ kubectl get infernexservices -A
 sudo ./install.sh --admin-kubeconfig /etc/kubernetes/admin.conf
 ```
 
-若安全策略不允许 systemd 保存当前管理员身份：
+已安装 Bridge，且安全策略不允许 systemd 保存当前管理员身份时：
 
 ```bash
 sudo ./install.sh --hardened-identity
 ```
 
 此高级选项才会创建 namespace-scoped ServiceAccount/RBAC。无需下载另一种包。
+Helm/BKE 基础兼容模式暂不接受该选项，请先复用当前 kubeconfig 完成安装验证。
 
 ## 使用和访问
 
