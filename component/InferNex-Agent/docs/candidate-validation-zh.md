@@ -3,7 +3,8 @@
 ## 当前状态
 
 新统一安装流程仍在 Draft PR 中，必须先在 A2 既有 InferNex 集群验收，之后才能合并并
-发布新 Release。公开 `0.3.0-rc.6` 是旧版，不能用来验证新的一键安装入口。
+发布新 Release。公开 `0.3.0-rc.6` 是旧版，不能用来验证新的一键安装入口。首个支持
+无 Bridge CRD 安装的候选版本是 `0.4.0-rc.2`。
 
 CI 为每个架构生成一个默认 Agent Artifact：
 
@@ -38,6 +39,8 @@ Artifact 内含同名 `.tar.gz` 和 `.sha256`。CI 还可能保留 Kubernetes �
 - 稳定来源校验、Ready 观察、失败回退和重启续跑均有记录；
 - 模型 API Key 不出现在 unit 参数、日志或普通配置中；
 - 断开外网后静态二进制、扫描、Dashboard 和回退仍正常。
+- 删除/不存在 Bridge CRD 时安装仍成功，doctor 显示 `generic-kubernetes` 警告，且
+  不创建 workspace 或启用 Bridge 专属写工具。
 
 ## 发布门禁
 

@@ -121,16 +121,22 @@ func runDoctor(args []string) error {
 		}
 
 		groupVersion := infernexv1alpha1.GroupVersion.String()
+		bridgeAPIAvailable := true
 		if _, resourceErr := discoveryClient.ServerResourcesForGroupVersion(groupVersion); resourceErr != nil {
-			add("infernex-crd", "fail", resourceErr.Error())
+			bridgeAPIAvailable = false
+			add(
+				"platform-mode",
+				"warn",
+				"generic Kubernetes/Helm compatibility mode; InferNex Bridge API "+groupVersion+" is not installed",
+			)
 		} else {
-			add("infernex-crd", "pass", groupVersion+" is discoverable")
+			add("platform-mode", "pass", "InferNex Bridge API "+groupVersion+" is discoverable")
 		}
 
 		dynamicClient, dynamicErr := dynamic.NewForConfig(restConfig)
 		if dynamicErr != nil {
 			add("infernex-services", "fail", dynamicErr.Error())
-		} else {
+		} else if bridgeAPIAvailable {
 			serviceResource := schema.GroupVersionResource{
 				Group:    infernexv1alpha1.GroupVersion.Group,
 				Version:  infernexv1alpha1.GroupVersion.Version,
@@ -172,6 +178,12 @@ func runDoctor(args []string) error {
 					)
 				}
 			}
+		} else {
+			add(
+				"infernex-services",
+				"warn",
+				"Bridge-specific service discovery is disabled; base Kubernetes/Helm asset adapters are pending",
+			)
 		}
 	}
 

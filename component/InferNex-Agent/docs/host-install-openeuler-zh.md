@@ -17,12 +17,12 @@ cd infernex-agent-*-linux-arm64
 sudo ./install.sh
 ```
 
-安装器会发现当前 kubeconfig、InferNex CRD、Bridge profile 和已有实例，安装静态
+安装器会发现当前 kubeconfig，并自动区分 Bridge CRD 与 Helm/BKE 形态，安装静态
 二进制与 systemd 服务，并只询问 Agent 模型接口。它不使用 NPU 驱动，不拉取或替换
 现有 vLLM-Ascend 0.23.0、Mooncake、CANN 镜像和模型权重。
 
-默认不在集群中安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC。安装器只会
-创建一个空的 `infernex-agent-workspace` Namespace，作为后续经批准部署的隔离工作区。
+默认不在集群中安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC。只有已有
+Bridge 时才创建空的 `infernex-agent-workspace`；Helm/BKE 基础兼容模式不修改集群。
 
 ## openEuler 检查
 

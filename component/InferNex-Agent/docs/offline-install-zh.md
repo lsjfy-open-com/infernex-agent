@@ -19,7 +19,7 @@ Release 中只需要选择管理服务器的 CPU 架构：
 
 - Linux amd64 或 arm64；
 - `kubectl` 已安装，当前 context 可以访问目标集群；
-- 集群中已经安装 InferNex 与 InferNex Bridge；
+- 集群中已经安装 openFuyao InferNex；InferNex Bridge 是可选形态，不是安装前提；
 - 服务器具有 systemd；
 - 准备一个支持 OpenAI `chat/completions` 和 tool calls 的模型接口。
 
@@ -42,7 +42,7 @@ sudo ./install.sh
 1. 校验包内所有文件；
 2. 发现当前用户、root、kubeadm 或 k3s 的可用 kubeconfig；
 3. 读取当前 context 并生成受保护的本地副本；
-4. 检查 InferNex CRD、Bridge profile 和已有服务；
+4. 自动识别 Bridge CRD 或 openFuyao Helm/BKE 基础兼容模式；
 5. 安装静态二进制与本地 systemd 服务；
 6. 启动持续扫描和回环地址 Dashboard；
 7. 只询问模型 Base URL、model ID 和可选 API Key；
@@ -51,6 +51,10 @@ sudo ./install.sh
 默认不会在 Kubernetes 中安装 Agent Pod、Controller、CRD、ServiceAccount 或
 RBAC。Agent 使用运维人员当前的 kubectl 身份，实际权限由现有 kubeconfig 和
 Kubernetes RBAC 决定；模型本身看不到该凭据。
+
+若没有 `infernexservices.infernex.infernex.io`，安装器不会报错退出，也不会要求补装
+CRD，而是关闭 Bridge 专属写能力并完成基础 Agent 安装。此模式不会创建 workspace
+Namespace 或其他集群对象。
 
 ## 使用
 

@@ -30,7 +30,9 @@ See the [Chinese product guide](component/InferNex-Agent/docs/product-guide-zh.m
 Manual namespaces and values such as `model-a` in advanced documents are
 examples, not normal installation inputs. The default product is one local
 Linux Agent on the management node, using the current kubeconfig. It does not
-install an Agent Pod, controller, CRD, ServiceAccount, or RBAC.
+install an Agent Pod, controller, CRD, ServiceAccount, or RBAC. openFuyao
+Helm/BKE clusters without InferNex Bridge CRDs enter a no-mutation base
+compatibility mode instead of failing installation.
 
 The Agent can now run continuously on an InferNex management or Kubernetes
 control-plane node. Its supervisor scans explicit namespaces, correlates

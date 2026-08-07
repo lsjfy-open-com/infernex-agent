@@ -43,10 +43,14 @@ cd infernex-agent-*-linux-*
 sudo ./install.sh
 ```
 
-安装器自动完成架构识别、kubeconfig/当前 context 检测、InferNex CRD 与 Bridge
-发现、已有服务扫描、静态二进制安装和 systemd 常驻服务配置。默认复用当前
+安装器自动完成架构识别、kubeconfig/当前 context 检测、Bridge CRD 或 Helm/BKE
+形态识别、静态二进制安装和 systemd 常驻服务配置。默认复用当前
 kubectl 身份，不创建 ServiceAccount/RBAC；有合规隔离要求时才使用高级选项
 `--hardened-identity`。
+
+没有 Bridge CRD 不再导致安装失败：Agent 会进入不修改集群的基础兼容模式。该模式
+当前先提供安装、模型配置、对话和 Web 入口；Helm release、LWS/Deployment、Pod、
+Service 及底层组件日志的自动资产图将在下一阶段接入。
 
 唯一需要人工提供的是 Agent 模型接口：OpenAI 兼容 Base URL、真实 model ID 和
 可选 API Key。安装完成后：

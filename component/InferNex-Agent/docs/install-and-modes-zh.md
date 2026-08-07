@@ -32,8 +32,13 @@ kubeconfig、`/etc/kubernetes/admin.conf`、k3s kubeconfig。它会把当前上�
 root 可读的 systemd 运行配置。若 kubeconfig 依赖外部 `exec` 凭据插件，则使用自包含
 admin.conf，或选择下述 hardened identity。
 
-安装器创建一个空的 `infernex-agent-workspace` Namespace，供后续被批准的新服务隔离
-使用；不会在安装阶段创建 Agent 或推理 Pod。
+检测到 InferNex Bridge 时，安装器创建一个空的 `infernex-agent-workspace` Namespace，
+供后续被批准的新服务隔离使用；不会在安装阶段创建 Agent 或推理 Pod。未检测到
+Bridge 时自动进入 `generic-kubernetes` 模式，不创建该 Namespace，也不修改集群。
+
+`generic-kubernetes` 用于按 openFuyao 管理面/业务面文档部署、再通过 Linux 终端执行
+`helm install <实例名> <InferNex离线Chart> -n <命名空间> ...` 的集群。当前版本先保证
+Agent 安装、模型配置和服务入口可用；Helm/LWS/组件资产扫描将在下一阶段接入。
 
 ## Hardened identity（可选）
 

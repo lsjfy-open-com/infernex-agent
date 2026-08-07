@@ -98,6 +98,13 @@ The Helm/Pod composition remains an advanced option for organizations that
 require Kubernetes-managed Agent lifecycle. It is not a normal V1 Release
 asset.
 
+The installed platform adapter is discovered independently from the Agent
+lifecycle. Presence of both InferNex Bridge CRDs enables the Bridge observer
+and guarded write tools. Their absence selects a no-mutation generic
+Kubernetes/Helm base mode; it is not treated as evidence that InferNex or its
+inference workloads are absent. Helm release, LeaderWorkerSet/Deployment,
+component-log, and BKE adapters are layered onto this mode incrementally.
+
 ## Observation tool contract
 
 Observation tools are marked read-only, idempotent, and closed-world in MCP

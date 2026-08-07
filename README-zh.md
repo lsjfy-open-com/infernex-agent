@@ -27,7 +27,7 @@ sudo infernex-agent chat
 > 当前公开的 `0.3.0-rc.6` 仍是旧候选版，不含这里描述的统一安装包。新版本需先使用
 > Draft PR 的 CI Agent Artifact 在既有 A2 集群验收，通过后才发布和合并。
 
-Release 只按 CPU 架构提供一个 Linux Agent 包，不再让用户选择“宿主机包”或“集群包”。默认复用当前 kubeconfig，不安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC。离线包同样只需解压后执行 `sudo ./install.sh`。`model-a`、`models` 等名称只是旧的高级手工示例，不是普通安装参数。完整说明见 [InferNex Agent 中文产品指南](component/InferNex-Agent/docs/product-guide-zh.md)。
+Release 只按 CPU 架构提供一个 Linux Agent 包，不再让用户选择“宿主机包”或“集群包”。默认复用当前 kubeconfig，不安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC；没有 InferNex Bridge CRD 的 openFuyao Helm/BKE 集群会进入不修改集群的基础兼容模式，不再安装失败。离线包同样只需解压后执行 `sudo ./install.sh`。`model-a`、`models` 等名称只是旧的高级手工示例，不是普通安装参数。完整说明见 [InferNex Agent 中文产品指南](component/InferNex-Agent/docs/product-guide-zh.md)。
 
 ## Updates
  - [26-06] 推理后端切换为 LeaderWorkerSet（LWS）部署编排，原生支持多 DP 协同；PD-Orchestrator 的 elastic-scaler 新增 APA 扩缩算法，支持多样指标扩缩；Hermes-router 新增基于算力饱和度与时延预测的路由策略；cache-indexer 实现 L3 级 KV-aware 感知，与 Mooncake 联动支撑全局 KVCache 索引；eagle-eye 新增权重分发及灵衢网络动态指标获取；InferNex 新增 Helm 部署前置校验工具，覆盖 NPU 驱动、硬件资源及网络通信等环境检查，提前发现部署风险。

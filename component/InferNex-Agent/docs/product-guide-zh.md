@@ -29,13 +29,18 @@ InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、PD Orchestrator、Hermes、Eagle
 curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 ```
 
-脚本会自动识别 CPU 架构和可用 kubeconfig，检查 InferNex CRD，发现 Bridge profile
-和已有服务命名空间，安装静态二进制与 systemd 服务，然后只询问 Agent 自身使用的
+脚本会自动识别 CPU 架构和可用 kubeconfig，探测当前是 Bridge CRD 形态还是
+openFuyao Helm/BKE 形态，安装静态二进制与 systemd 服务，然后只询问 Agent 自身使用的
 模型接口。默认复用当前 `kubectl` 身份，不创建 Agent Pod、Controller、CRD、
 ServiceAccount 或 RBAC。
 
-为让后续经批准的新模型实例与已有业务隔离，安装器会创建一个空的
-`infernex-agent-workspace` Namespace；安装时不会在其中创建 Pod 或推理实例。
+只有检测到 Bridge CRD 时，安装器才会创建空的 `infernex-agent-workspace`
+Namespace，用于后续经批准的新实例。没有 Bridge 的 Helm/BKE 集群进入
+`generic-kubernetes` 基础兼容模式，安装阶段不修改任何 Kubernetes 资源。
+
+基础兼容模式当前先打通安装、systemd、模型配置、对话入口、健康检查和 Web 端口；
+Bridge 专属部署工具会关闭。面向 Helm release、Deployment/LWS、Pod、Service 及
+底层组件日志的资产适配器属于紧随其后的功能，不应通过安装 Bridge CRD 来伪装兼容。
 
 > 当前公开的 `0.3.0-rc.6` 仍是旧版候选包，不具备本页所述的新统一包名和默认流程。
 > 在新候选完成 A2 既有集群验收并发布前，请从 Draft PR 的 CI Artifact 验证，不能把
@@ -113,7 +118,9 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 
 V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具集”结构：
 
-- 自动发现 InferNexService、Bridge profiles、工作负载、Pod、事件和拓扑；
+- 自动识别 Bridge CRD 与 openFuyao Helm/BKE 两类部署入口；
+- Bridge 模式发现 InferNexService、profiles、工作负载、Pod、事件和拓扑；
+- Helm/BKE 模式后续从 release、Deployment/LWS、Pod、Service 和组件标签建立资产图；
 - 通过 typed tools 调用 Kubernetes/InferNex API，不给模型任意 shell 或任意 YAML；
 - 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
 - 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。

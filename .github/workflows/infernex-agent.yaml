@@ -375,6 +375,23 @@ jobs:
           test "${restored_sha}" = "${baseline_sha}"
           sudo systemctl is-active --quiet infernex-agent.service
 
+          kubectl delete crd \
+            infernexservices.infernex.infernex.io \
+            infernexserviceconfigs.infernex.infernex.io \
+            --wait=true
+          kubectl delete namespace infernex-agent-workspace --wait=true
+          sudo "${host_bundle}/install.sh" \
+            --admin-kubeconfig "${HOME}/.kube/config" \
+            --generic-kubernetes \
+            --skip-model-setup
+          sudo systemctl is-active --quiet infernex-agent.service
+          sudo grep -q -- '--scan-namespaces=$' /etc/infernex-agent/agent.conf
+          ! sudo grep -q -- '--enable-deployment' /etc/infernex-agent/agent.conf
+          ! kubectl get namespace infernex-agent-workspace >/dev/null 2>&1
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf |
+            grep -q 'generic Kubernetes/Helm compatibility mode'
+
           kill "${model_server_pid}" >/dev/null 2>&1 || true
           wait "${model_server_pid}" 2>/dev/null || true
           trap - EXIT

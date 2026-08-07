@@ -34,6 +34,7 @@ Advanced recovery/automation options:
   --bundle-dir DIR              Override the extracted Agent package directory
   --dashboard-listen-address A  Default: 127.0.0.1:8081
   --hardened-identity          Create a dedicated ServiceAccount/RBAC identity
+  --generic-kubernetes        Force base Kubernetes/Helm compatibility mode
   --skip-model-setup            Install first; configure the model later
   --non-interactive             Do not read from the terminal
   -h, --help                    Show this help
@@ -45,6 +46,7 @@ dashboard_listen_address="127.0.0.1:8081"
 skip_model_setup="false"
 non_interactive="false"
 hardened_identity="false"
+force_generic_kubernetes="false"
 workspace_namespace="infernex-agent-workspace"
 
 while (($#)); do
@@ -70,6 +72,10 @@ while (($#)); do
       ;;
     --hardened-identity)
       hardened_identity="true"
+      shift
+      ;;
+    --generic-kubernetes)
+      force_generic_kubernetes="true"
       shift
       ;;
     --non-interactive)
@@ -148,37 +154,42 @@ admin_kubeconfig="$(discover_kubeconfig || true)"
 bundle_info "using the current Kubernetes context from: ${admin_kubeconfig}"
 
 kubectl_admin=(kubectl --kubeconfig "$admin_kubeconfig" --request-timeout=15s)
-"${kubectl_admin[@]}" get crd infernexservices.infernex.infernex.io >/dev/null ||
-  bundle_die "this cluster does not contain the InferNexService CRD; install InferNex first"
-"${kubectl_admin[@]}" get crd infernexserviceconfigs.infernex.infernex.io >/dev/null ||
-  bundle_die "this cluster does not contain the InferNexServiceConfig CRD; install/upgrade InferNex Bridge first"
+platform_mode="generic-kubernetes"
+if [[ "$force_generic_kubernetes" != "true" ]] &&
+  "${kubectl_admin[@]}" get crd infernexservices.infernex.infernex.io >/dev/null 2>&1 &&
+  "${kubectl_admin[@]}" get crd infernexserviceconfigs.infernex.infernex.io >/dev/null 2>&1; then
+  platform_mode="bridge"
+fi
 
-template_namespace="$(
-  "${kubectl_admin[@]}" get infernexserviceconfigs.infernex.infernex.io -A \
-    -o go-template='{{range .items}}{{if eq .metadata.name "infernex-default-aggregate-template"}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}' |
-    awk 'NF {print; exit}'
-)"
-if [[ -z "$template_namespace" ]]; then
+template_namespace=""
+declare -a discovered_namespaces=()
+if [[ "$platform_mode" == "bridge" ]]; then
   template_namespace="$(
     "${kubectl_admin[@]}" get infernexserviceconfigs.infernex.infernex.io -A \
-      -o go-template='{{range .items}}{{.metadata.namespace}}{{"\n"}}{{end}}' |
+      -o go-template='{{range .items}}{{if eq .metadata.name "infernex-default-aggregate-template"}}{{.metadata.namespace}}{{"\n"}}{{end}}{{end}}' |
       awk 'NF {print; exit}'
   )"
-fi
-[[ -n "$template_namespace" ]] || bundle_die \
-  "no InferNexServiceConfig was found; Bridge must provide at least one engine profile"
-bundle_info "discovered InferNex Bridge profile namespace: ${template_namespace}"
+  if [[ -z "$template_namespace" ]]; then
+    template_namespace="$(
+      "${kubectl_admin[@]}" get infernexserviceconfigs.infernex.infernex.io -A \
+        -o go-template='{{range .items}}{{.metadata.namespace}}{{"\n"}}{{end}}' |
+        awk 'NF {print; exit}'
+    )"
+  fi
+  [[ -n "$template_namespace" ]] || bundle_die \
+    "InferNex Bridge CRDs exist, but no InferNexServiceConfig profile was found"
+  bundle_info "detected InferNex Bridge mode; profile namespace: ${template_namespace}"
 
-bundle_info "ensuring the Agent-owned deployment workspace exists"
-if "${kubectl_admin[@]}" get namespace "$workspace_namespace" >/dev/null 2>&1; then
-  workspace_owner="$(
-    "${kubectl_admin[@]}" get namespace "$workspace_namespace" \
-      -o jsonpath='{.metadata.labels.agent\.infernex\.io/workspace}'
-  )"
-  [[ "$workspace_owner" == "true" ]] || bundle_die \
-    "namespace ${workspace_namespace} already exists without the Agent workspace label; refusing to claim it"
-else
-  cat <<EOF | kubectl --kubeconfig "$admin_kubeconfig" apply -f - >/dev/null
+  bundle_info "ensuring the Agent-owned deployment workspace exists"
+  if "${kubectl_admin[@]}" get namespace "$workspace_namespace" >/dev/null 2>&1; then
+    workspace_owner="$(
+      "${kubectl_admin[@]}" get namespace "$workspace_namespace" \
+        -o jsonpath='{.metadata.labels.agent\.infernex\.io/workspace}'
+    )"
+    [[ "$workspace_owner" == "true" ]] || bundle_die \
+      "namespace ${workspace_namespace} already exists without the Agent workspace label; refusing to claim it"
+  else
+    cat <<EOF | kubectl --kubeconfig "$admin_kubeconfig" apply -f - >/dev/null
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -187,25 +198,29 @@ metadata:
     agent.infernex.io/workspace: "true"
     app.kubernetes.io/managed-by: infernex-agent
 EOF
+  fi
+
+  mapfile -t discovered_namespaces < <(
+    "${kubectl_admin[@]}" get infernexservices.infernex.infernex.io -A \
+      -o go-template='{{range .items}}{{.metadata.namespace}}{{"\n"}}{{end}}' |
+      awk 'NF' | sort -u
+  )
+  discovered_namespaces+=("$workspace_namespace")
+  mapfile -t discovered_namespaces < <(printf '%s\n' "${discovered_namespaces[@]}" | awk 'NF' | sort -u)
+  bundle_info "discovered InferNexService namespaces: ${discovered_namespaces[*]}"
+else
+  [[ "$hardened_identity" != "true" ]] || bundle_die \
+    "--hardened-identity currently requires InferNex Bridge CRDs; use the current kubeconfig for base compatibility mode"
+  bundle_warn "InferNex Bridge CRDs were not found; installing in base Kubernetes/Helm compatibility mode"
+  bundle_info "this mode changes no Kubernetes resources and keeps Bridge-specific deployment disabled"
 fi
-
-declare -a discovered_namespaces=()
-mapfile -t discovered_namespaces < <(
-  "${kubectl_admin[@]}" get infernexservices.infernex.infernex.io -A \
-    -o go-template='{{range .items}}{{.metadata.namespace}}{{"\n"}}{{end}}' |
-    awk 'NF' | sort -u
-)
-discovered_namespaces+=("$workspace_namespace")
-mapfile -t discovered_namespaces < <(printf '%s\n' "${discovered_namespaces[@]}" | awk 'NF' | sort -u)
-
-bundle_info "discovered InferNex workload namespaces: ${discovered_namespaces[*]}"
 runtime_kubeconfig="$(mktemp /tmp/infernex-agent-runtime-kubeconfig.XXXXXX)"
 cleanup() {
   rm -f -- "$runtime_kubeconfig"
 }
 trap cleanup EXIT
 
-if [[ "$hardened_identity" == "true" ]]; then
+if [[ "$platform_mode" == "bridge" && "$hardened_identity" == "true" ]]; then
   create_args=(
     --admin-kubeconfig "$admin_kubeconfig"
     --output "$runtime_kubeconfig"
@@ -238,14 +253,20 @@ install_args=(
   --bundle-dir "$bundle_root"
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
-  --enable-deployment
-  --deployment-namespace "$workspace_namespace"
-  --deployment-template-namespace "$template_namespace"
-  --enable-log-diagnostics
 )
-for namespace in "${discovered_namespaces[@]}"; do
-  install_args+=(--scan-namespace "$namespace")
-done
+if [[ "$platform_mode" == "bridge" ]]; then
+  install_args+=(
+    --enable-deployment
+    --deployment-namespace "$workspace_namespace"
+    --deployment-template-namespace "$template_namespace"
+    --enable-log-diagnostics
+  )
+  for namespace in "${discovered_namespaces[@]}"; do
+    install_args+=(--scan-namespace "$namespace")
+  done
+else
+  install_args+=(--generic-kubernetes)
+fi
 
 bundle_info "installing the static Agent binary and systemd service"
 "$install_host" "${install_args[@]}"
@@ -262,5 +283,6 @@ fi
 trap - EXIT
 cleanup
 bundle_info "InferNex Agent is ready"
+bundle_info "detected platform mode: ${platform_mode}"
 bundle_info "start the Agentic terminal with: sudo infernex-agent chat"
 bundle_info "dashboard: http://${dashboard_listen_address}/ (use an SSH tunnel when bound to 127.0.0.1)"

@@ -15,12 +15,15 @@ The intended management-node installation is one command:
 curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 ```
 
-The installer discovers the current kubeconfig, InferNex CRDs, Bridge
-templates, existing service namespaces, and CPU architecture. It installs one
+The installer discovers the current kubeconfig, CPU architecture, and whether
+the cluster uses InferNex Bridge CRDs or the openFuyao Helm/BKE deployment
+shape. It installs one
 static binary/systemd service, then prompts only for the OpenAI-compatible
 model interface. By default it creates no Agent Pod, controller, CRD,
-ServiceAccount, or RBAC. It creates only an empty Agent workspace Namespace for
-future approved model deployments. See the
+ServiceAccount, or RBAC. A Bridge cluster receives an empty Agent workspace
+Namespace for future approved model deployments. A cluster without Bridge
+enters a no-mutation base Kubernetes/Helm compatibility mode instead of
+failing installation. See the
 [Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 

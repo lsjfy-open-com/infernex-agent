@@ -15,13 +15,14 @@ usage() {
 Install InferNex Agent as a hardened systemd service on Linux/openEuler.
 
 Usage:
-  sudo install-host.sh --kubeconfig FILE --scan-namespace NAMESPACE [options]
+  sudo install-host.sh --kubeconfig FILE [--scan-namespace NAMESPACE] [options]
 
 Options:
   --bundle-dir DIR                 Extracted Agent package root
   --binary FILE                   Agent binary outside a package
   --kubeconfig FILE               Dedicated, self-contained kubeconfig
   --scan-namespace NAMESPACE      Namespace to scan (repeatable)
+  --generic-kubernetes            Install without InferNex Bridge CRDs
   --listen-address ADDRESS        MCP bind (default: 127.0.0.1:8080)
   --dashboard-listen-address ADDR Dashboard bind (default: 127.0.0.1:8081)
   --openai-base-url URL            Internal OpenAI-compatible /v1 endpoint
@@ -77,6 +78,7 @@ recovery_template_namespace="infernex-bridge-system"
 recovery_min_scans="3"
 verify_checksums="true"
 start_service="true"
+generic_kubernetes="false"
 declare -a scan_namespaces=()
 
 while (($#)); do
@@ -100,6 +102,10 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--scan-namespace requires a value"
       scan_namespaces+=("$2")
       shift 2
+      ;;
+    --generic-kubernetes)
+      generic_kubernetes="true"
+      shift
       ;;
     --listen-address)
       [[ $# -ge 2 ]] || bundle_die "--listen-address requires a value"
@@ -256,8 +262,16 @@ fi
   bundle_die "Agent binary is not executable: ${binary_source}"
 [[ -n "$kubeconfig_source" && -r "$kubeconfig_source" ]] ||
   bundle_die "--kubeconfig must name a readable file"
-((${#scan_namespaces[@]} > 0)) ||
-  bundle_die "at least one --scan-namespace is required"
+if [[ "$generic_kubernetes" != "true" ]]; then
+  ((${#scan_namespaces[@]} > 0)) ||
+    bundle_die "at least one --scan-namespace is required outside generic Kubernetes mode"
+else
+  [[ "$enable_deployment" == "false" && "$enable_recovery" == "false" &&
+    "$enable_log_diagnostics" == "false" && "$enable_experiments" == "false" ]] ||
+    bundle_die "generic Kubernetes mode cannot enable Bridge-specific deployment, recovery, diagnostics, or experiments"
+  ((${#scan_namespaces[@]} == 0)) ||
+    bundle_die "generic Kubernetes mode does not yet accept --scan-namespace"
+fi
 
 validate_dns_label() {
   local label="$1"
@@ -447,17 +461,33 @@ install_backup_root="${state_root}/backups/install-$(
 install -d -m 0700 -o root -g root \
   "${state_root}/backups" "$install_backup_root" "${install_backup_root}/host"
 cluster_snapshot="${install_backup_root}/cluster-state.json"
-cluster_backup_args=(
-  cluster-state backup
-  --kubeconfig "$kubeconfig_source"
-  --output "$cluster_snapshot"
-  --purpose pre-host-install
-)
-for scan_namespace in "${scan_namespaces[@]}"; do
-  cluster_backup_args+=(--namespace "$scan_namespace")
-done
-bundle_info "capturing the pre-install InferNex cluster state"
-"$binary_source" "${cluster_backup_args[@]}"
+cluster_backup_available="false"
+if [[ "$generic_kubernetes" == "true" ]]; then
+  bundle_info "recording a no-mutation compatibility-mode installation baseline"
+  cat >"$cluster_snapshot" <<'EOF'
+{
+  "apiVersion": "agent.infernex.io/v1alpha1",
+  "kind": "InstallationBaseline",
+  "platformMode": "generic-kubernetes",
+  "clusterMutations": false,
+  "note": "The Agent installation changed no Kubernetes resources. Host files are backed up separately."
+}
+EOF
+  chmod 0600 "$cluster_snapshot"
+else
+  cluster_backup_args=(
+    cluster-state backup
+    --kubeconfig "$kubeconfig_source"
+    --output "$cluster_snapshot"
+    --purpose pre-host-install
+  )
+  for scan_namespace in "${scan_namespaces[@]}"; do
+    cluster_backup_args+=(--namespace "$scan_namespace")
+  done
+  bundle_info "capturing the pre-install InferNexService cluster state"
+  "$binary_source" "${cluster_backup_args[@]}"
+  cluster_backup_available="true"
+fi
 
 host_backup_targets=(
   "$installed_binary"
@@ -538,11 +568,13 @@ rollback_failed_install() {
     systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
     systemctl start infernex-agent.service >/dev/null 2>&1 || true
   fi
-  "$binary_source" cluster-state restore \
-    --kubeconfig "$kubeconfig_source" \
-    --input "$cluster_snapshot" \
-    --confirm >/dev/null 2>&1 ||
-    bundle_warn "automatic cluster restore failed; use ${cluster_snapshot} for manual recovery"
+  if [[ "$cluster_backup_available" == "true" ]]; then
+    "$binary_source" cluster-state restore \
+      --kubeconfig "$kubeconfig_source" \
+      --input "$cluster_snapshot" \
+      --confirm >/dev/null 2>&1 ||
+      bundle_warn "automatic cluster restore failed; use ${cluster_snapshot} for manual recovery"
+  fi
   bundle_warn "pre-install backup retained at ${install_backup_root}"
   return "$exit_status"
 }
