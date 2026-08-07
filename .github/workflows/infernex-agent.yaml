@@ -380,17 +380,28 @@ jobs:
             infernexserviceconfigs.infernex.infernex.io \
             --wait=true
           kubectl delete namespace infernex-agent-workspace --wait=true
+          sudo systemctl stop infernex-agent.service
+          python3 -m http.server 8081 --bind 127.0.0.1 \
+            >"${RUNNER_TEMP}/occupied-dashboard-port.log" 2>&1 &
+          occupied_dashboard_pid=$!
+          sleep 1
+          kill -0 "${occupied_dashboard_pid}"
           sudo "${host_bundle}/install.sh" \
             --admin-kubeconfig "${HOME}/.kube/config" \
             --generic-kubernetes \
             --skip-model-setup
           sudo systemctl is-active --quiet infernex-agent.service
           sudo grep -q -- '--scan-namespaces=$' /etc/infernex-agent/agent.conf
+          sudo grep -q -- '--dashboard-listen-address=127.0.0.1:18081' \
+            /etc/infernex-agent/agent.conf
+          curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null
           ! sudo grep -q -- '--enable-deployment' /etc/infernex-agent/agent.conf
           ! kubectl get namespace infernex-agent-workspace >/dev/null 2>&1
           sudo /opt/infernex-agent/bin/infernex-agent doctor \
             --config /etc/infernex-agent/agent.conf |
             grep -q 'generic Kubernetes/Helm compatibility mode'
+          kill "${occupied_dashboard_pid}" >/dev/null 2>&1 || true
+          wait "${occupied_dashboard_pid}" 2>/dev/null || true
 
           kill "${model_server_pid}" >/dev/null 2>&1 || true
           wait "${model_server_pid}" 2>/dev/null || true

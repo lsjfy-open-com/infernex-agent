@@ -62,3 +62,33 @@ func TestOpenAICompleteReturnsBoundedServerError(t *testing.T) {
 		t.Fatal("expected endpoint error")
 	}
 }
+
+func TestOpenAICompleteOmitsToolChoiceWithoutTools(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := body["tools"]; exists {
+			t.Fatalf("tools must be omitted: %#v", body)
+		}
+		if _, exists := body["tool_choice"]; exists {
+			t.Fatalf("tool_choice must be omitted: %#v", body)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer server.Close()
+
+	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Content != "OK" {
+		t.Fatalf("response=%#v", response)
+	}
+}

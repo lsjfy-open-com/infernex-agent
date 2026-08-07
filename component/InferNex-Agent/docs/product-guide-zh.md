@@ -34,6 +34,11 @@ openFuyao Helm/BKE 形态，安装静态二进制与 systemd 服务，然后只�
 模型接口。默认复用当前 `kubectl` 身份，不创建 Agent Pod、Controller、CRD、
 ServiceAccount 或 RBAC。
 
+模型接口会在 systemd 首次启动前配置并完成 tool-calling 测试。若默认 Dashboard
+`127.0.0.1:8081` 已被非 Agent 进程占用，安装器不会结束或杀死该进程，而是自动选择
+`18081`、`28081` 等空闲端口并在完成信息中打印实际地址。若服务随后仍未 Ready，安装器
+会将经过裁剪的 systemd、journal 和端口证据交给已配置模型，输出不执行变更的诊断建议。
+
 只有检测到 Bridge CRD 时，安装器才会创建空的 `infernex-agent-workspace`
 Namespace，用于后续经批准的新实例。没有 Bridge 的 Helm/BKE 集群进入
 `generic-kubernetes` 基础兼容模式，安装阶段不修改任何 Kubernetes 资源。
@@ -82,6 +87,10 @@ sudo ./install.sh
 
 这里的 model ID 是 Agent 背后的对话/规划模型，不是要部署的推理实例名。也可先执行
 `sudo ./install.sh --skip-model-setup`，稍后运行 `sudo infernex-agent setup`。
+
+正常交互安装的顺序是：发现环境、建立安装恢复点、写入候选文件、配置并测试模型、启动
+systemd、检查 MCP 与 Dashboard。这样启动失败时模型已经可用于分析，而不是失败后才
+要求用户另行配置。
 
 ## 自然语言使用
 

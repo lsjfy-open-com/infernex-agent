@@ -66,8 +66,8 @@ type openAIToolCallFunction struct {
 type openAIRequest struct {
 	Model       string          `json:"model"`
 	Messages    []openAIMessage `json:"messages"`
-	Tools       []openAITool    `json:"tools"`
-	ToolChoice  string          `json:"tool_choice"`
+	Tools       []openAITool    `json:"tools,omitempty"`
+	ToolChoice  string          `json:"tool_choice,omitempty"`
 	Temperature float64         `json:"temperature"`
 	Stream      bool            `json:"stream"`
 }
@@ -147,14 +147,17 @@ func (o *OpenAI) Complete(
 			},
 		})
 	}
-	payload, err := json.Marshal(openAIRequest{
+	requestPayload := openAIRequest{
 		Model:       o.model,
 		Messages:    requestMessages,
 		Tools:       requestTools,
-		ToolChoice:  "auto",
 		Temperature: 0,
 		Stream:      false,
-	})
+	}
+	if len(requestTools) > 0 {
+		requestPayload.ToolChoice = "auto"
+	}
+	payload, err := json.Marshal(requestPayload)
 	if err != nil {
 		return ModelResponse{}, fmt.Errorf("encode OpenAI chat request: %w", err)
 	}

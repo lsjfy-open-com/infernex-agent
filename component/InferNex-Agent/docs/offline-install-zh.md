@@ -48,6 +48,10 @@ sudo ./install.sh
 7. 只询问模型 Base URL、model ID 和可选 API Key；
 8. 测试模型 tool-calling 兼容性。
 
+第 7、8 步发生在 systemd 首次启动之前。启动失败时，安装器会采集经过裁剪的
+`systemctl status`、近期 journal 和配置端口监听信息，并调用已配置模型给出只读建议；
+模型不能在该阶段执行命令、杀进程或修改集群。
+
 默认不会在 Kubernetes 中安装 Agent Pod、Controller、CRD、ServiceAccount 或
 RBAC。Agent 使用运维人员当前的 kubectl 身份，实际权限由现有 kubeconfig 和
 Kubernetes RBAC 决定；模型本身看不到该凭据。
@@ -76,6 +80,10 @@ Dashboard 默认地址为 `127.0.0.1:8081`。通过 XShell/SSH 转发访问：
 ```bash
 ssh -L 8081:127.0.0.1:8081 <管理服务器>
 ```
+
+如果 8081 已被其他进程使用，默认安装会自动选用 `18081`、`28081` 等空闲端口，并在
+安装完成时打印实际地址。SSH 转发命令右侧端口应改为该实际端口。显式传入
+`--dashboard-listen-address` 时，安装器不会擅自改写指定值，而会显示占用证据并退出。
 
 ## 只有两种高级情况需要额外处理
 

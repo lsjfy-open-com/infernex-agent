@@ -21,6 +21,10 @@ sudo ./install.sh
 二进制与 systemd 服务，并只询问 Agent 模型接口。它不使用 NPU 驱动，不拉取或替换
 现有 vLLM-Ascend 0.23.0、Mooncake、CANN 镜像和模型权重。
 
+模型接口在首次启动 systemd 前完成配置和 tool-calling 测试。默认 8081 被其他进程使用
+时不会终止对方进程，安装器会选择下一个空闲 Dashboard 端口并打印结果；启动仍失败时，
+已配置模型可基于裁剪后的 systemd/journal/端口证据输出只读诊断建议。
+
 默认不在集群中安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC。只有已有
 Bridge 时才创建空的 `infernex-agent-workspace`；Helm/BKE 基础兼容模式不修改集群。
 
@@ -56,6 +60,12 @@ sudo infernex-agent setup
 sudo infernex-agent chat
 sudo systemctl status infernex-agent
 sudo journalctl -u infernex-agent -f
+```
+
+查看安装器最终选择的实际监听地址：
+
+```bash
+sudo grep -E -- '^--(listen|dashboard-listen)-address=' /etc/infernex-agent/agent.conf
 ```
 
 Dashboard 默认只监听 `127.0.0.1:8081`，通过 XShell/SSH 做本地端口转发：

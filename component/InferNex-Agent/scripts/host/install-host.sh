@@ -44,6 +44,7 @@ Options:
   --recovery-template-namespace N  Profile namespace
   --recovery-min-critical-scans N  Default: 3
   --skip-checksums                  Skip Agent package checksum verification
+  --interactive-model-setup        Configure and test the model before first start
   --no-start                        Install files without starting the service
   -h, --help                        Show this help
 
@@ -79,6 +80,7 @@ recovery_min_scans="3"
 verify_checksums="true"
 start_service="true"
 generic_kubernetes="false"
+interactive_model_setup="false"
 declare -a scan_namespaces=()
 
 while (($#)); do
@@ -208,6 +210,10 @@ while (($#)); do
       verify_checksums="false"
       shift
       ;;
+    --interactive-model-setup)
+      interactive_model_setup="true"
+      shift
+      ;;
     --no-start)
       start_service="false"
       shift
@@ -235,6 +241,10 @@ bundle_require_command readlink
 bundle_require_command cp
 bundle_require_command date
 bundle_require_command sha256sum
+if [[ "$interactive_model_setup" == "true" ]]; then
+  [[ -r /dev/tty && -w /dev/tty ]] || bundle_die \
+    "--interactive-model-setup requires an interactive terminal"
+fi
 
 if [[ -n "$bundle_root" ]]; then
   bundle_root="$(cd -- "$bundle_root" && pwd)"
@@ -817,7 +827,47 @@ mv -f -- "$temporary_unit" "$unit_path"
 if command -v restorecon >/dev/null 2>&1; then
   restorecon -RF "$install_root" "$config_root" "$state_root" "$unit_path" || true
 fi
+
+if [[ "$interactive_model_setup" == "true" ]]; then
+  printf '\nConfigure the model used by the Agent before starting the service.\n' >/dev/tty
+  "$installed_configurator" \
+    --interactive --test-tools --no-restart </dev/tty >/dev/tty
+fi
+
 systemctl daemon-reload
+
+collect_install_failure_evidence() {
+  local output_file="$1"
+  {
+    printf 'stage=systemd-activation\n'
+    printf 'mcp_address=%s\n' "$listen_address"
+    printf 'dashboard_address=%s\n' "$dashboard_listen_address"
+    printf '\n[systemctl status]\n'
+    systemctl status infernex-agent.service --no-pager --full 2>&1 |
+      awk '{ print substr($0, 1, 1000) }' || true
+    printf '\n[recent journal]\n'
+    journalctl -u infernex-agent.service --no-pager -n 100 2>&1 |
+      awk '{ print substr($0, 1, 1000) }' || true
+    if command -v ss >/dev/null 2>&1; then
+      printf '\n[listening TCP sockets for configured ports]\n'
+      ss -H -ltnp "sport = :${listen_address##*:}" 2>&1 || true
+      ss -H -ltnp "sport = :${dashboard_listen_address##*:}" 2>&1 || true
+    fi
+  } >"$output_file"
+}
+
+offer_ai_install_diagnosis() {
+  local evidence_file
+  grep -q '^--openai-base-url=' "$agent_config" 2>/dev/null || return 0
+  evidence_file="$(mktemp /tmp/infernex-agent-install-evidence.XXXXXX)"
+  chmod 0600 "$evidence_file"
+  collect_install_failure_evidence "$evidence_file"
+  bundle_warn "service activation failed; requesting an advisory diagnosis from the configured model"
+  "$installed_binary" install-diagnose \
+    --config "$agent_config" --evidence "$evidence_file" ||
+    bundle_warn "the configured model could not diagnose this installation failure"
+  rm -f -- "$evidence_file"
+}
 
 if [[ "$start_service" == "true" ]]; then
   bundle_info "enabling and starting infernex-agent.service"
@@ -832,6 +882,7 @@ if [[ "$start_service" == "true" ]]; then
   systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
   if ! systemctl "$service_action" infernex-agent.service; then
     journalctl -u infernex-agent.service --no-pager -n 100 >&2 || true
+    offer_ai_install_diagnosis
     bundle_die "failed to start infernex-agent.service"
   fi
   verify_args=(
@@ -842,8 +893,10 @@ if [[ "$start_service" == "true" ]]; then
   for scan_namespace in "${scan_namespaces[@]}"; do
     verify_args+=(--target-namespace "$scan_namespace")
   done
-  "${script_dir}/verify-host.sh" \
-    "${verify_args[@]}"
+  if ! "${script_dir}/verify-host.sh" "${verify_args[@]}"; then
+    offer_ai_install_diagnosis
+    bundle_die "infernex-agent.service did not become ready"
+  fi
 else
   bundle_info "files installed; run systemctl enable --now infernex-agent.service when ready"
 fi

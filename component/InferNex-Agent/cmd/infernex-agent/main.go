@@ -112,6 +112,8 @@ func run() error {
 			return runVersion(os.Args[2:])
 		case "setup":
 			return runSetup(os.Args[2:])
+		case "install-diagnose":
+			return runInstallDiagnose(os.Args[2:])
 		}
 	}
 	return runServer(os.Args[1:])

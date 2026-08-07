@@ -43,6 +43,7 @@ EOF
 
 admin_kubeconfig=""
 dashboard_listen_address="127.0.0.1:8081"
+dashboard_listen_address_explicit="false"
 skip_model_setup="false"
 non_interactive="false"
 hardened_identity="false"
@@ -64,6 +65,7 @@ while (($#)); do
     --dashboard-listen-address)
       [[ $# -ge 2 ]] || bundle_die "--dashboard-listen-address requires a value"
       dashboard_listen_address="$2"
+      dashboard_listen_address_explicit="true"
       shift 2
       ;;
     --skip-model-setup)
@@ -98,6 +100,68 @@ bundle_require_command mktemp
 bundle_require_command readlink
 bundle_require_command awk
 bundle_require_command grep
+
+address_port() {
+  printf '%s' "${1##*:}"
+}
+
+port_is_listening() {
+  local port hex_port
+  port="$(address_port "$1")"
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  printf -v hex_port '%04X' "$port"
+  awk -v wanted="$hex_port" '
+    NR > 1 {
+      split($2, address, ":")
+      if (toupper(address[length(address)]) == wanted && $4 == "0A") {
+        found = 1
+      }
+    }
+    END { exit found ? 0 : 1 }
+  ' /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+address_is_current_agent_listener() {
+  local address="$1"
+  systemctl is-active --quiet infernex-agent.service 2>/dev/null &&
+    grep -Fxq -- "--dashboard-listen-address=${address}" \
+      /etc/infernex-agent/agent.conf 2>/dev/null
+}
+
+listener_evidence() {
+  local port
+  port="$(address_port "$1")"
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -ltnp "sport = :${port}" 2>/dev/null || true
+  else
+    printf 'TCP port %s is present in /proc/net/tcp but ss is unavailable\n' "$port"
+  fi
+}
+
+select_dashboard_listener() {
+  local requested="$1" host candidate
+  if ! port_is_listening "$requested" ||
+    address_is_current_agent_listener "$requested"; then
+    printf '%s' "$requested"
+    return
+  fi
+
+  bundle_warn "dashboard address ${requested} is already used by another process"
+  listener_evidence "$requested" >&2
+  [[ "$dashboard_listen_address_explicit" != "true" ]] || bundle_die \
+    "the explicitly requested dashboard address is unavailable"
+
+  host="${requested%:*}"
+  for port in 18081 28081 38081 48081 58081; do
+    candidate="${host}:${port}"
+    if ! port_is_listening "$candidate"; then
+      bundle_warn "using the next available dashboard address: ${candidate}"
+      printf '%s' "$candidate"
+      return
+    fi
+  done
+  bundle_die "no available default dashboard port was found"
+}
 
 [[ -n "$bundle_root" && -d "$bundle_root" ]] ||
   bundle_die "an extracted InferNex Agent package is required"
@@ -152,6 +216,7 @@ admin_kubeconfig="$(discover_kubeconfig || true)"
 [[ -n "$admin_kubeconfig" ]] || bundle_die \
   "no working management kubeconfig was found (checked the invoking user's ~/.kube/config, /etc/kubernetes/admin.conf, and k3s)"
 bundle_info "using the current Kubernetes context from: ${admin_kubeconfig}"
+dashboard_listen_address="$(select_dashboard_listener "$dashboard_listen_address")"
 
 kubectl_admin=(kubectl --kubeconfig "$admin_kubeconfig" --request-timeout=15s)
 platform_mode="generic-kubernetes"
@@ -254,6 +319,13 @@ install_args=(
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
 )
+if [[ "$skip_model_setup" != "true" && "$non_interactive" != "true" ]]; then
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    install_args+=(--interactive-model-setup)
+  else
+    bundle_warn "no interactive terminal detected; model setup was skipped"
+  fi
+fi
 if [[ "$platform_mode" == "bridge" ]]; then
   install_args+=(
     --enable-deployment
@@ -270,15 +342,6 @@ fi
 
 bundle_info "installing the static Agent binary and systemd service"
 "$install_host" "${install_args[@]}"
-
-if [[ "$skip_model_setup" != "true" && "$non_interactive" != "true" ]]; then
-  if [[ -r /dev/tty && -w /dev/tty ]]; then
-    printf '\nOnly the Agent model interface remains to be configured.\n' >/dev/tty
-    "$configure_model" --interactive --test-tools </dev/tty >/dev/tty
-  else
-    bundle_warn "no interactive terminal detected; model setup was skipped"
-  fi
-fi
 
 trap - EXIT
 cleanup
