@@ -24,14 +24,18 @@ type OpenAIConfig struct {
 	Model      string
 	APIKey     string
 	Timeout    time.Duration
+	MaxRetries int
+	RetryDelay time.Duration
 	HTTPClient *http.Client
 }
 
 type OpenAI struct {
-	endpoint string
-	model    string
-	apiKey   string
-	client   *http.Client
+	endpoint   string
+	model      string
+	apiKey     string
+	client     *http.Client
+	maxRetries int
+	retryDelay time.Duration
 }
 
 type openAITool struct {
@@ -96,15 +100,27 @@ func NewOpenAI(config OpenAIConfig) (*OpenAI, error) {
 	if client == nil {
 		timeout := config.Timeout
 		if timeout <= 0 {
-			timeout = 60 * time.Second
+			timeout = 3 * time.Minute
 		}
 		client = &http.Client{Timeout: timeout}
 	}
+	maxRetries := config.MaxRetries
+	if maxRetries == 0 {
+		maxRetries = 3
+	} else if maxRetries < 0 {
+		maxRetries = 0
+	}
+	retryDelay := config.RetryDelay
+	if retryDelay <= 0 {
+		retryDelay = time.Second
+	}
 	return &OpenAI{
-		endpoint: endpoint,
-		model:    model,
-		apiKey:   strings.TrimSpace(config.APIKey),
-		client:   client,
+		endpoint:   endpoint,
+		model:      model,
+		apiKey:     strings.TrimSpace(config.APIKey),
+		client:     client,
+		maxRetries: maxRetries,
+		retryDelay: retryDelay,
 	}, nil
 }
 
@@ -161,18 +177,39 @@ func (o *OpenAI) Complete(
 	if err != nil {
 		return ModelResponse{}, fmt.Errorf("encode OpenAI chat request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, o.endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return ModelResponse{}, fmt.Errorf("build OpenAI chat request: %w", err)
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
-	if o.apiKey != "" {
-		request.Header.Set("Authorization", "Bearer "+o.apiKey)
-	}
-	response, err := o.client.Do(request)
-	if err != nil {
-		return ModelResponse{}, fmt.Errorf("call OpenAI-compatible endpoint: %w", err)
+	var response *http.Response
+	for attempt := 0; ; attempt++ {
+		request, requestErr := http.NewRequestWithContext(
+			ctx, http.MethodPost, o.endpoint, bytes.NewReader(payload),
+		)
+		if requestErr != nil {
+			return ModelResponse{}, fmt.Errorf("build OpenAI chat request: %w", requestErr)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("Accept", "application/json")
+		if o.apiKey != "" {
+			request.Header.Set("Authorization", "Bearer "+o.apiKey)
+		}
+		response, err = o.client.Do(request)
+		if err == nil && !retryableHTTPStatus(response.StatusCode) {
+			break
+		}
+		finalHTTPResponse := attempt >= o.maxRetries && err == nil
+		if response != nil && !finalHTTPResponse {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 64*1024))
+			_ = response.Body.Close()
+		}
+		if attempt >= o.maxRetries {
+			if err != nil {
+				return ModelResponse{}, fmt.Errorf(
+					"call OpenAI-compatible endpoint after %d attempt(s): %w", attempt+1, err,
+				)
+			}
+			break
+		}
+		if waitErr := waitForRetry(ctx, o.retryDelay, attempt); waitErr != nil {
+			return ModelResponse{}, waitErr
+		}
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxModelResponseBytes+1))
@@ -214,6 +251,35 @@ func (o *OpenAI) Complete(
 		})
 	}
 	return result, nil
+}
+
+func retryableHTTPStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests,
+		http.StatusInternalServerError, http.StatusBadGateway,
+		http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func waitForRetry(ctx context.Context, base time.Duration, attempt int) error {
+	delay := base
+	for index := 0; index < attempt && delay < 30*time.Second; index++ {
+		delay *= 2
+	}
+	if delay > 30*time.Second {
+		delay = 30 * time.Second
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("wait to retry OpenAI-compatible endpoint: %w", ctx.Err())
+	case <-timer.C:
+		return nil
+	}
 }
 
 func chatCompletionsEndpoint(value string) (string, error) {

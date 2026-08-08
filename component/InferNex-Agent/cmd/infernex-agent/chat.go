@@ -114,7 +114,7 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	flags.StringVar(&opts.baseURL, "base-url", "", "OpenAI-compatible base URL (overrides config)")
 	flags.StringVar(&opts.model, "model", "", "OpenAI-compatible model name (overrides config)")
 	flags.StringVar(&opts.apiKeyFile, "api-key-file", "", "API key file (overrides config)")
-	flags.DurationVar(&opts.timeout, "timeout", time.Minute, "model request timeout")
+	flags.DurationVar(&opts.timeout, "timeout", 3*time.Minute, "per-attempt model request timeout")
 	flags.StringVar(&opts.ask, "ask", "", "ask once and exit; write tools are denied")
 	flags.IntVar(&opts.maxToolRounds, "max-tool-rounds", 8, "maximum model/tool rounds per question")
 	flags.BoolVar(&opts.verbose, "verbose", false, "print bounded tool results to stderr")

@@ -28,7 +28,7 @@ Options:
   --openai-base-url URL            Internal OpenAI-compatible /v1 endpoint
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
-  --openai-timeout DURATION        Model request timeout (default: 60s)
+  --openai-timeout DURATION        Per-attempt model timeout (default: 3m)
   --enable-log-diagnostics         Read bounded InferNex-owned Pod logs
   --max-diagnostics-per-scan N     Degraded services read per scan (default: 10)
   --enable-experiments             Run durable, single-feature experiments
@@ -679,7 +679,7 @@ if [[ -n "$openai_base_url" ]]; then
   agent_args+=(
     "--openai-base-url=${openai_base_url}"
     "--openai-model=${openai_model}"
-    "--openai-timeout=${openai_timeout:-60s}"
+    "--openai-timeout=${openai_timeout:-3m}"
   )
 fi
 if [[ -n "$openai_api_key_source" ]]; then

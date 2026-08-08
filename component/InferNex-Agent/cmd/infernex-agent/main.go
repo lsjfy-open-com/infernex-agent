@@ -221,7 +221,10 @@ func parseServerOptions(args []string) (options, error) {
 		"",
 		"Read the OpenAI-compatible API key from this file; intended for host/systemd installs",
 	)
-	flags.DurationVar(&opts.openAITimeout, "openai-timeout", time.Minute, "OpenAI-compatible request timeout")
+	flags.DurationVar(
+		&opts.openAITimeout, "openai-timeout", 3*time.Minute,
+		"OpenAI-compatible per-attempt request timeout",
+	)
 	flags.BoolVar(
 		&opts.enableAutoRecovery,
 		"enable-auto-recovery",

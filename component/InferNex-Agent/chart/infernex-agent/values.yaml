@@ -52,7 +52,7 @@ supervisor:
       # The API key is read only from an existing Secret.
       baseURL: ""
       model: ""
-      timeout: 60s
+      timeout: 3m
       existingSecret: ""
       secretKey: api-key
   remediation:

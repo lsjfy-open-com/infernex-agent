@@ -63,7 +63,7 @@ func runDoctor(args []string) error {
 	jsonOutput := flags.Bool("json", false, "print machine-readable results")
 	skipLocal := flags.Bool("skip-local", false, "skip the currently running Agent health check")
 	skipModel := flags.Bool("skip-model", false, "skip the configured OpenAI-compatible model probe")
-	timeout := flags.Duration("timeout", 15*time.Second, "overall external-check deadline")
+	timeout := flags.Duration("timeout", 3*time.Minute, "overall external-check deadline")
 	namespaces := stringListFlag{}
 	flags.Var(&namespaces, "namespace", "override scan namespace; repeatable")
 	if err := flags.Parse(args); err != nil {
@@ -72,8 +72,8 @@ func runDoctor(args []string) error {
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
 	}
-	if *timeout < time.Second || *timeout > 5*time.Minute {
-		return fmt.Errorf("--timeout must be between 1s and 5m")
+	if *timeout < time.Second || *timeout > 30*time.Minute {
+		return fmt.Errorf("--timeout must be between 1s and 30m")
 	}
 
 	opts, err := parseServerOptions([]string{"--config", *configPath})

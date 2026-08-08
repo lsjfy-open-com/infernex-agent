@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
@@ -54,12 +55,43 @@ func TestOpenAICompleteReturnsBoundedServerError(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"error":{"message":"model unavailable","type":"upstream"}}`))
 	}))
 	defer server.Close()
-	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL + "/v1", Model: "ops-model"})
+	model, err := NewOpenAI(OpenAIConfig{
+		BaseURL: server.URL + "/v1", Model: "ops-model", MaxRetries: -1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil); err == nil {
 		t.Fatal("expected endpoint error")
+	}
+}
+
+func TestOpenAICompleteRetriesTransientFailure(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		attempts++
+		writer.Header().Set("Content-Type", "application/json")
+		if attempts < 3 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte(`{"error":{"message":"warming up"}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ready"}}]}`))
+	}))
+	defer server.Close()
+
+	model, err := NewOpenAI(OpenAIConfig{
+		BaseURL: server.URL, Model: "ops-model", MaxRetries: 3, RetryDelay: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || response.Content != "ready" {
+		t.Fatalf("attempts=%d response=%#v", attempts, response)
 	}
 }
 

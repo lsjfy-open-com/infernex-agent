@@ -24,23 +24,29 @@ func runInstallDiagnose(args []string) error {
 	flags.SetOutput(os.Stderr)
 	configPath := flags.String("config", "/etc/infernex-agent/agent.conf", "installed Agent configuration")
 	evidencePath := flags.String("evidence", "-", "sanitized installation evidence file, or - for stdin")
-	timeout := flags.Duration("timeout", 90*time.Second, "model diagnosis timeout")
+	timeout := flags.Duration("timeout", 0, "override configured per-attempt model timeout")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return fmt.Errorf("unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
 	}
-	if *timeout < time.Second || *timeout > 5*time.Minute {
-		return fmt.Errorf("--timeout must be between 1s and 5m")
-	}
-
 	modelOptions, err := readModelFileOptions(*configPath)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(modelOptions.baseURL) == "" || strings.TrimSpace(modelOptions.model) == "" {
 		return fmt.Errorf("installation diagnosis model is not configured")
+	}
+	requestTimeout := *timeout
+	if requestTimeout == 0 {
+		requestTimeout = modelOptions.timeout
+	}
+	if requestTimeout == 0 {
+		requestTimeout = 3 * time.Minute
+	}
+	if requestTimeout < time.Second || requestTimeout > 30*time.Minute {
+		return fmt.Errorf("--timeout must be between 1s and 30m")
 	}
 	apiKey, err := readAPIKey(modelOptions.apiKeyFile)
 	if err != nil {
@@ -55,12 +61,14 @@ func runInstallDiagnose(args []string) error {
 		BaseURL: modelOptions.baseURL,
 		Model:   modelOptions.model,
 		APIKey:  apiKey,
-		Timeout: *timeout,
+		Timeout: requestTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("configure installation diagnosis model: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	ctx, cancel := context.WithTimeout(
+		context.Background(), requestTimeout*4+30*time.Second,
+	)
 	defer cancel()
 	result, err := model.Complete(ctx, []infernexchat.Message{
 		{
