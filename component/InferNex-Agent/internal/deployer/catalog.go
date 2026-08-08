@@ -55,7 +55,7 @@ func tinyModelService(namespace string, name string) *infernexv1alpha1.InferNexS
 			APIVersion: infernexv1alpha1.GroupVersion.String(),
 			Kind:       "InferNexService",
 		},
-		ObjectMeta: objectMeta(namespace, name),
+		ObjectMeta: objectMeta(namespace, name, "builtin:smollm2-135m-q4"),
 		Spec: infernexv1alpha1.InferNexServiceSpec{
 			Model: &infernexv1alpha1.LLMModelSpec{
 				Name: modelName,

@@ -15,6 +15,20 @@
 
 <hr>
 
+## InferNex Agent：自然语言管理入口
+
+InferNex Agent 是运行在 master、引导节点或独立管理节点上的 AI Agent，不是要求用户手工拼接 Kubernetes 参数的工具。它自动发现既有 InferNex 环境，用户只配置 Agent 背后的 OpenAI 兼容模型接口，然后直接通过自然语言完成扫描、诊断、基于稳定配置的部署、观察和失败回退。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+sudo infernex-agent chat
+```
+
+> 当前公开的 `0.3.0-rc.6` 仍是旧候选版，不含这里描述的统一安装包。新版本需先使用
+> Draft PR 的 CI Agent Artifact 在既有 A2 集群验收，通过后才发布和合并。
+
+Release 只按 CPU 架构提供一个 Linux Agent 包，不再让用户选择“宿主机包”或“集群包”。默认复用当前 kubeconfig，不安装 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC；没有 InferNex Bridge CRD 的 openFuyao Helm/BKE 集群会进入不修改集群的 Kubernetes/Helm 模式，并可识别当前引导/管理/业务集群角色，扫描 Helm Release、LWS/原生工作负载、Pod、Service、Event 和受限日志。离线包同样只需解压后执行 `sudo ./install.sh`。`model-a`、`models` 等名称只是旧的高级手工示例，不是普通安装参数。完整说明见 [InferNex Agent 中文产品指南](component/InferNex-Agent/docs/product-guide-zh.md)。
+
 ## Updates
  - [26-06] 推理后端切换为 LeaderWorkerSet（LWS）部署编排，原生支持多 DP 协同；PD-Orchestrator 的 elastic-scaler 新增 APA 扩缩算法，支持多样指标扩缩；Hermes-router 新增基于算力饱和度与时延预测的路由策略；cache-indexer 实现 L3 级 KV-aware 感知，与 Mooncake 联动支撑全局 KVCache 索引；eagle-eye 新增权重分发及灵衢网络动态指标获取；InferNex 新增 Helm 部署前置校验工具，覆盖 NPU 驱动、硬件资源及网络通信等环境检查，提前发现部署风险。
  - [26-05] 新增 InferNex-Bridge 组件，兼容 KServe 接入 InferNex 推理套件，支持 LLMInferenceService 与 InferNexService 双 CRD 声明式部署，适配层自动完成编排与路由打通。
@@ -181,7 +195,7 @@
 
 - **InferNex-Checker**：InferNex 前置校验工具，在 install 前检查硬件、K8s 集群及配置环境，提前发现部署风险。
 - **InferNex-Bridge**：InferNex 接入 KServe 的适配层，支持 `LLMInferenceService` / `InferNexService` 双 CRD 声明式部署 InferNex，详见 [组件 README](component/InferNex-Bridge/README.md)。
-- **InferNex Agent**：面向 MCP 兼容 Agent Runtime 的受控 InferNex 领域工具层；复用 `InferNexService` 与 Bridge 状态，不额外暴露一套通用 Kubernetes 控制面，详见 [中文组件 README](component/InferNex-Agent/README-zh.md) 和 [安装与运行模式指南](component/InferNex-Agent/docs/install-and-modes-zh.md)。
+- **InferNex Agent**：运行在管理节点上的 AI Agentic 运维入口；先以只读、限长、脱敏工具探索 openFuyao/BKE、Kubernetes、Helm 和 InferNex 主 Chart，再在检测到可选 Bridge 时复用 `InferNexService` 状态与受控写流程，不暴露任意 Shell/YAML/Patch，详见 [中文组件 README](component/InferNex-Agent/README-zh.md) 和 [安装与运行模式指南](component/InferNex-Agent/docs/install-and-modes-zh.md)。
 
 ## Roadmap
  - [26-06] Hermes-router 智能路由支持基于实例资源饱和状态的感知与调度、PD 分离架构下的实例间二级调度。

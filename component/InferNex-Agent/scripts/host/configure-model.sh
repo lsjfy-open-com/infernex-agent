@@ -18,11 +18,12 @@ Usage:
   sudo configure-model.sh [options]
 
 Actions:
+  --interactive           Prompt only for the Agent model interface
   --base-url URL          Set or replace the OpenAI-compatible base URL
   --model MODEL           Set or replace the diagnostic model
   --api-key-file FILE     Install or rotate the protected API key
   --clear-api-key         Remove the installed API key
-  --timeout DURATION      Set request timeout, for example 60s or 2m
+  --timeout DURATION      Per-attempt timeout, for example 3m or 300s
   --disable               Disable model analysis and remove its API key
   --test                  Send a small chat-completions request before applying
   --test-tools            Force a harmless function call for terminal compatibility
@@ -59,9 +60,15 @@ test_model="false"
 test_tools="false"
 show_model="false"
 restart_service="true"
+interactive="false"
+interactive_key_file=""
 
 while (($#)); do
   case "$1" in
+    --interactive)
+      interactive="true"
+      shift
+      ;;
     --base-url)
       [[ $# -ge 2 ]] || bundle_die "--base-url requires a value"
       base_url="$2"
@@ -123,6 +130,39 @@ done
 
 [[ ${EUID} -eq 0 ]] ||
   bundle_die "configure-model.sh must run as root"
+
+cleanup_interactive_key() {
+  [[ -z "$interactive_key_file" ]] || rm -f -- "$interactive_key_file"
+}
+trap cleanup_interactive_key EXIT
+
+if [[ "$interactive" == "true" ]]; then
+  [[ "$disable_model" == "false" && "$show_model" == "false" ]] ||
+    bundle_die "--interactive cannot be combined with --disable or --show"
+  printf 'OpenAI 兼容接口地址（例如以 /v1 结尾；请填写真实地址）: '
+  IFS= read -r base_url
+  base_url="${base_url%/}"
+  [[ -n "$base_url" ]] || bundle_die "model interface URL cannot be empty"
+  printf '接口中的真实模型名（不是示例名称）: '
+  IFS= read -r model
+  [[ -n "$model" ]] || bundle_die "model name cannot be empty"
+  printf 'API Key（无鉴权直接回车）: '
+  IFS= read -r -s interactive_key
+  printf '\n'
+  base_url_set="true"
+  model_set="true"
+  test_model="true"
+  test_tools="true"
+  if [[ -n "$interactive_key" ]]; then
+    interactive_key_file="$(mktemp /tmp/infernex-agent-model-key.XXXXXX)"
+    chmod 0600 "$interactive_key_file"
+    printf '%s\n' "$interactive_key" >"$interactive_key_file"
+    unset interactive_key
+    api_key_source="$interactive_key_file"
+    api_key_set="true"
+  fi
+fi
+
 [[ -r "$config_file" ]] ||
   bundle_die "${config_file} is missing; install the host Agent first"
 id "$service_user" >/dev/null 2>&1 ||
@@ -148,7 +188,7 @@ mapfile -t current_args <"$config_file"
 
 current_base_url=""
 current_model=""
-current_timeout="60s"
+current_timeout="3m"
 for argument in "${current_args[@]}"; do
   [[ -n "$argument" && "$argument" == --* ]] ||
     bundle_die "${config_file} contains an invalid argument"
@@ -182,7 +222,7 @@ fi
 if [[ "$disable_model" == "true" ]]; then
   candidate_base_url=""
   candidate_model=""
-  candidate_timeout="60s"
+  candidate_timeout="3m"
 elif [[ "$modify_requested" == "true" ]]; then
   [[ -n "$candidate_base_url" && -n "$candidate_model" ]] ||
     bundle_die "an enabled model requires both --base-url and --model"
@@ -254,7 +294,9 @@ test_endpoint() (
   local value_model="$2"
   local key_file="$3"
   local test_tools="$4"
+  local value_timeout="$5"
   local endpoint response_file header_file http_code escaped_model payload
+  local request_timeout_seconds retry_max_seconds
 
   [[ -n "$value_base_url" && -n "$value_model" ]] ||
     bundle_die "model analysis is disabled; there is no endpoint to test"
@@ -281,13 +323,33 @@ test_endpoint() (
   declare -a curl_args=(
     --silent
     --show-error
-    --connect-timeout 5
-    --max-time 60
+    --fail
+    --connect-timeout 15
+    --retry 3
+    --retry-delay 2
+    --retry-connrefused
     --output "$response_file"
     --write-out '%{http_code}'
     --header 'Accept: application/json'
     --header 'Content-Type: application/json'
     --data-binary "$payload"
+  )
+  case "$value_timeout" in
+    *ms)
+      request_timeout_seconds=$((
+        (${value_timeout%ms} + 999) / 1000
+      ))
+      ;;
+    *s) request_timeout_seconds="${value_timeout%s}" ;;
+    *m) request_timeout_seconds=$((${value_timeout%m} * 60)) ;;
+    *h) request_timeout_seconds=$((${value_timeout%h} * 3600)) ;;
+    *) bundle_die "unsupported model timeout: ${value_timeout}" ;;
+  esac
+  ((request_timeout_seconds >= 1)) || request_timeout_seconds=1
+  retry_max_seconds=$((request_timeout_seconds * 4 + 10))
+  curl_args+=(
+    --max-time "$request_timeout_seconds"
+    --retry-max-time "$retry_max_seconds"
   )
   if [[ -n "$key_file" ]]; then
     validate_api_key_file "$key_file"
@@ -320,7 +382,8 @@ test_endpoint() (
 
 if [[ "$test_model" == "true" ]]; then
   test_endpoint \
-    "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools"
+    "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools" \
+    "$candidate_timeout"
 fi
 
 show_configuration() {

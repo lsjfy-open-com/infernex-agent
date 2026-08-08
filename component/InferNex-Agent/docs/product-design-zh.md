@@ -6,11 +6,14 @@ InferNex Agent 将 InferNex 已有能力组织成一个长期运行、证据驱�
 受控的运维产品。设计目标是：
 
 1. 复用 `InferNexService` 和 Bridge 的权威状态，不建立第二套编排器；
-2. 在没有大模型时仍能持续扫描、分类问题和展示证据；
-3. 将大模型限制为诊断建议者，不向其提供集群凭据或写操作；
-4. 同时支持 Kubernetes 原生部署和固定运维节点部署；
-5. 所有写能力都需要显式启用，并受 RBAC、目录、所有权和确认机制约束；
-6. 离线包可校验、可升级、可回退并自带完整产品文档。
+2. 由模型驱动“理解意图 → 主动发现 → 形成计划 → 调用领域工具 → 观察结果
+   → 诊断/回退 → 解释”的 Agentic 闭环；
+3. 模型不持有集群凭据，也不能绕过 typed tools、Kubernetes 鉴权、所有权检查、
+   本机批准和回退门禁；
+4. V1 默认是管理节点上的本地 Linux Agent，复用当前 kubeconfig，不要求集群内 Pod；
+5. 所有写能力都需要显式启用，并受权限、目录、所有权和确认机制约束；
+6. 在模型不可用时，确定性扫描、分类、展示、变更监控和回退仍持续运行；
+7. 离线包可校验、可升级、可回退并自带完整产品文档。
 
 ## 2. 非目标
 
@@ -20,7 +23,7 @@ Agent 不负责：
 - 创建任意 Kubernetes YAML、运行 shell/SSH 或暴露通用 `kubectl`；
 - 安装 CANN、NPU 驱动、固件、模型权重或推理框架；
 - 替代 InferNex Bridge、Hermes、PD Orchestrator 或 Eagle-Eye；
-- 基于模型文本自动选择恢复模板或执行变更；
+- 允许模型直接操作 Kubernetes、执行任意变更或绕过本机批准；
 - 跨集群统一控制、租户认证、审计存储和告警通知。
 
 这些能力需要通过稳定的 InferNex API 或外部产品集成逐步加入，不能绕过
@@ -29,27 +32,28 @@ Agent 不负责：
 ## 3. 逻辑架构
 
 ```text
-运维人员 / Agent Runtime
+运维人员（自然语言）
           |
-          | MCP 或只读 Web
           v
 +---------------- InferNex Agent ----------------+
-| Typed MCP tools                                |
-| Periodic supervisor                            |
-|  - Kubernetes evidence collector               |
-|  - deterministic issue classifier              |
-|  - optional OpenAI-compatible analyzer         |
-|  - optional guarded remediator                  |
-| Immutable in-memory snapshot -> Dashboard/API  |
+| Conversation orchestrator + model client       |
+|  - intent / discovery / plan / tool loop        |
+|  - observation / diagnosis / explanation       |
+| Local approval gate                             |
+| Typed domain tools + policy / rollback          |
+| Periodic supervisor + Dashboard/API             |
 +------------------------------------------------+
           |
-          | namespace-scoped Kubernetes API
+          | current kubeconfig + typed Kubernetes API
           v
 InferNexService + status + managed workloads + Events
           |
           v
 InferNex Bridge / 现有 InferNex 控制器
 ```
+
+同一组 typed tools 也通过 MCP 暴露，便于接入 kubectl-ai、Codex 等外部 Agent
+Runtime；它们是可选入口，不是本产品自然语言能力的前置依赖。
 
 Agent 位于管理面，不位于推理数据面。Agent 停止不会中断已经运行的推理请求，
 Bridge 和 Kubernetes 仍继续维护现有工作负载。
@@ -63,8 +67,9 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 | Analyzer | 问题证据、模型配置 | 建议文本或错误 | 进程内结果缓存 |
 | Supervisor | 命名空间和扫描周期 | 不可变快照 | 进程内快照 |
 | Dashboard | 快照 | HTML 和 JSON | 无 |
-| MCP server | 显式工具参数 | 有界领域结果 | 无 |
-| Catalog deployer | 固定 catalog ID | Agent 所有的 `InferNexService` | Kubernetes CR |
+| Conversation orchestrator | 自然语言、模型、工具结果 | 计划、工具调用、解释和追问 | 当前会话 |
+| MCP server | typed tool 调用 | 有界领域结果 | 无 |
+| Source-aware deployer | 已发现的稳定服务/profile | Agent 所有的 `InferNexService` | Kubernetes CR + 追加写变更日志 |
 | Remediator | 批准模板和连续故障证据 | 新的恢复 `InferNexService` | Kubernetes CR |
 | Diagnostics | 受管 Pod 日志和 Event | 脱敏证据、跨节点 incident 时间线 | 无 |
 | Experiment controller | 稳定基线和批准特性序列 | 独立候选、阶段门禁和精确回退 | 追加写计划/变更日志 |
@@ -90,26 +95,27 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 模型超时、鉴权失败或返回格式错误只影响该次建议，错误会记录在分析结果中。
 扫描循环、MCP 和 Dashboard 不因模型故障停止。
 
-## 6. 部署设计
+## 6. 运行与交付设计
 
-### 6.1 宿主机 systemd
+### 6.1 默认：管理节点 systemd
 
-推荐用于固定 openEuler master/引导节点：
+适用于 openEuler master/引导节点以及其他可执行 kubectl 的 Linux 管理节点：
 
 - 单个 CGO-disabled 静态二进制；
 - `infernex-agent` 非登录系统用户；
-- 专用、命名空间级 kubeconfig；
+- 默认展开并保护当前 kubeconfig；高合规环境可创建专用 namespace-scoped 身份；
 - MCP/Dashboard 默认回环地址；
 - systemd capability 清空和文件系统保护；
 - 模型参数位于 `/etc/infernex-agent/agent.conf`；
 - Kubernetes 凭据和模型密钥分别保存为 `0600` 文件。
 
-安装器只在引导阶段使用传入的管理员 kubeconfig 检查权限。长期服务不读取
-`admin.conf`。
+安装器自动发现环境，普通用户只配置模型接口。模型只通过 typed tools 间接使用凭据。
+安装器创建空的 Agent workspace Namespace，但不创建 Agent Pod、Controller 或 CRD。
 
-### 6.2 集群内 Helm
+### 6.2 高级：集群内 Helm
 
-适用于 Kubernetes 原生部署：
+该形态只保留给强制使用 Kubernetes 管理 Agent 生命周期的环境，不作为 V1 默认
+Release 资产：
 
 - 使用投射的短期 ServiceAccount Token；
 - Pod 级自动 Token 挂载关闭；
@@ -119,7 +125,7 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 
 ## 7. 配置设计
 
-宿主机有效参数以“一行一个 CLI 参数”的形式写入
+管理节点有效参数以“一行一个 CLI 参数”的形式写入
 `/etc/infernex-agent/agent.conf`。启动器使用 Bash 数组读取，不执行配置
 内容，因此参数中的 shell 元字符不会被解释为命令。
 
@@ -138,14 +144,15 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 
 - 每轮 Dashboard 快照作为整体替换，读者不会看到半轮扫描结果；
 - Kubernetes 读取失败会以受限错误呈现，不把原始凭据带入输出；
-- Catalog 创建具有所有权和 spec 漂移检查，重复请求幂等；
+- 部署来源必须是当前代 Ready 的既有稳定服务或完整的 Bridge profile；
+- 新实例只创建在 Agent workspace，具有来源、所有权和 spec 漂移检查，重复请求幂等；
 - 恢复服务使用独立名称，不覆盖源服务；
 - Agent 不负责流量切换，因此恢复资源创建成功不等于业务已经切流；
-- 模型输出不进入 mutation 输入；
+- 模型提出的写工具参数必须通过 schema、稳定来源、RBAC、所有权和本机批准门禁；
 - 二进制升级保留 `.previous`，便于人工回退；
 - 模型配置更新先进行可选连通性测试，服务启动失败时恢复旧配置。
 - 宿主机安装覆盖文件前保存带校验和的安装前集群和本机恢复点，安装失败自动恢复；
-- Catalog 新建先追加写 `planned`/`applied` 记录，未 Ready 或当前 generation
+- Agent 新建先追加写 `planned`/`applied` 记录，未 Ready 或当前 generation
   Degraded 时仅删除同一 `change-id` 创建的资源；
 - 未完成部署在 Agent 重启后继续监控，终态可通过 `infernex_get_change` 查询。
 - 自动恢复服务也使用同一追加写变更记录和 `change-id`，Dashboard 显示该关联 ID。

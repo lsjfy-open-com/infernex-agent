@@ -61,11 +61,16 @@ jobs:
         working-directory: component/InferNex-Agent
         run: |
           helm lint ./chart/infernex-agent
-          helm template infernex-agent ./chart/infernex-agent \
-            --namespace infernex-system \
-            --set 'rbac.targetNamespaces[0]=model-a' \
-            --set 'rbac.targetNamespaces[1]=model-b' \
-            >/dev/null
+          readonly_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=model-a' \
+              --set 'rbac.targetNamespaces[1]=model-b'
+          )"
+          grep -q 'statefulsets' <<<"${readonly_render}"
+          grep -q 'services' <<<"${readonly_render}"
+          grep -q 'pods/log' <<<"${readonly_render}"
+          grep -q 'secrets' <<<"${readonly_render}"
           helm template infernex-agent ./chart/infernex-agent \
             --namespace infernex-system \
             --set rbac.clusterWide=true \
@@ -180,12 +185,14 @@ jobs:
             --output-dir "${RUNNER_TEMP}/offline-dist"
           mkdir -p "${RUNNER_TEMP}/host-extracted"
           tar -xzf \
-            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz" \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-0.3.0-linux-amd64.tar.gz" \
             -C "${RUNNER_TEMP}/host-extracted"
           (
-            cd "${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
+            cd "${RUNNER_TEMP}/host-extracted/infernex-agent-0.3.0-linux-amd64"
             sha256sum --check SHA256SUMS
             ./payload/infernex-agent --help >/dev/null
+            test -x ./install.sh
+            ./install.sh --help >/dev/null
             test -x ./bin/chat.sh
             test -f ./docs/install-and-modes-zh.md
           )
@@ -216,30 +223,34 @@ jobs:
             --target-namespace models \
             --dashboard-cluster-ip
 
-      - name: Install host Agent with dedicated identity
+      - name: Install management-node Agent from current kubeconfig
         run: |
-          host_bundle="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64"
-          sudo "${host_bundle}/bin/create-kubeconfig.sh" \
+          host_bundle="${RUNNER_TEMP}/host-extracted/infernex-agent-0.3.0-linux-amd64"
+          sudo "${host_bundle}/install.sh" \
             --admin-kubeconfig "${HOME}/.kube/config" \
-            --target-namespace models \
-            --output "${RUNNER_TEMP}/infernex-agent-host.kubeconfig"
-          sudo "${host_bundle}/bin/install-host.sh" \
-            --kubeconfig "${RUNNER_TEMP}/infernex-agent-host.kubeconfig" \
-            --scan-namespace models
+            --skip-model-setup
           sudo systemd-analyze verify \
             /etc/systemd/system/infernex-agent.service
           sudo "${host_bundle}/bin/verify-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \
-            --target-namespace models
+            --target-namespace infernex-agent-workspace
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf \
+            --skip-model
           sudo test -x /opt/infernex-agent/bin/configure-model.sh
           sudo test -x /opt/infernex-agent/bin/restore-host-install.sh
           sudo test -x /opt/infernex-agent/bin/chat.sh
+          sudo test -x /usr/local/bin/infernex-agent
+          sudo /usr/local/bin/infernex-agent version --json |
+            grep -q '0.3.0'
+          sudo grep -q -- '--deployment-namespace=infernex-agent-workspace' \
+            /etc/infernex-agent/agent.conf
           recovery_point="$(sudo sh -c \
             'ls -dt /var/lib/infernex-agent/backups/install-* | head -n 1')"
           sudo /opt/infernex-agent/bin/infernex-agent cluster-state verify \
             --input "${recovery_point}/cluster-state.json" |
             grep -q '"valid": true'
-          sudo grep -q -- '--scan-namespaces=models' \
+          sudo grep -q -- '--scan-namespaces=infernex-agent-workspace' \
             /etc/infernex-agent/agent.conf
           sudo /opt/infernex-agent/bin/configure-model.sh --show |
             grep -q 'model_analysis=disabled'
@@ -311,12 +322,14 @@ jobs:
             /etc/infernex-agent/agent.conf \
             /etc/systemd/system/infernex-agent.service
           sudo systemctl is-active --quiet infernex-agent.service
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf
           sudo /opt/infernex-agent/bin/chat.sh --ask 'Reply with OK.' |
             grep -q 'OK'
 
           sudo "${host_bundle}/bin/install-host.sh" \
             --kubeconfig /etc/infernex-agent/kubeconfig \
-            --scan-namespace models
+            --scan-namespace infernex-agent-workspace
           sudo grep -q \
             -- '--openai-model=ci-diagnostic-model' \
             /etc/infernex-agent/agent.conf
@@ -343,6 +356,87 @@ jobs:
 
           sudo /opt/infernex-agent/bin/configure-model.sh --disable
 
+          candidate_binary="${RUNNER_TEMP}/infernex-agent-systemd-candidate"
+          (
+            cd component/InferNex-Agent
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+              -trimpath \
+              -ldflags="-s -w -X main.version=0.4.0-candidate.ci -X main.commit=${GITHUB_SHA}" \
+              -o "${candidate_binary}" \
+              ./cmd/infernex-agent
+          )
+          chmod 0755 "${candidate_binary}"
+          baseline_sha="$(sudo sha256sum /opt/infernex-agent/bin/infernex-agent | awk '{print $1}')"
+          sudo "${candidate_binary}" candidate verify \
+            --file "${candidate_binary}"
+          sudo "${candidate_binary}" candidate apply \
+            --file "${candidate_binary}" \
+            --timeout 60s
+          sudo /opt/infernex-agent/bin/infernex-agent version --json |
+            grep -q '0.4.0-candidate.ci'
+          sudo /opt/infernex-agent/bin/infernex-agent candidate rollback \
+            --timeout 60s
+          restored_sha="$(sudo sha256sum /opt/infernex-agent/bin/infernex-agent | awk '{print $1}')"
+          test "${restored_sha}" = "${baseline_sha}"
+          sudo systemctl is-active --quiet infernex-agent.service
+
+          kubectl delete crd \
+            infernexservices.infernex.infernex.io \
+            infernexserviceconfigs.infernex.infernex.io \
+            --wait=true
+          kubectl delete namespace infernex-agent-workspace --wait=true
+          sudo systemctl stop infernex-agent.service
+          python3 -m http.server 8081 --bind 127.0.0.1 \
+            >"${RUNNER_TEMP}/occupied-dashboard-port.log" 2>&1 &
+          occupied_dashboard_pid=$!
+          sleep 1
+          kill -0 "${occupied_dashboard_pid}"
+          sudo "${host_bundle}/install.sh" \
+            --admin-kubeconfig "${HOME}/.kube/config" \
+            --generic-kubernetes \
+            --skip-model-setup
+          sudo systemctl is-active --quiet infernex-agent.service
+          sudo grep -q -- '--scan-namespaces=$' /etc/infernex-agent/agent.conf
+          sudo grep -q -- '--dashboard-listen-address=127.0.0.1:18081' \
+            /etc/infernex-agent/agent.conf
+          curl --fail --silent http://127.0.0.1:18081/readyz >/dev/null
+          ! sudo grep -q -- '--enable-deployment' /etc/infernex-agent/agent.conf
+          ! kubectl get namespace infernex-agent-workspace >/dev/null 2>&1
+          sudo /opt/infernex-agent/bin/infernex-agent doctor \
+            --config /etc/infernex-agent/agent.conf |
+            grep -q 'generic Kubernetes/Helm compatibility mode'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openfuyao_detect_environment","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            tee "${RUNNER_TEMP}/openfuyao-environment.json" |
+            grep -q 'inference-business-cluster'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s_cluster_overview","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'kubernetesVersion'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_list_workloads","arguments":{"namespace":"kube-system","limit":20}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'workloads'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm_list_releases","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'releases'
+          kill "${occupied_dashboard_pid}" >/dev/null 2>&1 || true
+          wait "${occupied_dashboard_pid}" 2>/dev/null || true
+
           kill "${model_server_pid}" >/dev/null 2>&1 || true
           wait "${model_server_pid}" 2>/dev/null || true
           trap - EXIT
@@ -362,14 +456,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload host offline bundle
+      - name: Upload default management-node Agent bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: infernex-agent-host-offline-0.3.0-linux-amd64
+          name: infernex-agent-0.3.0-linux-amd64
           path: |
-            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz
-            ${{ runner.temp }}/offline-dist/infernex-agent-host-offline-0.3.0-linux-amd64.tar.gz.sha256
+            ${{ runner.temp }}/offline-dist/infernex-agent-0.3.0-linux-amd64.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-0.3.0-linux-amd64.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
 
@@ -389,7 +483,7 @@ jobs:
       - name: Delete Kind cluster
         if: always()
         run: |
-          host_uninstaller="${RUNNER_TEMP}/host-extracted/infernex-agent-host-offline-0.3.0-linux-amd64/bin/uninstall-host.sh"
+          host_uninstaller="${RUNNER_TEMP}/host-extracted/infernex-agent-0.3.0-linux-amd64/bin/uninstall-host.sh"
           if [[ -x "${host_uninstaller}" ]]; then
             sudo "${host_uninstaller}" \
               --purge-credentials \
@@ -397,3 +491,66 @@ jobs:
               --purge-user || true
           fi
           kind delete cluster --name infernex-agent
+
+  candidate:
+    name: Candidate linux/${{ matrix.architecture }}
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture:
+          - amd64
+          - arm64
+
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: component/InferNex-Agent/go.sum
+
+      - name: Build static candidate binary
+        working-directory: component/InferNex-Agent
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          short_sha="${GITHUB_SHA:0:12}"
+          candidate_version="0.4.0-candidate.${short_sha}"
+          candidate_name="infernex-agent-${candidate_version}-linux-${ARCHITECTURE}"
+          CGO_ENABLED=0 GOOS=linux GOARCH="${ARCHITECTURE}" \
+            go build -trimpath \
+            -ldflags="-s -w -X main.version=${candidate_version} -X main.commit=${GITHUB_SHA}" \
+            -o "${RUNNER_TEMP}/${candidate_name}" \
+            ./cmd/infernex-agent
+          chmod 0755 "${RUNNER_TEMP}/${candidate_name}"
+          (
+            cd "${RUNNER_TEMP}"
+            sha256sum "${candidate_name}" >"${candidate_name}.sha256"
+          )
+          if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+            "${RUNNER_TEMP}/${candidate_name}" version --json | tee "${RUNNER_TEMP}/version.json"
+            grep -q '"cgoEnabled":"0"' "${RUNNER_TEMP}/version.json"
+            grep -q "${GITHUB_SHA}" "${RUNNER_TEMP}/version.json"
+            bash test/scripts/candidate-smoke.sh "${RUNNER_TEMP}/${candidate_name}"
+          fi
+          if readelf -l "${RUNNER_TEMP}/${candidate_name}" | grep -q 'Requesting program interpreter'; then
+            echo "candidate unexpectedly contains a dynamic interpreter"
+            exit 1
+          fi
+          printf 'CANDIDATE_NAME=%s\n' "${candidate_name}" >>"${GITHUB_ENV}"
+
+      - name: Upload tested candidate binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.CANDIDATE_NAME }}
+          path: |
+            ${{ runner.temp }}/${{ env.CANDIDATE_NAME }}
+            ${{ runner.temp }}/${{ env.CANDIDATE_NAME }}.sha256
+          if-no-files-found: error
+          retention-days: 14

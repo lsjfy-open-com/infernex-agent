@@ -18,7 +18,9 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -80,6 +82,71 @@ func TestDeployCreatesOnlyCatalogInferNexServiceAndIsIdempotent(t *testing.T) {
 	}
 	if second.Operation != "already-exists" {
 		t.Fatalf("idempotent operation = %q", second.Operation)
+	}
+}
+
+func TestAgenticDeploymentDiscoversAndReusesStableInferNexSources(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := infernexv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	stable := tinyModelService("production", "qwen-stable")
+	stable.Generation = 3
+	stable.Status.Ready = true
+	stable.Status.ObservedGeneration = 3
+	stable.Status.Mode = "aggregate"
+	stable.Spec.SourceRef = &infernexv1alpha1.SourceRef{
+		APIVersion: "serving.kserve.io/v1alpha1",
+		Kind:       "LLMInferenceService",
+		Name:       "qwen-source",
+	}
+	stable.Spec.Model.URI = "https://user:secret@example.com/models/qwen?token=secret#fragment"
+	profile := &infernexv1alpha1.InferNexServiceConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "infernex-bridge-system", Name: "approved-engine"},
+		Spec: infernexv1alpha1.InferNexServiceConfigSpec{
+			InferNexServiceSpec: *stable.Spec.DeepCopy(),
+		},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(stable, profile).Build()
+	domainDeployer := New(
+		kubeClient,
+		WithDeploymentScope(
+			"infernex-agent-workspace",
+			"infernex-bridge-system",
+			[]string{"production", "production"},
+		),
+	)
+
+	sources, err := domainDeployer.ListSources(context.Background())
+	if err != nil {
+		t.Fatalf("list sources: %v", err)
+	}
+	if sources.TargetNamespace != "infernex-agent-workspace" || len(sources.Sources) != 2 {
+		t.Fatalf("unexpected sources: %#v", sources)
+	}
+	if sources.Sources[1].ModelURI != "https://example.com/models/qwen" {
+		t.Fatalf("deployment source leaked model URI credentials: %#v", sources.Sources[1])
+	}
+
+	result, err := domainDeployer.Deploy(context.Background(), Request{
+		Name: "qwen-copy", SourceID: "service:production:qwen-stable", Confirm: true,
+	})
+	if err != nil {
+		t.Fatalf("deploy stable source: %v", err)
+	}
+	if result.Namespace != "infernex-agent-workspace" || result.SourceID != "service:production:qwen-stable" {
+		t.Fatalf("unexpected deployment result: %#v", result)
+	}
+	created := &infernexv1alpha1.InferNexService{}
+	key := types.NamespacedName{Namespace: "infernex-agent-workspace", Name: "qwen-copy"}
+	if err := kubeClient.Get(context.Background(), key, created); err != nil {
+		t.Fatalf("get Agent deployment: %v", err)
+	}
+	expected := stable.Spec.DeepCopy()
+	expected.SourceRef.Namespace = stable.Namespace
+	if !equality.Semantic.DeepEqual(created.Spec, *expected) ||
+		created.Annotations[sourceIDAnnotation] != "service:production:qwen-stable" {
+		t.Fatalf("deployment did not preserve the stable spec semantics: %#v", created)
 	}
 }
 

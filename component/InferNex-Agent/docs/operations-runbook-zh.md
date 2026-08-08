@@ -77,17 +77,14 @@ sudo -u infernex-agent kubectl \
 
 ## 5. 升级
 
-1. 下载与 `uname -m` 匹配的新宿主机包；
+1. 下载与 `uname -m` 匹配的新 Agent Linux 包；
 2. 验证外层 SHA256；
 3. 解压并查看版本说明；
-4. 使用现有专用 kubeconfig 重跑安装器；
+4. 在新包目录直接运行 `sudo ./install.sh --skip-model-setup`；
 5. 验证 systemd、Kubernetes 权限、MCP 和 Dashboard。
 
 ```bash
-sudo ./bin/install-host.sh \
-  --kubeconfig /etc/infernex-agent/kubeconfig \
-  --scan-namespace model-a \
-  --dashboard-listen-address 10.20.0.10:8081
+sudo ./install.sh --skip-model-setup
 ```
 
 如果升级命令没有传入任何 `--openai-*` 参数，安装器会保留现有模型配置和

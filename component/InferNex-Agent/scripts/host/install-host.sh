@@ -15,19 +15,20 @@ usage() {
 Install InferNex Agent as a hardened systemd service on Linux/openEuler.
 
 Usage:
-  sudo install-host.sh --kubeconfig FILE --scan-namespace NAMESPACE [options]
+  sudo install-host.sh --kubeconfig FILE [--scan-namespace NAMESPACE] [options]
 
 Options:
-  --bundle-dir DIR                 Extracted host bundle root
-  --binary FILE                   Agent binary outside a host bundle
+  --bundle-dir DIR                 Extracted Agent package root
+  --binary FILE                   Agent binary outside a package
   --kubeconfig FILE               Dedicated, self-contained kubeconfig
   --scan-namespace NAMESPACE      Namespace to scan (repeatable)
+  --generic-kubernetes            Install without InferNex Bridge CRDs
   --listen-address ADDRESS        MCP bind (default: 127.0.0.1:8080)
   --dashboard-listen-address ADDR Dashboard bind (default: 127.0.0.1:8081)
   --openai-base-url URL            Internal OpenAI-compatible /v1 endpoint
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
-  --openai-timeout DURATION        Model request timeout (default: 60s)
+  --openai-timeout DURATION        Per-attempt model timeout (default: 3m)
   --enable-log-diagnostics         Read bounded InferNex-owned Pod logs
   --max-diagnostics-per-scan N     Degraded services read per scan (default: 10)
   --enable-experiments             Run durable, single-feature experiments
@@ -36,11 +37,14 @@ Options:
   --experiment-soak-duration D     Default: 5m
   --experiment-diagnostic-interval D Default: 30s
   --enable-deployment              Enable constrained catalog tools
+  --deployment-namespace N         Fixed Agent workspace namespace
+  --deployment-template-namespace N Existing InferNexServiceConfig namespace
   --deployment-readiness-timeout D Roll back a failed new deployment (default: 10m)
   --enable-recovery                Enable guarded recovery
   --recovery-template-namespace N  Profile namespace
   --recovery-min-critical-scans N  Default: 3
-  --skip-checksums                  Skip host bundle checksum verification
+  --skip-checksums                  Skip Agent package checksum verification
+  --interactive-model-setup        Configure and test the model before first start
   --no-start                        Install files without starting the service
   -h, --help                        Show this help
 
@@ -67,12 +71,16 @@ experiment_readiness_timeout="20m"
 experiment_soak_duration="5m"
 experiment_diagnostic_interval="30s"
 enable_deployment="false"
+deployment_namespace="infernex-agent-workspace"
+deployment_template_namespace="infernex-bridge-system"
 deployment_readiness_timeout="10m"
 enable_recovery="false"
 recovery_template_namespace="infernex-bridge-system"
 recovery_min_scans="3"
 verify_checksums="true"
 start_service="true"
+generic_kubernetes="false"
+interactive_model_setup="false"
 declare -a scan_namespaces=()
 
 while (($#)); do
@@ -96,6 +104,10 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--scan-namespace requires a value"
       scan_namespaces+=("$2")
       shift 2
+      ;;
+    --generic-kubernetes)
+      generic_kubernetes="true"
+      shift
       ;;
     --listen-address)
       [[ $# -ge 2 ]] || bundle_die "--listen-address requires a value"
@@ -165,6 +177,16 @@ while (($#)); do
       enable_deployment="true"
       shift
       ;;
+    --deployment-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-namespace requires a value"
+      deployment_namespace="$2"
+      shift 2
+      ;;
+    --deployment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-template-namespace requires a value"
+      deployment_template_namespace="$2"
+      shift 2
+      ;;
     --deployment-readiness-timeout)
       [[ $# -ge 2 ]] || bundle_die "--deployment-readiness-timeout requires a value"
       deployment_readiness_timeout="$2"
@@ -186,6 +208,10 @@ while (($#)); do
       ;;
     --skip-checksums)
       verify_checksums="false"
+      shift
+      ;;
+    --interactive-model-setup)
+      interactive_model_setup="true"
       shift
       ;;
     --no-start)
@@ -215,17 +241,23 @@ bundle_require_command readlink
 bundle_require_command cp
 bundle_require_command date
 bundle_require_command sha256sum
+if [[ "$interactive_model_setup" == "true" ]]; then
+  [[ -r /dev/tty && -w /dev/tty ]] || bundle_die \
+    "--interactive-model-setup requires an interactive terminal"
+fi
 
 if [[ -n "$bundle_root" ]]; then
   bundle_root="$(cd -- "$bundle_root" && pwd)"
   if [[ "$verify_checksums" == "true" ]]; then
     bundle_verify_checksums "$bundle_root"
   fi
-  [[ "$(bundle_property "$bundle_root" format)" == "infernex-agent-host-offline-v1" ]] ||
-    bundle_die "unsupported host bundle format"
+  bundle_format="$(bundle_property "$bundle_root" format)"
+  [[ "$bundle_format" == "infernex-agent-linux-v1" ||
+    "$bundle_format" == "infernex-agent-host-offline-v1" ]] ||
+    bundle_die "unsupported Agent bundle format"
   bundle_architecture="$(bundle_property "$bundle_root" architecture)"
   [[ "$bundle_architecture" == "$(bundle_host_architecture)" ]] ||
-    bundle_die "host bundle architecture ${bundle_architecture} does not match this host"
+    bundle_die "Agent package architecture ${bundle_architecture} does not match this host"
   if [[ -z "$binary_source" ]]; then
     binary_relative="$(bundle_property "$bundle_root" binary)"
     bundle_safe_relative_path "$binary_relative" ||
@@ -235,13 +267,21 @@ if [[ -n "$bundle_root" ]]; then
 fi
 
 [[ -n "$binary_source" && -f "$binary_source" ]] ||
-  bundle_die "an Agent --binary or extracted host bundle is required"
+  bundle_die "an Agent --binary or extracted Agent package is required"
 [[ -x "$binary_source" ]] ||
   bundle_die "Agent binary is not executable: ${binary_source}"
 [[ -n "$kubeconfig_source" && -r "$kubeconfig_source" ]] ||
   bundle_die "--kubeconfig must name a readable file"
-((${#scan_namespaces[@]} > 0)) ||
-  bundle_die "at least one --scan-namespace is required"
+if [[ "$generic_kubernetes" != "true" ]]; then
+  ((${#scan_namespaces[@]} > 0)) ||
+    bundle_die "at least one --scan-namespace is required outside generic Kubernetes mode"
+else
+  [[ "$enable_deployment" == "false" && "$enable_recovery" == "false" &&
+    "$enable_log_diagnostics" == "false" && "$enable_experiments" == "false" ]] ||
+    bundle_die "generic Kubernetes mode cannot enable Bridge-specific deployment, recovery, diagnostics, or experiments"
+  ((${#scan_namespaces[@]} == 0)) ||
+    bundle_die "generic Kubernetes mode does not yet accept --scan-namespace"
+fi
 
 validate_dns_label() {
   local label="$1"
@@ -251,6 +291,10 @@ for scan_namespace in "${scan_namespaces[@]}"; do
   validate_dns_label "$scan_namespace" ||
     bundle_die "invalid scan namespace: ${scan_namespace}"
 done
+validate_dns_label "$deployment_namespace" ||
+  bundle_die "invalid deployment namespace: ${deployment_namespace}"
+validate_dns_label "$deployment_template_namespace" ||
+  bundle_die "invalid deployment template namespace: ${deployment_template_namespace}"
 validate_dns_label "$recovery_template_namespace" ||
   bundle_die "invalid recovery template namespace: ${recovery_template_namespace}"
 validate_dns_label "$experiment_template_namespace" ||
@@ -345,7 +389,8 @@ for scan_namespace in "${scan_namespaces[@]}"; do
       list infernexservices.infernex.infernex.io --namespace "$scan_namespace"
   )" == "yes" ]] ||
     bundle_die "kubeconfig cannot list InferNexService in ${scan_namespace}"
-  if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
+  if [[ "$enable_experiments" == "true" ||
+    ( "$enable_deployment" == "true" && "$scan_namespace" == "$deployment_namespace" ) ]]; then
     for verb in create delete; do
       [[ "$(
         kubectl --kubeconfig "$kubeconfig_source" auth can-i \
@@ -368,6 +413,16 @@ for scan_namespace in "${scan_namespaces[@]}"; do
       bundle_die "kubeconfig cannot read Pod logs in ${scan_namespace}"
   fi
 done
+if [[ "$enable_deployment" == "true" ]]; then
+  for verb in get list; do
+    [[ "$(
+      kubectl --kubeconfig "$kubeconfig_source" auth can-i \
+        "$verb" infernexserviceconfigs.infernex.infernex.io \
+        --namespace "$deployment_template_namespace"
+    )" == "yes" ]] ||
+      bundle_die "kubeconfig cannot ${verb} deployment profiles in ${deployment_template_namespace}"
+  done
+fi
 if [[ "$enable_recovery" == "true" ]]; then
   [[ "$(
     kubectl --kubeconfig "$kubeconfig_source" auth can-i \
@@ -399,6 +454,7 @@ installed_configurator="${install_root}/bin/configure-model.sh"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 installed_chat="${install_root}/bin/chat.sh"
+installed_cli="/usr/local/bin/infernex-agent"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -415,17 +471,33 @@ install_backup_root="${state_root}/backups/install-$(
 install -d -m 0700 -o root -g root \
   "${state_root}/backups" "$install_backup_root" "${install_backup_root}/host"
 cluster_snapshot="${install_backup_root}/cluster-state.json"
-cluster_backup_args=(
-  cluster-state backup
-  --kubeconfig "$kubeconfig_source"
-  --output "$cluster_snapshot"
-  --purpose pre-host-install
-)
-for scan_namespace in "${scan_namespaces[@]}"; do
-  cluster_backup_args+=(--namespace "$scan_namespace")
-done
-bundle_info "capturing the pre-install InferNex cluster state"
-"$binary_source" "${cluster_backup_args[@]}"
+cluster_backup_available="false"
+if [[ "$generic_kubernetes" == "true" ]]; then
+  bundle_info "recording a no-mutation compatibility-mode installation baseline"
+  cat >"$cluster_snapshot" <<'EOF'
+{
+  "apiVersion": "agent.infernex.io/v1alpha1",
+  "kind": "InstallationBaseline",
+  "platformMode": "generic-kubernetes",
+  "clusterMutations": false,
+  "note": "The Agent installation changed no Kubernetes resources. Host files are backed up separately."
+}
+EOF
+  chmod 0600 "$cluster_snapshot"
+else
+  cluster_backup_args=(
+    cluster-state backup
+    --kubeconfig "$kubeconfig_source"
+    --output "$cluster_snapshot"
+    --purpose pre-host-install
+  )
+  for scan_namespace in "${scan_namespaces[@]}"; do
+    cluster_backup_args+=(--namespace "$scan_namespace")
+  done
+  bundle_info "capturing the pre-install InferNexService cluster state"
+  "$binary_source" "${cluster_backup_args[@]}"
+  cluster_backup_available="true"
+fi
 
 host_backup_targets=(
   "$installed_binary"
@@ -439,6 +511,7 @@ host_backup_targets=(
   "$installed_bundle_lib"
   "$unit_path"
   "$installed_chat"
+  "$installed_cli"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -505,11 +578,13 @@ rollback_failed_install() {
     systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
     systemctl start infernex-agent.service >/dev/null 2>&1 || true
   fi
-  "$binary_source" cluster-state restore \
-    --kubeconfig "$kubeconfig_source" \
-    --input "$cluster_snapshot" \
-    --confirm >/dev/null 2>&1 ||
-    bundle_warn "automatic cluster restore failed; use ${cluster_snapshot} for manual recovery"
+  if [[ "$cluster_backup_available" == "true" ]]; then
+    "$binary_source" cluster-state restore \
+      --kubeconfig "$kubeconfig_source" \
+      --input "$cluster_snapshot" \
+      --confirm >/dev/null 2>&1 ||
+      bundle_warn "automatic cluster restore failed; use ${cluster_snapshot} for manual recovery"
+  fi
   bundle_warn "pre-install backup retained at ${install_backup_root}"
   return "$exit_status"
 }
@@ -543,6 +618,16 @@ fi
 temporary_binary="${installed_binary}.new"
 install -m 0755 -o root -g root "$binary_source" "$temporary_binary"
 mv -f -- "$temporary_binary" "$installed_binary"
+install -d -m 0755 -o root -g root /usr/local/bin
+temporary_cli="$(mktemp /usr/local/bin/.infernex-agent.XXXXXX)"
+cat >"$temporary_cli" <<EOF
+#!/usr/bin/env bash
+# Managed by InferNex Agent host installer.
+exec ${installed_binary@Q} "\$@"
+EOF
+chmod 0755 "$temporary_cli"
+chown root:root "$temporary_cli"
+mv -f -- "$temporary_cli" "$installed_cli"
 source_kubeconfig_resolved="$(readlink -f -- "$kubeconfig_source")"
 installed_kubeconfig_resolved="$(
   readlink -f -- "$installed_kubeconfig" 2>/dev/null || true
@@ -594,7 +679,7 @@ if [[ -n "$openai_base_url" ]]; then
   agent_args+=(
     "--openai-base-url=${openai_base_url}"
     "--openai-model=${openai_model}"
-    "--openai-timeout=${openai_timeout:-60s}"
+    "--openai-timeout=${openai_timeout:-3m}"
   )
 fi
 if [[ -n "$openai_api_key_source" ]]; then
@@ -631,8 +716,12 @@ if [[ "$preserve_model_config" == "true" ]]; then
     bundle_die "${agent_config} references a missing OpenAI API key"
 fi
 if [[ "$enable_deployment" == "true" ]]; then
+  scan_namespaces_csv="$(IFS=,; printf '%s' "${scan_namespaces[*]}")"
   agent_args+=(
     "--enable-deployment"
+    "--deployment-namespace=${deployment_namespace}"
+    "--deployment-template-namespace=${deployment_template_namespace}"
+    "--deployment-source-namespaces=${scan_namespaces_csv}"
     "--deployment-readiness-timeout=${deployment_readiness_timeout}"
   )
 fi
@@ -738,7 +827,47 @@ mv -f -- "$temporary_unit" "$unit_path"
 if command -v restorecon >/dev/null 2>&1; then
   restorecon -RF "$install_root" "$config_root" "$state_root" "$unit_path" || true
 fi
+
+if [[ "$interactive_model_setup" == "true" ]]; then
+  printf '\nConfigure the model used by the Agent before starting the service.\n' >/dev/tty
+  "$installed_configurator" \
+    --interactive --test-tools --no-restart </dev/tty >/dev/tty
+fi
+
 systemctl daemon-reload
+
+collect_install_failure_evidence() {
+  local output_file="$1"
+  {
+    printf 'stage=systemd-activation\n'
+    printf 'mcp_address=%s\n' "$listen_address"
+    printf 'dashboard_address=%s\n' "$dashboard_listen_address"
+    printf '\n[systemctl status]\n'
+    systemctl status infernex-agent.service --no-pager --full 2>&1 |
+      awk '{ print substr($0, 1, 1000) }' || true
+    printf '\n[recent journal]\n'
+    journalctl -u infernex-agent.service --no-pager -n 100 2>&1 |
+      awk '{ print substr($0, 1, 1000) }' || true
+    if command -v ss >/dev/null 2>&1; then
+      printf '\n[listening TCP sockets for configured ports]\n'
+      ss -H -ltnp "sport = :${listen_address##*:}" 2>&1 || true
+      ss -H -ltnp "sport = :${dashboard_listen_address##*:}" 2>&1 || true
+    fi
+  } >"$output_file"
+}
+
+offer_ai_install_diagnosis() {
+  local evidence_file
+  grep -q '^--openai-base-url=' "$agent_config" 2>/dev/null || return 0
+  evidence_file="$(mktemp /tmp/infernex-agent-install-evidence.XXXXXX)"
+  chmod 0600 "$evidence_file"
+  collect_install_failure_evidence "$evidence_file"
+  bundle_warn "service activation failed; requesting an advisory diagnosis from the configured model"
+  "$installed_binary" install-diagnose \
+    --config "$agent_config" --evidence "$evidence_file" ||
+    bundle_warn "the configured model could not diagnose this installation failure"
+  rm -f -- "$evidence_file"
+}
 
 if [[ "$start_service" == "true" ]]; then
   bundle_info "enabling and starting infernex-agent.service"
@@ -753,6 +882,7 @@ if [[ "$start_service" == "true" ]]; then
   systemctl reset-failed infernex-agent.service >/dev/null 2>&1 || true
   if ! systemctl "$service_action" infernex-agent.service; then
     journalctl -u infernex-agent.service --no-pager -n 100 >&2 || true
+    offer_ai_install_diagnosis
     bundle_die "failed to start infernex-agent.service"
   fi
   verify_args=(
@@ -763,8 +893,10 @@ if [[ "$start_service" == "true" ]]; then
   for scan_namespace in "${scan_namespaces[@]}"; do
     verify_args+=(--target-namespace "$scan_namespace")
   done
-  "${script_dir}/verify-host.sh" \
-    "${verify_args[@]}"
+  if ! "${script_dir}/verify-host.sh" "${verify_args[@]}"; then
+    offer_ai_install_diagnosis
+    bundle_die "infernex-agent.service did not become ready"
+  fi
 else
   bundle_info "files installed; run systemctl enable --now infernex-agent.service when ready"
 fi

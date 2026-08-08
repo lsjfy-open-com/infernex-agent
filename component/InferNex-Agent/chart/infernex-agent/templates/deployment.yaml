@@ -17,6 +17,12 @@
 {{- if and .Values.experiments.enabled (empty .Values.experiments.templateNamespace) }}
 {{- fail "experiments.enabled requires experiments.templateNamespace" }}
 {{- end }}
+{{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) (empty .Values.tools.deployment.workspaceNamespace) }}
+{{- fail "tools.deployment.enabled requires tools.deployment.workspaceNamespace" }}
+{{- end }}
+{{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) (empty .Values.tools.deployment.templateNamespace) }}
+{{- fail "tools.deployment.enabled requires tools.deployment.templateNamespace" }}
+{{- end }}
 {{- if and .Values.experiments.enabled (ne (int .Values.replicaCount) 1) }}
 {{- fail "experiments.enabled requires replicaCount=1 because experiment coordination is single-writer" }}
 {{- end }}
@@ -87,6 +93,9 @@ spec:
             {{- if not $scanNamespaces }}
             {{- $scanNamespaces = list .Release.Namespace }}
             {{- end }}
+            {{- if and .Values.tools.deployment.enabled (not .Values.tools.deployment.testCatalog) }}
+            {{- $scanNamespaces = uniq (append $scanNamespaces .Values.tools.deployment.workspaceNamespace) }}
+            {{- end }}
             - --scan-namespaces={{ join "," $scanNamespaces }}
             - --scan-interval={{ .Values.supervisor.scanInterval }}
             - --event-since-minutes={{ .Values.supervisor.eventSinceMinutes }}
@@ -116,6 +125,17 @@ spec:
             {{- end }}
             {{- if .Values.tools.deployment.enabled }}
             - --enable-deployment
+            {{- if .Values.tools.deployment.testCatalog }}
+            - --enable-test-catalog
+            {{- else }}
+            - --deployment-namespace={{ .Values.tools.deployment.workspaceNamespace }}
+            - --deployment-template-namespace={{ .Values.tools.deployment.templateNamespace }}
+            {{- $deploymentSourceNamespaces := .Values.rbac.targetNamespaces }}
+            {{- if not $deploymentSourceNamespaces }}
+            {{- $deploymentSourceNamespaces = list .Release.Namespace }}
+            {{- end }}
+            - --deployment-source-namespaces={{ join "," $deploymentSourceNamespaces }}
+            {{- end }}
             - --deployment-readiness-timeout={{ .Values.changeSafety.deploymentReadinessTimeout }}
             {{- end }}
             {{- if or .Values.tools.deployment.enabled .Values.supervisor.remediation.enabled .Values.experiments.enabled }}

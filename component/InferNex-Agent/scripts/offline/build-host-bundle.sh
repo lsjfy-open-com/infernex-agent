@@ -94,7 +94,7 @@ fi
 
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
-bundle_name="infernex-agent-host-offline-${version}-linux-${architecture}"
+bundle_name="infernex-agent-${version}-linux-${architecture}"
 archive_name="${bundle_name}.tar.gz"
 archive_output="${output_dir}/${archive_name}"
 archive_checksum="${archive_output}.sha256"
@@ -142,12 +142,17 @@ install -m 0755 \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
+install -m 0755 \
+  "${agent_dir}/scripts/host/quick-install.sh" \
+  "${bundle_root}/install.sh"
 install -m 0644 \
   "${agent_dir}/docs/host-install-openeuler-zh.md" \
   "${bundle_root}/README.md"
 install -m 0644 \
   "${agent_dir}/docs/product-guide-zh.md" \
   "${agent_dir}/docs/product-design-zh.md" \
+  "${agent_dir}/docs/toolsets-and-knowledge-zh.md" \
+  "${agent_dir}/docs/candidate-validation-zh.md" \
   "${agent_dir}/docs/install-and-modes-zh.md" \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \
@@ -159,7 +164,7 @@ install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 cat >"${bundle_root}/bundle.properties" <<EOF
-format=infernex-agent-host-offline-v1
+format=infernex-agent-linux-v1
 agent_version=${version}
 architecture=${architecture}
 binary=payload/infernex-agent
@@ -182,5 +187,5 @@ mv -f -- "$temporary_archive" "$archive_output"
   sha256sum "$archive_name"
 ) >"$archive_checksum"
 
-bundle_info "host bundle created: ${archive_output}"
+bundle_info "Agent package created: ${archive_output}"
 bundle_info "outer checksum: ${archive_checksum}"

@@ -1,222 +1,174 @@
-# InferNex Agent 产品使用说明
+# InferNex Agent 产品使用指南
 
-## 1. 产品定位
+[English README](../README.md) | 简体中文
 
-InferNex Agent 是 InferNex 推理集群的管理面 Agent。它面向平台运维、
-推理服务管理员和 SRE，持续收集 `InferNexService` 状态、受管工作负载、
-Pod 和 Kubernetes Event，将证据归一化为可查询工具、只读 Dashboard 和
-诊断快照。
+## 一句话定位
 
-Agent 不在推理请求数据路径中，不替代 InferNex Bridge、PD Orchestrator、
-Hermes、Eagle-Eye、NPU 驱动或模型服务。所有服务编排仍由现有 InferNex
-API 和控制器完成。
+InferNex Agent 是运行在 InferNex 管理节点、master 节点或引导节点上的本地 AI
+Agent。用户用自然语言提出目标，Agent 通过当前 `kubectl` 身份和 InferNex 已有 API
+完成环境探索、部署计划、证据采集、故障诊断、变更确认、持续观察和失败回退。
 
-当前产品版本提供两种部署形态：
+它不是另一个推理框架、Kubernetes Controller 或必须常驻集群的 Pod，也不替代
+InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、PD Orchestrator、Hermes、Eagle-Eye
+或 infernex-checker。
 
-| 形态 | 推荐场景 | 运行方式 | 集群身份 |
-| --- | --- | --- | --- |
-| 宿主机模式 | 固定 master、引导节点或管理机 | 非 root systemd 服务 | 专用 kubeconfig |
-| 集群内模式 | Kubernetes 原生运维 | Helm Deployment | 投射的 ServiceAccount Token |
+## 安装前提
 
-对于 openEuler A2 管理节点，推荐宿主机模式。A2 是加速设备/服务器产品，
-安装包由主机 CPU 架构决定：
+- 已经建好的 InferNex 集群；
+- 能在管理节点通过当前 `kubectl` context 访问目标业务集群；
+- Linux amd64 或 arm64、systemd、`curl`、`tar` 和 `sha256sum`；
+- 一个支持 function/tool calling 的 OpenAI 兼容模型接口。
 
-| `uname -m` | 使用产物 |
-| --- | --- |
-| `aarch64` | `infernex-agent-host-offline-*-linux-arm64.tar.gz` |
-| `x86_64` | `infernex-agent-host-offline-*-linux-amd64.tar.gz` |
+不需要 Go、Python、Docker、编译环境、新推理镜像或模型权重。
 
-## 2. 核心功能
+## 在线安装：一条命令
 
-| 功能 | 默认状态 | 说明 |
-| --- | --- | --- |
-| 多命名空间持续扫描 | 开启 | 只扫描显式允许的命名空间 |
-| 确定性问题分类 | 开启 | 不依赖大模型 |
-| MCP 只读工具 | 开启 | 查询服务、拓扑和事件 |
-| Web Dashboard / JSON 快照 | 开启 | 展示归一化运维证据 |
-| OpenAI 兼容模型分析 | 关闭 | 可选的诊断建议，不参与控制决策 |
-| XShell/SSH 自然语言终端 | 配置模型后可用 | 实时调用受限 MCP；本机逐项批准写操作 |
-| 固定目录部署工具 | 关闭 | 仅创建/删除受 Agent 所有权保护的 `InferNexService` |
-| 安装前备份和部署失败回退 | 写能力启用时强制 | 持久变更记录、超时/Degraded 自动撤销本次新建 |
-| 受控自动恢复 | 关闭 | 多重显式授权后创建新的恢复服务 |
-| 跨节点日志关联诊断 | 关闭 | 有界读取受管 Pod 当前/上一次日志，脱敏并建立故障时间线 |
-| 单特性渐进实验 | 关闭 | 基线加一个批准 profile，自动门禁并精确回退当前候选 |
-
-模型不是产品启动条件。未配置模型时，扫描、规则诊断、MCP、Dashboard 和
-JSON API 均正常工作。后台模型只在服务存在问题时接收受限证据并产生建议；
-自然语言终端要求模型额外支持 OpenAI function/tool calling。
-
-MCP 工具契约：
-
-| 工具 | 类型 | 功能 |
-| --- | --- | --- |
-| `infernex_list_services` | 只读 | 列出命名空间中的服务和 readiness 摘要 |
-| `infernex_inspect_service` | 只读 | 查看一个服务的权威状态和组件摘要 |
-| `infernex_get_topology` | 只读 | 查看受管工作负载、Pod 和副本状态 |
-| `infernex_get_events` | 只读 | 查看与服务及其受管对象相关的近期 Event |
-| `infernex_deploy_model` | 可选写 | 从编译内置目录创建受控 `InferNexService` |
-| `infernex_delete_model` | 可选写 | 删除带匹配 Agent 所有权的目录服务 |
-| `infernex_get_change` | 可选只读 | 查询部署提交、失败和自动回退状态 |
-| `infernex_diagnose_service` | 可选只读 | 关联 NPU、HCCL、Mooncake、engine、stream 和乱码证据 |
-| `infernex_start_experiment` | 可选写 | 从稳定基线启动按顺序、单特性候选计划 |
-| `infernex_get_experiment` | 可选只读 | 查询阶段、比较和回退状态 |
-| `infernex_list_experiments` | 可选只读 | 列出最近的持久实验计划 |
-
-自动恢复属于持续 supervisor 能力，不向 MCP 暴露通用恢复写工具。
-
-## 3. 上线前需要确定的参数
-
-安装前必须确定：
-
-1. 需要观察的命名空间列表；
-2. Kubernetes apiserver 可达地址和一次性管理员 kubeconfig；
-3. Dashboard 是否仅本机访问，或绑定哪一个管理网 IP；
-4. 是否启用部署工具或自动恢复；
-5. 是否现在接入诊断模型。
-
-第 5 项可以安装后再配置。建议先以无模型、只读模式完成集群身份和
-Dashboard 验收，再接入内网模型。
-
-## 4. openEuler aarch64 快速安装
-
-联网目标机可自动下载、校验并解压 `linux-arm64` 宿主机包：
+在管理节点执行：
 
 ```bash
-uname -m
-
-curl --fail --location --remote-name \
-  https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/download-bundle.sh
-chmod +x download-bundle.sh
-./download-bundle.sh --mode host
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 ```
 
-完全离线时，在联网机下载归档及对应 `.sha256`，一起传入内网后执行：
+脚本会自动识别 CPU 架构和可用 kubeconfig，探测当前是 Bridge CRD 形态还是
+openFuyao Helm/BKE 形态，安装静态二进制与 systemd 服务，然后只询问 Agent 自身使用的
+模型接口。默认复用当前 `kubectl` 身份，不创建 Agent Pod、Controller、CRD、
+ServiceAccount 或 RBAC。
+
+模型接口会在 systemd 首次启动前配置并完成 tool-calling 测试。若默认 Dashboard
+`127.0.0.1:8081` 已被非 Agent 进程占用，安装器不会结束或杀死该进程，而是自动选择
+`18081`、`28081` 等空闲端口并在完成信息中打印实际地址。若服务随后仍未 Ready，安装器
+会将经过裁剪的 systemd、journal 和端口证据交给已配置模型，输出不执行变更的诊断建议。
+
+只有检测到 Bridge CRD 时，安装器才会创建空的 `infernex-agent-workspace`
+Namespace，用于后续经批准的新实例。没有 Bridge 的 Helm/BKE 集群进入
+`generic-kubernetes` 基础兼容模式，安装阶段不修改任何 Kubernetes 资源。
+
+基础兼容模式已打通安装、systemd、模型配置、对话入口、健康检查和 Web 端口，并提供
+openFuyao 集群角色、Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、
+Service、Event 和受限日志的只读资产发现。Bridge 专属观察和部署工具都会关闭，不应
+通过安装 Bridge CRD 来伪装兼容。
+
+> 当前公开的 `0.3.0-rc.6` 仍是旧版候选包，不具备本页所述的新统一包名和默认流程。
+> 在新候选完成 A2 既有集群验收并发布前，请从 Draft PR 的 CI Artifact 验证，不能把
+> 上述在线命令当作已经可用的正式交付。
+
+## Release 到底下载哪个
+
+正式 Release 只提供一种产品包，区别仅是服务器 CPU 架构：
+
+| `uname -m` | 下载文件 |
+|---|---|
+| `x86_64` | `infernex-agent-<版本>-linux-amd64.tar.gz` |
+| `aarch64` | `infernex-agent-<版本>-linux-arm64.tar.gz` |
+
+同时下载同名 `.sha256`。不存在需要普通用户选择的“宿主机包”和“集群包”。管理节点
+是否同时是 Kubernetes master 不影响选择。
+
+## 离线安装
+
+把归档和校验文件传入内网管理节点：
 
 ```bash
-sha256sum --check \
-  infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz.sha256
-tar -xzf infernex-agent-host-offline-0.3.0-rc.6-linux-arm64.tar.gz
-cd infernex-agent-host-offline-0.3.0-rc.6-linux-arm64
+sha256sum --check infernex-agent-*-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-*-linux-*.tar.gz
+cd infernex-agent-*-linux-*
+sudo ./install.sh
 ```
 
-一次性使用管理员身份创建专用、命名空间级运行身份：
+离线包自带静态二进制和脚本，不会联网拉镜像。详细说明见
+[离线安装](offline-install-zh.md)。
+
+## 只需要配置一次的模型接口
+
+安装器会询问：
+
+- Base URL，例如 `http://10.20.0.30:8000/v1`；
+- 接口真实接受的 model ID；
+- API Key，无鉴权可留空。
+
+这里的 model ID 是 Agent 背后的对话/规划模型，不是要部署的推理实例名。也可先执行
+`sudo ./install.sh --skip-model-setup`，稍后运行 `sudo infernex-agent setup`。
+
+正常交互安装的顺序是：发现环境、建立安装恢复点、写入候选文件、配置并测试模型、启动
+systemd、检查 MCP 与 Dashboard。这样启动失败时模型已经可用于分析，而不是失败后才
+要求用户另行配置。
+
+## 自然语言使用
+
+在 XShell/SSH 中运行：
 
 ```bash
-sudo ./bin/create-kubeconfig.sh \
-  --admin-kubeconfig /etc/kubernetes/admin.conf \
-  --target-namespace model-a \
-  --target-namespace model-b \
-  --output /root/infernex-agent-host.kubeconfig
+sudo infernex-agent chat
 ```
 
-安装 systemd 服务。以下示例仅让 Dashboard 绑定管理网 IP，MCP 仍保持
-`127.0.0.1:8080`：
-
-```bash
-sudo ./bin/install-host.sh \
-  --kubeconfig /root/infernex-agent-host.kubeconfig \
-  --scan-namespace model-a \
-  --scan-namespace model-b \
-  --dashboard-listen-address 10.20.0.10:8081
-```
-
-如只允许本机访问，省略 `--dashboard-listen-address`。
-
-## 5. 模型配置时机
-
-三种方式均受支持：
-
-1. **不配置模型**：推荐作为首次安装和故障隔离基线；
-2. **安装时配置**：向 `install-host.sh` 同时传入模型端点和模型名；
-3. **安装后配置**：使用已安装的配置命令，可换模、轮换密钥、测试或禁用。
-
-安装后配置示例：
-
-```bash
-sudo /opt/infernex-agent/bin/configure-model.sh \
-  --base-url http://10.20.0.30:8000/v1 \
-  --model ops-diagnostic-model \
-  --api-key-file /root/infernex-openai.key \
-  --timeout 60s \
-  --test-tools \
-  --show
-```
-
-`--test-tools` 会发送一次很小的 `chat/completions` 请求并强制调用无副作用测试
-工具，可能产生少量 Token。完整说明见 [模型配置手册](model-configuration-zh.md)。
-
-## 6. 访问入口
-
-默认宿主机端口：
-
-| 入口 | 默认地址 | 用途 |
-| --- | --- | --- |
-| MCP | `http://127.0.0.1:8080/mcp` | 供本机 Agent Runtime / kubectl-ai 使用 |
-| MCP 健康检查 | `http://127.0.0.1:8080/readyz` | 服务探活 |
-| Dashboard | `http://127.0.0.1:8081/` | 运维展示 |
-| 快照 API | `http://127.0.0.1:8081/api/v1/snapshot` | 只读 JSON 证据 |
-
-XShell/SSH 登录管理节点后，不需要额外端口即可使用本机交互终端：
-
-```bash
-sudo /opt/infernex-agent/bin/chat.sh
-```
-
-只读工具自动运行；写工具显示名称和参数并要求精确输入 `yes`。这不是通用 Shell
-或 kubectl 入口，模型不能提交任意 YAML、镜像或命令。
-
-MCP 和 Dashboard 本身不是认证边界。跨主机开放时必须使用管理网 ACL、
-防火墙或带身份认证的反向代理。
-
-## 7. 日常操作
-
-```bash
-sudo systemctl status infernex-agent --no-pager
-sudo journalctl -u infernex-agent -f
-
-sudo /opt/infernex-agent/bin/configure-model.sh --show
-sudo /opt/infernex-agent/bin/chat.sh
-
-curl --fail http://127.0.0.1:8080/readyz
-curl --fail http://127.0.0.1:8081/readyz
-curl --fail http://127.0.0.1:8081/api/v1/snapshot
-curl --fail http://127.0.0.1:8081/api/v1/experiments
-```
-
-宿主机配置位置：
+示例：
 
 ```text
-/opt/infernex-agent/bin/       二进制、启动器和模型配置工具
-/etc/infernex-agent/agent.conf 非敏感有效参数，一行一个参数
-/etc/infernex-agent/kubeconfig 专用集群身份，0600
-/etc/infernex-agent/openai-api-key  可选模型密钥，0600
-/var/lib/infernex-agent/       服务工作目录
+扫描当前 InferNex 环境，关联实例、Pod、事件和近期异常日志，先不要修改。
+基于当前稳定的 Qwen PD 实例创建一个测试实例，拉起失败就回退。
+比较候选实例与稳定实例，重点检查 HCCL、Mooncake 和 vLLM worker 中断。
 ```
 
-## 8. 产品验收
+在已安装 Bridge 的集群中，Agent 会先探索当前环境，再选择已 Ready 的稳定服务或管理员
+已有的完整 Bridge profile 作为部署来源。用户无需填写 namespace、`sourceId`、镜像、
+容器命令或 YAML。只读工具自动执行；任何写操作都必须在本机展示摘要，并由用户输入
+精确的 `yes` 批准。
 
-上线前至少验证：
+在 Helm/BKE 模式中，`chat` 会先调用 `openfuyao_detect_environment` 判断当前
+kubeconfig 指向引导/管理控制面还是业务集群，再使用 `helm_list_releases`、
+`k8s_list_workloads`、`k8s_get_events` 和 `k8s_get_pod_logs` 探索现有实例。当前只读
+能力不等于已经支持 Helm 创建/升级：自动部署需在下一阶段补齐 values/manifest/history
+备份、`helm upgrade --install` 预览、审批、Ready/服务链验证和 `helm rollback`。
 
-1. systemd 单元为 `active`；
-2. MCP 和 Dashboard 的 `/readyz` 返回成功；
-3. 专用 kubeconfig 只能访问批准命名空间；
-4. Dashboard 只从批准管理网可达；
-5. 未启用写能力时不存在 mutation RBAC；
-6. 配置交互模型时 `configure-model.sh --test-tools` 成功；
-7. 断开模型端点后，规则扫描和 Dashboard 仍持续工作；
-8. 凭据文件权限、备份、轮换和卸载策略符合内部要求；
-9. 如启用实验，确认状态目录持久、模板已审批、集群有并行候选容量；
-10. 人为注入候选日志回归时，只删除当前候选且稳定基线仍为 Ready。
-11. 写工具未输入精确 `yes` 时不产生集群变更，`--ask` 模式始终拒绝写操作。
+## Web 展示
 
-## 9. 文档地图
+Dashboard 默认监听 `127.0.0.1:8081`。通过 SSH 隧道访问：
 
-- [产品设计](product-design-zh.md)
-- [渐进式特性实验与跨节点故障关联](progressive-experiments-zh.md)
-- [变更保护、备份与回退](change-safety-zh.md)
-- [模型配置](model-configuration-zh.md)
-- [安全与能力边界](security-boundaries-zh.md)
-- [运维手册](operations-runbook-zh.md)
-- [openEuler 宿主机安装](host-install-openeuler-zh.md)
-- [集群内/离线安装](offline-install-zh.md)
-- [英文架构说明](architecture.md)
+```bash
+ssh -L 8081:127.0.0.1:8081 <管理节点>
+```
+
+浏览器打开 `http://127.0.0.1:8081/`。如需绑定管理网地址，重新安装时传入
+`--dashboard-listen-address <IP>:8081`，并自行配置防火墙、ACL 或认证代理。
+
+## 自动发现、工具集与知识库
+
+V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具集”结构：
+
+- 自动识别当前 kubeconfig 可见的 BKE/Cluster API、openFuyao 平台、推理业务集群、
+  InferNex 主 Chart 和可选 Bridge/KServe 能力；
+- Bridge 模式发现 InferNexService、profiles、工作负载、Pod、事件和拓扑；
+- Helm/BKE 模式从 release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service、
+  Event 和组件标签建立只读资产图；
+- 通过 typed tools 调用 Kubernetes/InferNex API，不给模型任意 shell 或任意 YAML；
+- 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
+- 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。
+
+参见[工具集与知识库设计](toolsets-and-knowledge-zh.md)。
+
+## 回退和边界
+
+- 安装覆盖前保存 Agent 管理范围内的集群源资源和本机文件恢复点；
+- 每次部署先写持久变更记录和 `changeId`；
+- 新实例未按时 Ready 或当前代报告 Degraded 时，只撤销本次 Agent 所有的新资源；
+- Agent 不覆盖既有服务，不直接创建 Deployment/Pod/Service，不读取 Secret；
+- 模型接口不可用时，对话暂停，但确定性扫描、Dashboard、变更记录和回退仍可工作。
+
+更完整的保证见[变更保护与回退](change-safety-zh.md)和
+[安全与能力边界](security-boundaries-zh.md)。
+
+## 高级选项
+
+Bridge 模式下，若默认身份不适合长期服务账户策略，可让同一个安装脚本创建专用的、
+namespace-scoped 身份：
+
+```bash
+sudo ./install.sh --hardened-identity
+```
+
+当前 Helm/BKE 基础兼容模式还没有对应的最小权限规则集，因此暂不接受这个选项；请使用
+当前 kubeconfig 完成首轮安装验证，后续资产适配器会同时给出所需 RBAC 清单。
+
+Helm/Pod 形态仅保留给必须由 Kubernetes 管理 Agent 生命周期的高级场景，不是 V1
+默认交付，也不出现在普通 Release 下载列表。高级维护说明见
+[安装模式与高级选项](install-and-modes-zh.md)。

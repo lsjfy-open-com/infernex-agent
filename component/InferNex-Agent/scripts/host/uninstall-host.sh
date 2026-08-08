@@ -57,6 +57,7 @@ done
 
 [[ ${EUID} -eq 0 ]] || bundle_die "uninstall-host.sh must run as root"
 bundle_require_command systemctl
+bundle_require_command grep
 if [[ "$purge_user" == "true" && "$purge_state" != "true" ]]; then
   bundle_die "--purge-user requires --purge-state so retained files do not have an orphaned owner"
 fi
@@ -64,6 +65,11 @@ fi
 systemctl disable --now infernex-agent.service >/dev/null 2>&1 || true
 rm -f -- /etc/systemd/system/infernex-agent.service
 systemctl daemon-reload
+if [[ -f /usr/local/bin/infernex-agent ]] &&
+  grep -q '^# Managed by InferNex Agent host installer\.$' \
+    /usr/local/bin/infernex-agent; then
+  rm -f -- /usr/local/bin/infernex-agent
+fi
 
 safe_remove_tree() {
   local expected="$1"

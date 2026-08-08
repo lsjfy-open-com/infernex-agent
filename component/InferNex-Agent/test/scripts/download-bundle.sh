@@ -12,7 +12,7 @@ cleanup() {
 trap cleanup EXIT
 
 version="0.3.0-rc.6"
-bundle_name="infernex-agent-host-offline-${version}-linux-amd64"
+bundle_name="infernex-agent-${version}-linux-amd64"
 archive_name="${bundle_name}.tar.gz"
 mkdir -p \
   "${work_dir}/fixtures/${bundle_name}" \
@@ -51,7 +51,6 @@ chmod 0755 "${work_dir}/bin/curl"
 
 PATH="${work_dir}/bin:${PATH}" FIXTURE_DIR="${work_dir}/fixtures" \
   bash "${agent_dir}/scripts/download-bundle.sh" \
-  --mode host \
   --version "$version" \
   --architecture amd64 \
   --output-dir "${work_dir}/download"
@@ -61,9 +60,8 @@ grep -q '^verified fixture$' \
   "${work_dir}/download/${bundle_name}/marker"
 
 if bash "${agent_dir}/scripts/download-bundle.sh" \
-  --mode invalid --version "$version" \
   --output-dir "${work_dir}/download" >/dev/null 2>&1; then
-  printf 'invalid mode unexpectedly succeeded\n' >&2
+  printf 'missing version unexpectedly succeeded\n' >&2
   exit 1
 fi
 

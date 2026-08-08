@@ -23,8 +23,10 @@ Options:
   --confirm          Required destructive-action acknowledgement
   -h, --help         Show this help
 
-The command verifies checksums, restores Agent-managed cluster source resources,
-then restores the exact Agent host files and systemd active/enabled state.
+The command verifies checksums, restores Agent-managed cluster source resources
+when the recovery point contains them, then restores the exact Agent host files
+and systemd active/enabled state. Generic Kubernetes installations do not
+change cluster resources, so their recovery points restore host state only.
 EOF
 }
 
@@ -66,6 +68,7 @@ bundle_require_command sha256sum
 bundle_require_command awk
 bundle_require_command cp
 bundle_require_command readlink
+bundle_require_command grep
 
 [[ -n "$backup_dir" && -d "$backup_dir" && ! -L "$backup_dir" ]] ||
   bundle_die "--backup-dir must name a recovery-point directory"
@@ -107,6 +110,7 @@ host_targets=(
   /opt/infernex-agent/bin/bundle-lib.sh
   /etc/systemd/system/infernex-agent.service
   /opt/infernex-agent/bin/chat.sh
+  /usr/local/bin/infernex-agent
 )
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"
@@ -132,11 +136,15 @@ for target_index in "${!host_targets[@]}"; do
   fi
 done
 
-bundle_info "restoring Agent-managed cluster source resources"
-/opt/infernex-agent/bin/infernex-agent cluster-state restore \
-  --kubeconfig "$kubeconfig" \
-  --input "${backup_dir}/cluster-state.json" \
-  --confirm
+if grep -q '"kind": "InstallationBaseline"' "${backup_dir}/cluster-state.json"; then
+  bundle_info "compatibility-mode baseline changed no cluster resources; skipping cluster restore"
+else
+  bundle_info "restoring Agent-managed cluster source resources"
+  /opt/infernex-agent/bin/infernex-agent cluster-state restore \
+    --kubeconfig "$kubeconfig" \
+    --input "${backup_dir}/cluster-state.json" \
+    --confirm
+fi
 
 service_was_active="$(
   awk -F= '$1 == "active" {print $2}' "${backup_dir}/host/service-state"

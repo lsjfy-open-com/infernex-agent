@@ -1,5 +1,15 @@
 # InferNex Agent 模型配置手册
 
+普通宿主机用户只需执行：
+
+```bash
+sudo infernex-agent setup
+```
+
+按提示填写 OpenAI 兼容接口的真实 Base URL、真实 model ID 和可选 API Key。不要把
+文档中的示例域名或模型名原样复制。`setup` 会测试 Chat Completions 和 tool calling，
+失败时恢复原配置。后文命令用于非交互自动化、密钥轮换和高级维护。
+
 ## 1. 模型是否必需
 
 不必需。InferNex Agent 的确定性采集、问题分类、MCP 工具、Dashboard 和
@@ -51,7 +61,7 @@ sudo ./bin/install-host.sh \
   --openai-base-url http://10.20.0.30:8000/v1 \
   --openai-model ops-diagnostic-model \
   --openai-api-key-file /root/infernex-openai.key \
-  --openai-timeout 60s
+  --openai-timeout 3m
 ```
 
 如果端点不要求认证，省略 `--openai-api-key-file`。
@@ -83,7 +93,7 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
   --base-url http://10.20.0.30:8000/v1 \
   --model ops-diagnostic-model \
   --api-key-file /root/infernex-openai.key \
-  --timeout 60s \
+  --timeout 3m \
   --test-tools \
   --show
 ```
@@ -92,6 +102,11 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 结构。`--test-tools` 会进一步强制调用无副作用的 `infernex_test_tool`，验证交互终端
 依赖的 OpenAI tool-calling 响应结构。两种操作都会产生少量 Token；计划使用自然
 语言终端时应使用 `--test-tools`。
+
+`--timeout` 是每次请求尝试的超时，默认 `3m`。安装探测使用 15 秒建连超时；连接拒绝、
+HTTP 408、429、500、502、503、504 等瞬态故障最多重试 3 次，并按 2、4、8 秒退避。
+401、403、404 等鉴权或配置错误不会重试。后台诊断、自然语言终端和安装失败 AI 分析
+同样采用最多 3 次的瞬态重试；总等待时间可能大于单次 `--timeout`。
 
 ### 换模型或端点
 
@@ -192,7 +207,7 @@ helm upgrade --install infernex-agent \
   --set-string supervisor.analysis.openAI.baseURL=http://ops-model.ai-system.svc:8000/v1 \
   --set-string supervisor.analysis.openAI.model=ops-diagnostic-model \
   --set-string supervisor.analysis.openAI.existingSecret=infernex-agent-openai \
-  --set-string supervisor.analysis.openAI.timeout=60s
+  --set-string supervisor.analysis.openAI.timeout=3m
 ```
 
 Chart 不创建 API Key，只引用运维人员管理的 Secret。
@@ -221,11 +236,11 @@ Chart 不创建 API Key，只引用运维人员管理的 Secret。
 
 | 故障 | 产品行为 |
 | --- | --- |
-| 模型网络不可达 | 本次分析记录错误，扫描继续 |
+| 模型网络不可达 | 对瞬态连接错误最多重试 3 次；仍失败则记录错误，扫描继续 |
 | 401/403 | 本次分析记录鉴权错误，扫描继续 |
 | 模型名不存在 | 本次分析记录服务端错误，扫描继续 |
 | 响应过大/格式错误 | 拒绝该响应，扫描继续 |
-| 请求超时 | 取消请求，扫描继续 |
+| 请求超时 | 按策略重试；全部失败后取消本次分析，扫描继续 |
 | 模型未配置 | 完全不发起模型请求 |
 | 模型不支持 tool calling | 后台建议仍可用；自然语言终端无法调用实时 MCP 工具 |
 

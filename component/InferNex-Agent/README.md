@@ -2,55 +2,95 @@
 
 [English](README.md) | [简体中文](README-zh.md)
 
-InferNex Agent is the domain tool boundary between an agent runtime and the
-InferNex control plane. It reuses the existing `InferNexService` API and
-Bridge-generated status instead of reimplementing serving lifecycle or
-readiness logic.
+InferNex Agent is an agentic operations runtime for an existing openFuyao
+Kubernetes and AI inference environment. A user describes an outcome in
+natural language; the Agent discovers whether the active kubeconfig points at
+a bootstrap/management control plane or a business cluster, plans with bounded
+domain tools, diagnoses native Kubernetes/Helm or optional Bridge workloads,
+and reports evidence. It does not ask normal users to assemble raw YAML,
+images, or shell commands.
 
-Published `linux-amd64` and `linux-arm64` bundles for both in-cluster and
-host/systemd installation are available on the
-[0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6).
-The repository's `scripts/download-bundle.sh` downloads the matching archive
-and checksum, verifies it, and extracts it without changing the cluster.
-
-Host installations also provide an interactive terminal:
+The intended management-node installation is one command:
 
 ```bash
-sudo /opt/infernex-agent/bin/configure-model.sh \
-  --base-url http://model.internal:8000/v1 \
-  --model ops-model --api-key-file /secure/model.key --test-tools
-sudo /opt/infernex-agent/bin/chat.sh
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+```
+
+The installer discovers the current kubeconfig, CPU architecture, and whether
+the cluster uses InferNex Bridge CRDs or the openFuyao Helm/BKE deployment
+shape. It installs one
+static binary/systemd service, then prompts only for the OpenAI-compatible
+model interface. By default it creates no Agent Pod, controller, CRD,
+ServiceAccount, or RBAC. A Bridge cluster receives an empty Agent workspace
+Namespace for future approved model deployments. A cluster without Bridge
+enters a no-mutation base Kubernetes/Helm compatibility mode instead of
+failing installation. That mode can inspect Helm release metadata,
+Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, Services,
+Events, and bounded redacted logs; Bridge is not a prerequisite. See the
+[Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
+Dashboard, safety, and current candidate-validation instructions.
+
+The older
+[0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)
+contains the legacy/manual installer, but not the unified package name or
+zero-parameter entry
+point described above. Validate this branch's CI Agent package on an existing
+cluster before publishing or merging the next release; the online one-liner
+must not be advertised as usable until that bundle is published.
+
+The management-node installation provides one Agentic terminal:
+
+```bash
+sudo infernex-agent setup
+sudo infernex-agent chat
 ```
 
 The model must support OpenAI-compatible function/tool calling. Read-only MCP
 tools run automatically; every mutating tool requires an exact local `yes`.
 One-shot `--ask` mode always denies writes.
 
-The default installation publishes four typed, read-only tools:
+The default installation publishes six typed, read-only tools on any
+authorized Kubernetes/openFuyao cluster:
 
+- `openfuyao_detect_environment`
+- `k8s_cluster_overview`
+- `k8s_list_workloads`
+- `k8s_get_events`
+- `k8s_get_pod_logs`
+- `helm_list_releases`
+
+Only when discovery confirms InferNex Bridge does the Agent publish five more
+Bridge-specific tools:
+
+- `infernex_list_all_services`
 - `infernex_list_services`
 - `infernex_inspect_service`
 - `infernex_get_topology`
 - `infernex_get_events`
 
-When catalog deployment is explicitly enabled, it also publishes:
+When conversational deployment is enabled, it also publishes:
 
+- `infernex_list_deployment_sources` (read-only)
 - `infernex_deploy_model`
 - `infernex_delete_model`
 - `infernex_get_change` (read-only change/rollback status)
 
-The output is deliberately normalized. It includes InferNex status, managed
-Deployment/DaemonSet/LeaderWorkerSet readiness, and compact Pod evidence. It
-also correlates recent Kubernetes Events only to the selected service and its
-managed objects. It does not return Secret objects, environment variables,
-full Pod specs, or a generic Kubernetes command surface.
+The output is deliberately normalized and bounded. Helm inventory reads only
+Kubernetes metadata for storage objects and never returns Secret payloads,
+stored values, or manifests. Kubernetes logs require explicit Pod targets,
+cap containers/time/lines/bytes, and redact common credentials. The Agent does
+not return environment variables, full Pod specs, or a generic Kubernetes
+command surface.
 
 The deployment tools are deliberately narrower than Kubernetes write access.
-They accept only `namespace`, `name`, the fixed `catalogId`, and
-`confirm: true`. They do not accept an image, model URL, command, patch, or
+The Agent first discovers existing Ready services and administrator-created
+`InferNexServiceConfig` engine profiles. It then deploys only from the returned
+opaque source ID into its fixed workspace. The user does not provide a
+namespace. The tools do not accept an image, model URL, command, patch, or
 arbitrary object. The Agent creates only an `InferNexService`; InferNex Bridge
 continues to own workload and Service reconciliation, readiness, and garbage
-collection.
+collection. The built-in CPU catalog remains only as a Kind compatibility
+fixture and is not exposed by the conversational product API.
 
 ## Change safety and rollback
 
@@ -66,13 +106,17 @@ Use `infernex_get_change` to distinguish `committed`, `rolled-back`,
 `rollback-failed`, and `apply-failed`. Pending changes resume after an Agent
 restart.
 
-The host installer also creates a checksummed pre-install recovery point under
+The management-node installer also creates a checksummed pre-install recovery point under
 `/var/lib/infernex-agent/backups/` before replacing any Agent files. If
 installation or verification fails, it restores the previous host files,
 systemd state, and Agent-managed cluster source resources automatically.
 
 See [change safety, backup, and rollback](docs/change-safety-zh.md) for the
 restore CLI, persistence requirements, guarantees, and boundaries.
+
+The [openFuyao v26.06 alignment baseline](docs/openfuyao-alignment-zh.md)
+records the official deployment sources, authority boundaries, implemented
+adapters, and deliberately unfinished integrations used by this design.
 
 ## Continuous supervisor and dashboard
 
@@ -95,9 +139,9 @@ endpoint. The API key is accepted only through
 input excludes Secret objects, environment variables, Kubernetes credentials,
 node names, and Event notes.
 
-The supervisor is advisory and read-only by default. Enabling the existing
-deployment catalog does not let model output bypass its fixed catalog,
-ownership checks, namespace RBAC, or explicit confirmation contract.
+The supervisor is advisory and read-only by default. Enabling deployment does
+not let model output bypass stable-source validation, ownership checks, the
+isolated Agent workspace, namespace RBAC, or explicit confirmation.
 
 When bounded log diagnostics are explicitly enabled, degraded services also
 receive redacted current/previous container-log evidence and a cross-node
@@ -175,7 +219,7 @@ The new service and recovery state appear in the dashboard. Traffic promotion
 should remain an operator or future approved-plan action after health and SLO
 verification.
 
-## CPU test-model catalog
+## CPU test-model catalog (Kind CI only)
 
 The first entry is `smollm2-135m-q4`:
 
@@ -231,10 +275,12 @@ Stdio is available for local MCP clients:
 go run ./cmd/infernex-agent --transport=stdio
 ```
 
-## kubectl-ai integration
+## Optional kubectl-ai integration
 
-InferNex does not vendor kubectl-ai. Configure an installed kubectl-ai runtime
-as the MCP client in `~/.config/kubectl-ai/mcp.yaml`:
+The standalone `infernex-agent chat` command is the normal product entry and
+does not require kubectl-ai. To reuse the same domain tools from an installed
+kubectl-ai runtime, configure it as the MCP client in
+`~/.config/kubectl-ai/mcp.yaml`:
 
 ```yaml
 servers:
@@ -449,7 +495,8 @@ rbac:
 
 Cluster-wide reads are opt-in through `rbac.clusterWide: true`.
 
-To enable the fixed catalog only in selected namespaces:
+To let the Agent discover stable deployment sources from selected namespaces
+and create new services only in its isolated workspace:
 
 ```yaml
 rbac:
@@ -460,6 +507,8 @@ rbac:
 tools:
   deployment:
     enabled: true
+    workspaceNamespace: infernex-agent-workspace
+    templateNamespace: infernex-bridge-system
 
 changeSafety:
   persistence:
@@ -475,25 +524,45 @@ helm upgrade --install infernex-agent ./chart/infernex-agent \
   --set tools.deployment.enabled=true
 ```
 
-Cluster-wide RBAC and catalog deployment cannot be enabled together. The
-resulting Role adds only `create/delete` for `InferNexService`; it still cannot
-create Deployments, read Secrets, create namespaces, or create cluster RBAC.
+Cluster-wide RBAC and Agent deployment cannot be enabled together. The
+resulting source namespace Roles remain read-only. A separate Role adds only
+`create/delete` for `InferNexService` in `infernex-agent-workspace`; it still
+cannot create Deployments, read Secrets, or create cluster RBAC.
 
 Example MCP arguments:
 
 ```json
 {
-  "namespace": "models",
   "name": "kind-smollm",
-  "catalogId": "smollm2-135m-q4",
+  "sourceId": "service:models:stable-smollm",
   "confirm": true
 }
 ```
 
 Use the returned `changeId` with `infernex_get_change` until its status is
-`committed` or `rolled-back`. Use the same deployment arguments with
-`infernex_delete_model`; deletion is refused unless the existing service
-carries the Agent catalog ownership labels.
+`committed` or `rolled-back`. Normally the conversational Agent selects a
+source returned by `infernex_list_deployment_sources`; users do not need to
+construct these arguments. Deletion is refused unless the existing service
+carries the Agent ownership metadata.
+
+The built-in tiny CPU model catalog exists only for Kind CI and must be
+explicitly enabled with `tools.deployment.testCatalog=true`. It is not a
+production deployment source.
+
+## Tested standalone candidates
+
+Successful CI runs publish static `linux-amd64` and `linux-arm64` candidate
+binaries with SHA256 files. They are intended for validation on an existing
+management host before a formal release is assembled; the target server needs
+no Go, Python, Node.js, compiler, or source checkout.
+
+The binary provides `version`, `serve --config`, `doctor`, `chat`, and guarded
+`candidate verify|apply|rollback` commands. Candidate activation preserves the
+installed configuration, backs up the current binary, restarts systemd, waits
+for the health endpoint, and automatically restores the previous binary if the
+new process does not become healthy. See the
+[Chinese candidate validation guide](docs/candidate-validation-zh.md) for the
+operator workflow and acceptance gates.
 
 See [docs/architecture.md](docs/architecture.md) for component boundaries and
 the broader mutation roadmap.
