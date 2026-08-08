@@ -27,6 +27,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
@@ -37,6 +38,36 @@ type stubDeployer struct{}
 type stubDiagnoser struct{}
 
 type stubExperiments struct{}
+
+type stubKubernetes struct{}
+
+func (stubKubernetes) DetectEnvironment(context.Context) (kubeops.Environment, error) {
+	return kubeops.Environment{
+		Platform: "openfuyao", ClusterRoles: []string{"inference-business-cluster"},
+		Namespaces: []string{}, Capabilities: map[string]bool{}, Evidence: []string{},
+		Recommendations: []string{}, Warnings: []string{},
+	}, nil
+}
+
+func (stubKubernetes) ClusterOverview(context.Context) (kubeops.ClusterOverview, error) {
+	return kubeops.ClusterOverview{KubernetesVersion: "v1.33.1"}, nil
+}
+
+func (stubKubernetes) ListWorkloads(_ context.Context, request kubeops.WorkloadRequest) (kubeops.WorkloadInventory, error) {
+	return kubeops.WorkloadInventory{Namespace: request.Namespace, Workloads: []kubeops.WorkloadSummary{}, Pods: []kubeops.PodSummary{}, Services: []kubeops.ServiceSummary{}}, nil
+}
+
+func (stubKubernetes) GetEvents(_ context.Context, request kubeops.EventRequest) (kubeops.EventList, error) {
+	return kubeops.EventList{Namespace: request.Namespace, SinceMinutes: 60, Events: []kubeops.EventSummary{}}, nil
+}
+
+func (stubKubernetes) GetPodLogs(_ context.Context, request kubeops.PodLogRequest) (kubeops.PodLogResult, error) {
+	return kubeops.PodLogResult{Namespace: request.Namespace, Pod: request.Pod, Streams: []kubeops.LogStream{}}, nil
+}
+
+func (stubKubernetes) ListHelmReleases(_ context.Context, request kubeops.HelmReleaseRequest) (kubeops.HelmReleaseList, error) {
+	return kubeops.HelmReleaseList{Namespace: request.Namespace, Releases: []kubeops.HelmReleaseSummary{}}, nil
+}
 
 func (stubDeployer) ListSources(context.Context) (deployer.SourceList, error) {
 	return deployer.SourceList{
@@ -244,6 +275,70 @@ func TestServerPublishesOnlyReadOnlyDomainTools(t *testing.T) {
 		eventEvidence.SinceMinutes != 60 ||
 		eventEvidence.Events == nil {
 		t.Fatalf("structured event result = %#v", eventEvidence)
+	}
+}
+
+func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	server := New(stubObserver{}, "test", WithKubernetes(stubKubernetes{}), WithInferNexBridge(false))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(list.Tools) != 6 {
+		t.Fatalf("tool count = %d, want 6", len(list.Tools))
+	}
+	want := map[string]bool{
+		"openfuyao_detect_environment": false,
+		"k8s_cluster_overview":         false,
+		"k8s_list_workloads":           false,
+		"k8s_get_events":               false,
+		"k8s_get_pod_logs":             false,
+		"helm_list_releases":           false,
+	}
+	for _, tool := range list.Tools {
+		if _, ok := want[tool.Name]; !ok {
+			t.Fatalf("unexpected tool in Bridge-less mode: %q", tool.Name)
+		}
+		want[tool.Name] = true
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint {
+			t.Fatalf("general tool %q is not safely annotated: %#v", tool.Name, tool.Annotations)
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Fatalf("general tool %q missing", name)
+		}
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "openfuyao_detect_environment", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("detect environment call failed: err=%v result=%#v", err, result)
+	}
+	payload, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal environment: %v", err)
+	}
+	var environment kubeops.Environment
+	if err := json.Unmarshal(payload, &environment); err != nil {
+		t.Fatalf("unmarshal environment: %v", err)
+	}
+	if environment.Platform != "openfuyao" {
+		t.Fatalf("environment = %#v", environment)
 	}
 }
 

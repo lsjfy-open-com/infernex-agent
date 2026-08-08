@@ -179,7 +179,7 @@ The following covers the model support scope under **default chart/values.yaml**
 
 - **InferNex-Checker**: InferNex pre-deployment validation tool, checking hardware, K8s clusters, and configuration environments before install to identify deployment risks in advance.
 - **InferNex-Bridge**: Adaptation layer for integrating InferNex with KServe, supporting dual CRD declarative deployment of InferNex via `LLMInferenceService` / `InferNexService`. See [Component README](component/InferNex-Bridge/README.md).
-- **InferNex Agent**: Read-only, typed InferNex domain tools for MCP-compatible agent runtimes. It reuses `InferNexService` and Bridge status instead of exposing a second generic Kubernetes control surface. See [Component README](component/InferNex-Agent/README.md).
+- **InferNex Agent**: A management-node Agentic operations runtime. It first explores openFuyao/BKE, Kubernetes, Helm, and the InferNex main Chart through bounded read-only tools, then reuses optional `InferNexService`/Bridge status and guarded workflows when that entry point is actually installed. It does not expose arbitrary shell, YAML, or patch access. See [Component README](component/InferNex-Agent/README.md).
 
 ## Roadmap
  - [26-06] Hermes-router intelligent routing supports perception and scheduling based on instance resource saturation, and secondary scheduling among instances under PD disaggregated architecture.

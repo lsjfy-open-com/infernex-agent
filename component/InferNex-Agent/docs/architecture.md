@@ -19,13 +19,13 @@ InferNex Agent conversation orchestrator
    +-- local approval gate for write tools
    +-- typed domain tools, policy, ownership and rollback boundary
    |
-   | Kubernetes API, current kubeconfig (optional scoped identity)
+   | current kubeconfig (one API server per context)
    v
-InferNexService desired state + status
-   |
-   +-- InferNex-Bridge -> Deployment / Service / LeaderWorkerSet
-   +-- Hermes / Cache Indexer / Mooncake
-   +-- PD Orchestrator / Eagle-Eye
+openFuyao / Kubernetes / Helm environment
+   +-- BKECluster / BKENode / bkeagent / Cluster API (cluster lifecycle)
+   +-- Helm release -> Deployment / StatefulSet / DaemonSet / LWS / Service
+   +-- InferNex main Chart -> Hermes / vLLM / Mooncake / PD Orchestrator / Eagle-Eye
+   +-- optional Bridge/KServe -> InferNexService / LLMInferenceService
 ```
 
 The unattended path reuses the same observer boundary:
@@ -52,8 +52,10 @@ Immutable in-memory snapshot
 | Capability | Owner | Agent behavior |
 | --- | --- | --- |
 | Conversation, model provider, terminal session | Agent `chat` runtime | Run the Agentic loop in the standalone binary; optionally expose the same tools to external MCP clients |
-| Desired serving topology | `InferNexService` | Read canonical CRD fields; clone only discovered stable sources into an isolated workspace |
-| Lifecycle and readiness | InferNex-Bridge | Reuse `.status`; do not recompute control-plane readiness |
+| Cluster lifecycle | openFuyao BKE/Cluster API | Discover BKE capabilities and phase evidence; do not replace bkeagent/controllers |
+| Main-Chart application lifecycle | Helm + Kubernetes | Discover release metadata and native runtime resources; future writes use Helm history/rollback |
+| Optional Bridge serving topology | `InferNexService` | When Bridge exists, read canonical CRD fields and clone only discovered stable sources into an isolated workspace |
+| Optional Bridge lifecycle and readiness | InferNex-Bridge | Reuse `.status`; do not recompute control-plane readiness |
 | Actual group topology | LeaderWorkerSet / Kubernetes | Return a compact evidence view |
 | Routing and cache state | Hermes / Cache Indexer | Add domain adapters when their stable APIs are available |
 | Hardware and network diagnosis | Eagle-Eye / infernex-checker | Invoke or translate existing reports; do not duplicate checks |
@@ -83,7 +85,8 @@ openEuler management host
     - optional internal OpenAI-compatible endpoint
                |
                v
-        Kubernetes apiserver -> InferNexService / Bridge status
+        Kubernetes apiserver -> openFuyao / Helm / native workloads
+                             -> optional InferNexService / Bridge status
 ```
 
 This mode uses the same conversation loop, observer, source-aware deployer,
@@ -100,16 +103,46 @@ asset.
 
 The installed platform adapter is discovered independently from the Agent
 lifecycle. Presence of both InferNex Bridge CRDs enables the Bridge observer
-and guarded write tools. Their absence selects a no-mutation generic
-Kubernetes/Helm base mode; it is not treated as evidence that InferNex or its
-inference workloads are absent. Helm release, LeaderWorkerSet/Deployment,
-component-log, and BKE adapters are layered onto this mode incrementally.
+and guarded Bridge write tools. Their absence selects a no-mutation
+Kubernetes/Helm mode; it is not treated as evidence that InferNex or its
+inference workloads are absent. The base adapter already detects openFuyao
+control/business roles and reads Helm metadata, Deployments, StatefulSets,
+DaemonSets, LeaderWorkerSets, Pods, Services, Events, and bounded logs. BKE
+phase details and Helm mutation plans remain separate follow-up adapters.
 
 ## Observation tool contract
 
 Observation tools are marked read-only, idempotent, and closed-world in MCP
 metadata. The environment discovery entry point requires no namespace; more
 specific tools accept only discovered object scopes.
+
+### `openfuyao_detect_environment`
+
+Reports the Kubernetes version, visible openFuyao namespaces, and API
+capabilities for BKE, LWS, Gateway API, InferNex Bridge, KServe, scaling, and
+ServiceMonitor. It classifies the current API server as a possible bootstrap /
+management control plane, openFuyao platform, inference business cluster, or
+plain Kubernetes cluster. It explicitly does not claim to inspect other
+kubeconfigs on the same host.
+
+### `k8s_cluster_overview` and `k8s_list_workloads`
+
+Return node readiness and accelerator capacity plus bounded native workload,
+Pod, and Service inventories. Labels are allowlisted and full specs,
+environment variables, and Secret references are not returned.
+
+### `helm_list_releases`
+
+Lists current Helm release name, namespace, revision, and status by using the
+Kubernetes metadata endpoint for Helm storage objects. The Agent never reads or
+returns the Secret payload, stored values, or manifest through this tool.
+
+### `k8s_get_events` and `k8s_get_pod_logs`
+
+Query any authorized namespace without requiring InferNex owner labels. Event
+lookback and record count are bounded. Logs require an explicit Pod, optionally
+an explicit container, cap time/lines/bytes/containers, normalize invalid
+UTF-8, and redact common bearer tokens, keys, passwords, and credential URLs.
 
 ### `infernex_list_services`
 
@@ -199,8 +232,10 @@ permission level:
 1. The domain container uses a short-lived projected ServiceAccount token
    through in-cluster configuration; pod-wide token automount is disabled.
 2. The default chart creates Roles only in explicit target namespaces.
-3. RBAC grants only `get/list` on `InferNexService` and `list` on the workload
-   objects and Events required by the topology and evidence tools.
+3. RBAC grants only observation verbs in configured namespaces: `get/list` on
+   Pods and Services, `list` on workload objects, Events, and metadata-only
+   Helm storage, plus `get` on bounded Pod logs. Cluster-wide read mode also
+   lists Nodes and Namespaces. The code has no Secret payload read operation.
 4. The Service is `ClusterIP`.
 5. The default NetworkPolicy permits MCP ingress only from the Agent release
    namespace.

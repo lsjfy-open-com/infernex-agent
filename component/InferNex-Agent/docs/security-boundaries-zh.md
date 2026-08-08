@@ -16,23 +16,32 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 
 默认安装复用运维人员当前 kubeconfig，因此 Kubernetes 层的有效权限与该身份一致；
 安装器不额外创建 ServiceAccount 或 RBAC。Agent 对模型暴露的能力仍由 typed tools
-收窄，只读取 InferNexService、关联的 Deployment/DaemonSet/LeaderWorkerSet、Pod、
-Event，以及明确启用时的有界 Pod 日志。
+收窄，只读取 openFuyao/Kubernetes API 能力、Helm Release metadata、
+Deployment/StatefulSet/DaemonSet/LeaderWorkerSet、Pod、Service、Event 和有界 Pod
+日志；检测到 Bridge 后再增加 InferNexService 专属观察能力。
+
+Helm 3 默认把 Release 存在 Secret 中，因此 `helm_list_releases` 的运行身份需要在目标
+命名空间拥有 `list secrets`（ConfigMap 存储后端则需要 `list configmaps`）。Agent 使用
+Kubernetes metadata client 和 `owner=helm` 标签，只把名称、命名空间、revision、状态和
+存储类型交给模型，不请求 data、values 或 manifest。不过 Kubernetes RBAC 不能做字段级
+授权：持有这份 kubeconfig 的其他程序仍可能利用 `list secrets` 读取完整内容。高合规环境
+应移除该 verb，并接受 Helm Release 工具返回权限警告，或为 Agent 使用单独的非 Secret
+Helm 元数据来源。
 
 无论当前 kubeconfig 权限多大，模型工具都不提供：
 
-- 读取 Secret；
-- 读取 Node；
+- 读取 Secret payload、values 或 manifest（Helm 清单只使用 metadata endpoint）；
 - 创建 Deployment、Pod、Service 或 Namespace；
 - 创建集群级 RBAC；
-- 执行 Pod、读取日志或端口转发；
+- exec/attach Pod 或端口转发；
 - 任意 patch/delete Kubernetes 对象；
 - shell、SSH 或宿主机命令执行。
 
-启用日志诊断要求当前身份已有目标命名空间 `get pods/log`。采集器仍通过
-`infernex.io/owner` 标签限定一个服务，限制 Pod、时间窗、尾部行数和字节数，
-只保留匹配的分类证据。Pod 日志可能包含 Prompt、响应和业务数据，因此该权限
-默认关闭；常见凭据脱敏不能替代组织的数据分级和访问审计。
+通用日志工具要求当前身份已有目标命名空间 `get pods/log`，且调用者必须给出明确 Pod；
+它限制容器数、时间窗、尾部行数和字节数并做常见凭据脱敏。Bridge 专属诊断还通过
+`infernex.io/owner` 标签限定一个服务，只保留分类证据。Pod 日志可能包含 Prompt、
+响应和业务数据，常见凭据脱敏不能替代组织的数据分级和访问审计；不需要日志的环境
+应使用自定义最小权限 kubeconfig 移除该 verb。
 
 高合规或最小权限环境应使用 `sudo ./install.sh --hardened-identity`，由安装器创建
 namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便利路径的权限风险
@@ -67,12 +76,12 @@ ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允�
 
 ## 5. 模型数据边界
 
-发送到模型的是归一化、数量受限的诊断证据。以下数据被排除：
+后台 Supervisor 发送给分析模型的是归一化、数量受限的诊断证据。以下数据被排除：
 
 - Kubernetes Token、kubeconfig 和模型 API Key；
 - Secret、环境变量和完整 Pod spec；
 - Event note 原文；
-- 节点名；
+- 节点名（交互式集群总览工具可按用户请求返回节点名和资源状态）；
 - 模型 URI 中的用户名、密码、query 和 fragment；
 - 任意原始 Kubernetes 对象遍历能力。
 

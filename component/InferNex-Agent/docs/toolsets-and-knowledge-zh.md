@@ -27,16 +27,21 @@ toolset registry ── knowledge/runbooks
 kubectl/Kubernetes API + InferNex 已有组件接口
 ```
 
-Agent 不是新的集群控制器，不拥有推理工作负载的最终状态。InferNexService 和
-Bridge 仍是部署与状态的权威来源。
+Agent 不是新的集群控制器，不拥有推理工作负载的最终状态。openFuyao 的 BKECluster /
+BKENode 与 bkeagent/Cluster API 是集群生命周期权威；Helm Release 和其原生资源是
+InferNex 主 Chart 部署权威；只有实际使用 Bridge 时，InferNexService/Bridge 才是
+该入口的部署与状态权威。
 
 ## Toolsets
 
 | 工具集 | V1 行为 |
 | --- | --- |
+| `openfuyao/discovery` | 识别当前 kubeconfig 的 API Server、引导/管理/业务角色及 BKE、LWS、Gateway、Bridge、KServe、监控能力 |
+| `kubernetes/core` | 汇总节点/NPU资源，列出 Deployment、StatefulSet、DaemonSet、LWS、Pod 与 Service |
+| `helm/inventory` | 只从 metadata 获取 Release 名称、命名空间、修订号和状态，不读取 Release Secret 数据 |
 | `infernex/core` | 发现服务、检查 spec/status、Bridge profile 和实际拓扑 |
-| `kubernetes/events` | 关联 InferNex 对象、工作负载、Pod 与 Event |
-| `kubernetes/logs` | 有界读取 current/previous logs，脱敏并生成跨组件时间线 |
+| `kubernetes/events` | 查询全局/命名空间或指定对象的近期 Event，不要求 InferNex owner 标签 |
+| `kubernetes/logs` | 对明确 Pod/容器有界读取 current/previous logs 并脱敏；Bridge 诊断再生成跨组件时间线 |
 | `infernex/change` | 稳定基线部署、状态验证、changeId 和精确回退 |
 | `infernex/experiments` | 一次增加一个批准特性，对比稳定基线并停止回归阶段 |
 | `infernex/hardware` | 后续接入 infernex-checker/Eagle-Eye 的连通性、带宽和时延报告 |

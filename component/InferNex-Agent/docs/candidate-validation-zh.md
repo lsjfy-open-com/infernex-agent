@@ -4,8 +4,8 @@
 
 新统一安装流程仍在 Draft PR 中，必须先在 A2 既有 InferNex 集群验收，之后才能合并并
 发布新 Release。公开 `0.3.0-rc.6` 是旧版，不能用来验证新的一键安装入口。首个支持
-无 Bridge CRD 安装、启动前模型配置、端口冲突自适应和慢模型重试的候选版本是
-`0.4.0-rc.4`。
+无 Bridge CRD 安装、启动前模型配置、端口冲突自适应、慢模型重试，以及 openFuyao /
+Kubernetes / Helm 只读发现的候选版本是 `0.4.0-rc.5`。
 
 CI 为每个架构生成一个默认 Agent Artifact：
 
@@ -24,11 +24,14 @@ Artifact 内含同名 `.tar.gz` 和 `.sha256`。CI 还可能保留 Kubernetes �
 3. 解压后运行 `sudo ./install.sh`；
 4. 确认脚本自动发现 kubeconfig，并正确区分 Bridge CRD 与无 Bridge 的 Helm/BKE 形态；
 5. 配置内网 OpenAI 兼容模型接口，确认 tool calling 测试通过；
-6. 运行 `sudo infernex-agent chat`，先做只读全环境扫描；
-7. 批准一个从稳定来源创建的测试实例，观察 Ready/Degraded、事件和日志；
-8. 制造或等待一次失败，确认只撤销本次带相同 `changeId` 的新资源；
-9. 检查 Dashboard、systemd 重启恢复、变更记录和安装前恢复点；
-10. 验收通过后再允许 workflow 发布 prerelease，并合并 Draft PR。
+6. 运行 `sudo infernex-agent chat`，先做只读全环境扫描，确认它识别的是目标业务集群而非
+   同机引导 K3s；
+7. 确认 Agent 可看到既有 Helm Release、LWS/Deployment、Pod、Service、Event 和日志；
+8. 仅在实际存在 Bridge 的环境，批准一个从稳定来源创建的测试实例，观察
+   Ready/Degraded、事件和日志；
+9. 制造或等待一次失败，确认只撤销本次带相同 `changeId` 的新资源；
+10. 检查 Dashboard、systemd 重启恢复、变更记录和安装前恢复点；
+11. 验收通过后再允许 workflow 发布 prerelease，并合并 Draft PR。
 
 ## 必须通过的证据
 
@@ -42,6 +45,9 @@ Artifact 内含同名 `.tar.gz` 和 `.sha256`。CI 还可能保留 Kubernetes �
 - 断开外网后静态二进制、扫描、Dashboard 和回退仍正常。
 - 删除/不存在 Bridge CRD 时安装仍成功，doctor 显示 `generic-kubernetes` 警告，且
   不创建 workspace 或启用 Bridge 专属写工具。
+- `openfuyao_detect_environment` 能说明当前 kubeconfig 的单集群视角和角色证据；
+- `helm_list_releases` 不返回 Secret payload/values，通用日志工具有限长和凭据脱敏；
+- 无 Bridge 环境仍能查询原生工作负载、LWS、Service、Event 和 Pod 日志。
 
 ## 发布门禁
 

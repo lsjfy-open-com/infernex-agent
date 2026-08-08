@@ -13,8 +13,10 @@ InferNex Agent 是运行在 InferNex 管理节点上的本地 AI 运维 Agent。
          → 本机确认写操作 → 验证结果 → 诊断/回退 → 输出证据
 ```
 
-它复用已有的 `InferNexService`、InferNex Bridge、vLLM/vLLM-Ascend、Mooncake、
-Hermes、PD Orchestrator、Eagle-Eye 和 infernex-checker，不建立第二套推理编排器。
+它首先复用 openFuyao 的 BKE/Cluster API、Kubernetes、Helm 和应用管理方式，再按实际
+部署入口复用 InferNex 主 Chart 或可选的 InferNex Bridge/KServe，以及
+vLLM/vLLM-Ascend、Mooncake、Hermes、PD Orchestrator、Eagle-Eye 和
+infernex-checker；不建立第二套推理编排器。
 
 ## 安装：只选 CPU 架构
 
@@ -48,9 +50,11 @@ sudo ./install.sh
 kubectl 身份，不创建 ServiceAccount/RBAC；有合规隔离要求时才使用高级选项
 `--hardened-identity`。
 
-没有 Bridge CRD 不再导致安装失败：Agent 会进入不修改集群的基础兼容模式。该模式
-当前先提供安装、模型配置、对话和 Web 入口；Helm release、LWS/Deployment、Pod、
-Service 及底层组件日志的自动资产图将在下一阶段接入。
+没有 Bridge CRD 不再导致安装失败：Agent 会进入不修改集群的 Kubernetes/Helm 模式。
+该模式已经能够识别当前 kubeconfig 指向的 openFuyao 引导/管理/业务集群角色，列出
+Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service，查询 Event 和
+经过限长、脱敏的 current/previous Pod 日志。Bridge 专属观察和写工具都不会在此模式
+发布给模型，避免 Agent 在不存在 InferNexService 的集群里反复调用无效工具。
 
 唯一需要人工提供的是 Agent 模型接口：OpenAI 兼容 Base URL、真实 model ID 和
 可选 API Key。安装完成后：
@@ -64,7 +68,9 @@ sudo infernex-agent chat
 Agent 的知识库描述 InferNex 组件关系、常见故障模式、稳定变更方法和安全边界；
 实时事实始终通过工具获取，而不是让模型猜测：
 
-- Kubernetes/InferNex CRD、status、Event、Pod 日志和拓扑；
+- openFuyao/BKE 能力、当前集群角色、Kubernetes/LWS 工作负载和 Helm Release；
+- Kubernetes Event，以及明确 Pod/容器的限长、脱敏日志；
+- 检测到 Bridge 后的 InferNex CRD、status 和专属拓扑；
 - Bridge 已有配置和 Ready 的稳定服务；
 - 后续按稳定接口接入 infernex-checker、Eagle-Eye、Prometheus 和 EvalScope；
 - 本地批准后的受限写工具，以及对应验证和回退工具。
@@ -88,6 +94,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [产品使用指南](docs/product-guide-zh.md)
 - [离线安装](docs/offline-install-zh.md)
 - [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
+- [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
 - [产品设计与边界](docs/product-design-zh.md)
 - [变更保护与回退](docs/change-safety-zh.md)
 - [安全边界](docs/security-boundaries-zh.md)

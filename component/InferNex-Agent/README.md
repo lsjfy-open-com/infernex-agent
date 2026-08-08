@@ -2,12 +2,13 @@
 
 [English](README.md) | [简体中文](README-zh.md)
 
-InferNex Agent is an agentic operations runtime for an existing InferNex
-control plane. A user describes an outcome in natural language; the Agent
-discovers the live environment, plans with bounded domain tools, requests local
-approval for writes, observes InferNex Bridge reconciliation, diagnoses
-failures, and reports or rolls back from evidence. It does not ask normal users
-to assemble namespaces, catalog IDs, YAML, images, or shell commands.
+InferNex Agent is an agentic operations runtime for an existing openFuyao
+Kubernetes and AI inference environment. A user describes an outcome in
+natural language; the Agent discovers whether the active kubeconfig points at
+a bootstrap/management control plane or a business cluster, plans with bounded
+domain tools, diagnoses native Kubernetes/Helm or optional Bridge workloads,
+and reports evidence. It does not ask normal users to assemble raw YAML,
+images, or shell commands.
 
 The intended management-node installation is one command:
 
@@ -23,7 +24,9 @@ model interface. By default it creates no Agent Pod, controller, CRD,
 ServiceAccount, or RBAC. A Bridge cluster receives an empty Agent workspace
 Namespace for future approved model deployments. A cluster without Bridge
 enters a no-mutation base Kubernetes/Helm compatibility mode instead of
-failing installation. See the
+failing installation. That mode can inspect Helm release metadata,
+Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, Services,
+Events, and bounded redacted logs; Bridge is not a prerequisite. See the
 [Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 
@@ -46,8 +49,18 @@ The model must support OpenAI-compatible function/tool calling. Read-only MCP
 tools run automatically; every mutating tool requires an exact local `yes`.
 One-shot `--ask` mode always denies writes.
 
-The default installation publishes five typed, read-only tools, including the
-zero-argument environment entry point:
+The default installation publishes six typed, read-only tools on any
+authorized Kubernetes/openFuyao cluster:
+
+- `openfuyao_detect_environment`
+- `k8s_cluster_overview`
+- `k8s_list_workloads`
+- `k8s_get_events`
+- `k8s_get_pod_logs`
+- `helm_list_releases`
+
+Only when discovery confirms InferNex Bridge does the Agent publish five more
+Bridge-specific tools:
 
 - `infernex_list_all_services`
 - `infernex_list_services`
@@ -62,11 +75,12 @@ When conversational deployment is enabled, it also publishes:
 - `infernex_delete_model`
 - `infernex_get_change` (read-only change/rollback status)
 
-The output is deliberately normalized. It includes InferNex status, managed
-Deployment/DaemonSet/LeaderWorkerSet readiness, and compact Pod evidence. It
-also correlates recent Kubernetes Events only to the selected service and its
-managed objects. It does not return Secret objects, environment variables,
-full Pod specs, or a generic Kubernetes command surface.
+The output is deliberately normalized and bounded. Helm inventory reads only
+Kubernetes metadata for storage objects and never returns Secret payloads,
+stored values, or manifests. Kubernetes logs require explicit Pod targets,
+cap containers/time/lines/bytes, and redact common credentials. The Agent does
+not return environment variables, full Pod specs, or a generic Kubernetes
+command surface.
 
 The deployment tools are deliberately narrower than Kubernetes write access.
 The Agent first discovers existing Ready services and administrator-created
@@ -99,6 +113,10 @@ systemd state, and Agent-managed cluster source resources automatically.
 
 See [change safety, backup, and rollback](docs/change-safety-zh.md) for the
 restore CLI, persistence requirements, guarantees, and boundaries.
+
+The [openFuyao v26.06 alignment baseline](docs/openfuyao-alignment-zh.md)
+records the official deployment sources, authority boundaries, implemented
+adapters, and deliberately unfinished integrations used by this design.
 
 ## Continuous supervisor and dashboard
 

@@ -61,11 +61,16 @@ jobs:
         working-directory: component/InferNex-Agent
         run: |
           helm lint ./chart/infernex-agent
-          helm template infernex-agent ./chart/infernex-agent \
-            --namespace infernex-system \
-            --set 'rbac.targetNamespaces[0]=model-a' \
-            --set 'rbac.targetNamespaces[1]=model-b' \
-            >/dev/null
+          readonly_render="$(
+            helm template infernex-agent ./chart/infernex-agent \
+              --namespace infernex-system \
+              --set 'rbac.targetNamespaces[0]=model-a' \
+              --set 'rbac.targetNamespaces[1]=model-b'
+          )"
+          grep -q 'statefulsets' <<<"${readonly_render}"
+          grep -q 'services' <<<"${readonly_render}"
+          grep -q 'pods/log' <<<"${readonly_render}"
+          grep -q 'secrets' <<<"${readonly_render}"
           helm template infernex-agent ./chart/infernex-agent \
             --namespace infernex-system \
             --set rbac.clusterWide=true \
@@ -400,6 +405,35 @@ jobs:
           sudo /opt/infernex-agent/bin/infernex-agent doctor \
             --config /etc/infernex-agent/agent.conf |
             grep -q 'generic Kubernetes/Helm compatibility mode'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openfuyao_detect_environment","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            tee "${RUNNER_TEMP}/openfuyao-environment.json" |
+            grep -q 'inference-business-cluster'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"k8s_cluster_overview","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'kubernetesVersion'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"k8s_list_workloads","arguments":{"namespace":"kube-system","limit":20}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'workloads'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm_list_releases","arguments":{}}}' \
+            http://127.0.0.1:8080/mcp |
+            grep -q 'releases'
           kill "${occupied_dashboard_pid}" >/dev/null 2>&1 || true
           wait "${occupied_dashboard_pid}" 2>/dev/null || true
 

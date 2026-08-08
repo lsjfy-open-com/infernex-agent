@@ -28,7 +28,7 @@ Options:
   --enable-deployment              Permit constrained catalog create/delete
   --deployment-namespace N         Fixed Agent workspace namespace
   --deployment-template-namespace N Existing deployment profile namespace
-  --enable-log-diagnostics         Permit InferNex-owned Pod log reads
+  --enable-log-diagnostics         Enable Bridge cross-component log diagnosis
   --enable-experiments             Permit candidates and approved profiles
   --experiment-template-namespace N Profile namespace (default: infernex-bridge-system)
   --enable-recovery                Permit recovery-service create and profile get
@@ -254,13 +254,22 @@ rules:
     resources: ["infernexservices"]
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "daemonsets"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["list"]
   - apiGroups: ["leaderworkerset.x-k8s.io"]
     resources: ["leaderworkersets"]
     verbs: ["list"]
   - apiGroups: [""]
-    resources: ["pods", "events"]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["events"]
     verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -281,45 +290,13 @@ subjects:
     namespace: ${agent_namespace}
 EOF
 
-  if [[ "$enable_log_diagnostics" == "true" ]]; then
-    bundle_info "applying bounded log-read RBAC in ${target_namespace}"
-    cat <<EOF | kubectl "${kubectl_args[@]}" apply -f - >/dev/null
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: infernex-agent-host-logs
-  namespace: ${target_namespace}
-  labels:
-    app.kubernetes.io/name: infernex-agent
-    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
-rules:
-  - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: infernex-agent-host-logs
-  namespace: ${target_namespace}
-  labels:
-    app.kubernetes.io/name: infernex-agent
-    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: infernex-agent-host-logs
-subjects:
-  - kind: ServiceAccount
-    name: ${service_account}
-    namespace: ${agent_namespace}
-EOF
-  else
-    kubectl "${kubectl_args[@]}" --namespace "$target_namespace" delete \
-      role/infernex-agent-host-logs \
-      rolebinding/infernex-agent-host-logs \
-      --ignore-not-found >/dev/null
-  fi
+  # Generic Pod-log reads are always available and are bounded by the Agent's
+  # container, time-window, line-count, byte-count, and redaction limits. The
+  # flag controls the additional Bridge correlation engine, not this RBAC.
+  kubectl "${kubectl_args[@]}" --namespace "$target_namespace" delete \
+    role/infernex-agent-host-logs \
+    rolebinding/infernex-agent-host-logs \
+    --ignore-not-found >/dev/null 2>&1 || true
 
   if [[ "$enable_recovery" == "true" || "$enable_experiments" == "true" ||
     ( "$enable_deployment" == "true" && "$target_namespace" == "$deployment_namespace" ) ]]; then

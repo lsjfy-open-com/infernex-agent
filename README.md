@@ -6,11 +6,13 @@
 [![License](https://img.shields.io/badge/License-Mulan_PSL_v2-blue.svg)](LICENSE)
 
 This repository keeps the InferNex project structure intact and adds
-**InferNex Agent** as a management-plane component. The Agent exposes typed
-InferNex domain tools to MCP-compatible runtimes while reusing the existing
-`InferNexService` API and InferNex Bridge status.
+**InferNex Agent** as an openFuyao management-host component. The Agent first
+discovers the Kubernetes API selected by the active kubeconfig, then exposes
+bounded Kubernetes, Helm, and optional InferNex Bridge tools to an agentic
+runtime. `InferNexService` is supported when Bridge is actually installed; it
+is not treated as a prerequisite for an openFuyao inference cluster.
 
-## Agent v0.3
+## Agent v0.4 candidate
 
 For normal management-node use, InferNex Agent is an agentic runtime rather
 than a parameter-driven Kubernetes utility. Install it with one command, let it
@@ -31,8 +33,10 @@ Manual namespaces and values such as `model-a` in advanced documents are
 examples, not normal installation inputs. The default product is one local
 Linux Agent on the management node, using the current kubeconfig. It does not
 install an Agent Pod, controller, CRD, ServiceAccount, or RBAC. openFuyao
-Helm/BKE clusters without InferNex Bridge CRDs enter a no-mutation base
-compatibility mode instead of failing installation.
+Helm/BKE clusters without InferNex Bridge CRDs enter a read-only general
+Kubernetes/Helm mode instead of failing installation. A kubeconfig selects one
+API server, so a co-located bootstrap K3s and business K8s cluster must be
+inspected with their respective kubeconfigs.
 
 The Agent can now run continuously on an InferNex management or Kubernetes
 control-plane node. Its supervisor scans explicit namespaces, correlates
@@ -41,8 +45,17 @@ a read-only dashboard and JSON snapshot API on a separate port. An optional
 OpenAI-compatible endpoint adds cached diagnostic advice without receiving
 Kubernetes credentials.
 
-The MCP boundary remains deliberately narrow and publishes four observation
-tools:
+The default MCP boundary is deliberately read-only. It publishes six general
+openFuyao/Kubernetes/Helm tools:
+
+- `openfuyao_detect_environment`
+- `k8s_cluster_overview`
+- `k8s_list_workloads`
+- `k8s_get_events`
+- `k8s_get_pod_logs`
+- `helm_list_releases`
+
+When InferNex Bridge exists, it also publishes its five domain tools:
 
 - `infernex_list_services`
 - `infernex_inspect_service`
@@ -95,6 +108,7 @@ an optional hardened installation policy, not a separate package.
 - [变更保护、备份与回退](component/InferNex-Agent/docs/change-safety-zh.md)
 - [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
 - [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
+- [openFuyao v26.06 alignment baseline (Chinese)](component/InferNex-Agent/docs/openfuyao-alignment-zh.md)
 - [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
 - [Agent openEuler host/systemd installation (Chinese)](component/InferNex-Agent/docs/host-install-openeuler-zh.md)
 - [InferNex English documentation](README-en.md)
@@ -104,7 +118,7 @@ an optional hardened installation policy, not a separate package.
 
 The repository workflow runs Go race tests and vet, Helm lint/render checks,
 builds the Agent and InferNex Bridge images, creates a real Kind cluster, and
-exercises all six MCP tools. It also asks the Agent to deploy the catalog model,
+exercises both the general and optional Bridge MCP tools. It also asks the Agent to deploy the catalog model,
 waits for Bridge reconciliation, sends an OpenAI-compatible chat-completion
 request to llama.cpp, observes the resulting topology through the Agent, and
 deletes the service through the guarded tool.

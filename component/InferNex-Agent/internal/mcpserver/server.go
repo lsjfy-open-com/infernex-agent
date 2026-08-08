@@ -22,6 +22,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 )
 
@@ -30,6 +31,16 @@ Observation calls are read-only and namespace-scoped. Prefer
 infernex_inspect_service for control-plane status and infernex_get_topology
 for the actual managed workloads and pods. Use infernex_get_events for recent
 causal evidence. Do not infer a successful rollout from desired state alone.`
+
+const kubernetesInstructions = `
+General openFuyao, Kubernetes, and Helm observation is enabled. Start environment-wide
+requests with openfuyao_detect_environment because one host may point at a bootstrap K3s,
+management, or business cluster and each kubeconfig represents only one API server. Use
+k8s_cluster_overview, k8s_list_workloads, k8s_get_events, and k8s_get_pod_logs for native
+resources. Use helm_list_releases for the main-chart application lifecycle. These tools are
+bounded, read-only, redact common credentials, do not return Secret data, and do not provide
+exec or arbitrary object access. InferNex Bridge is optional; use InferNexService tools only
+when the environment evidence shows that Bridge is installed.`
 
 const deploymentInstructions = `
 Conversational deployment is explicitly enabled. First call
@@ -114,6 +125,34 @@ type experimentIDInput struct {
 
 type emptyInput struct{}
 
+type workloadInput struct {
+	Namespace     string `json:"namespace,omitempty" jsonschema:"Optional Kubernetes namespace; omit to scan all visible namespaces"`
+	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"Optional Kubernetes label selector"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"Maximum combined workload, Pod, and Service records; defaults to 100 and must not exceed 300"`
+}
+
+type kubernetesEventInput struct {
+	Namespace    string `json:"namespace,omitempty" jsonschema:"Optional namespace; omit to scan all visible namespaces"`
+	Kind         string `json:"kind,omitempty" jsonschema:"Optional involved Kubernetes object kind; requires name"`
+	Name         string `json:"name,omitempty" jsonschema:"Optional involved Kubernetes object name; requires kind"`
+	SinceMinutes int    `json:"sinceMinutes,omitempty" jsonschema:"Lookback window in minutes; defaults to 60 and must not exceed 1440"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"Maximum events; defaults to 100 and must not exceed 300"`
+}
+
+type podLogInput struct {
+	Namespace    string `json:"namespace" jsonschema:"Kubernetes namespace containing the Pod"`
+	Pod          string `json:"pod" jsonschema:"Pod name returned by k8s_list_workloads"`
+	Container    string `json:"container,omitempty" jsonschema:"Optional container name; omit to read each bounded container stream"`
+	Previous     bool   `json:"previous,omitempty" jsonschema:"Read the previous terminated container stream instead of the current stream"`
+	SinceMinutes int    `json:"sinceMinutes,omitempty" jsonschema:"Lookback window in minutes; defaults to 30 and must not exceed 1440"`
+	TailLines    int64  `json:"tailLines,omitempty" jsonschema:"Maximum lines per container; defaults to 200 and must not exceed 1000"`
+}
+
+type helmReleaseInput struct {
+	Namespace string `json:"namespace,omitempty" jsonschema:"Optional namespace; omit to scan all visible namespaces"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum releases; defaults to 100 and must not exceed 300"`
+}
+
 type allServicesOutput struct {
 	Namespaces []observer.ServiceList `json:"namespaces"`
 }
@@ -126,8 +165,10 @@ type serverOptions struct {
 	deployer    deployer.Deployer
 	diagnoser   diagnostics.Diagnoser
 	experiments experiment.Manager
+	kubernetes  kubeops.Reader
 	namespaces  []string
 	testCatalog bool
+	bridge      bool
 }
 
 func WithNamespaces(namespaces []string) Option {
@@ -154,6 +195,21 @@ func WithExperiments(manager experiment.Manager) Option {
 	}
 }
 
+func WithKubernetes(reader kubeops.Reader) Option {
+	return func(options *serverOptions) {
+		options.kubernetes = reader
+	}
+}
+
+// WithInferNexBridge controls whether Bridge-specific tools are published.
+// General Kubernetes/Helm installations must disable them instead of exposing
+// unusable InferNexService operations to the model.
+func WithInferNexBridge(enabled bool) Option {
+	return func(options *serverOptions) {
+		options.bridge = enabled
+	}
+}
+
 type Option func(*serverOptions)
 
 func WithDeployer(domainDeployer deployer.Deployer) Option {
@@ -163,18 +219,24 @@ func WithDeployer(domainDeployer deployer.Deployer) Option {
 }
 
 func New(domainObserver observer.Observer, version string, optionFunctions ...Option) *mcp.Server {
-	options := serverOptions{}
+	options := serverOptions{bridge: true}
 	for _, option := range optionFunctions {
 		option(&options)
 	}
-	serverInstructions := readOnlyInstructions
-	if options.deployer != nil {
+	serverInstructions := ""
+	if options.kubernetes != nil {
+		serverInstructions += kubernetesInstructions
+	}
+	if options.bridge {
+		serverInstructions += readOnlyInstructions
+	}
+	if options.bridge && options.deployer != nil {
 		serverInstructions += deploymentInstructions
 	}
-	if options.diagnoser != nil {
+	if options.bridge && options.diagnoser != nil {
 		serverInstructions += diagnosticInstructions
 	}
-	if options.experiments != nil {
+	if options.bridge && options.experiments != nil {
 		serverInstructions += experimentInstructions
 	}
 	server := mcp.NewServer(
@@ -194,32 +256,100 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		}
 	}
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "infernex_list_services",
-		Description: "List normalized InferNexService readiness summaries in one namespace.",
-		Annotations: readOnly("List InferNex services"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input namespaceInput) (*mcp.CallToolResult, observer.ServiceList, error) {
-		output, err := domainObserver.ListServices(ctx, input.Namespace)
-		return nil, output, err
-	})
+	if options.kubernetes != nil {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "openfuyao_detect_environment",
+			Description: "Detect whether the active kubeconfig points at an openFuyao bootstrap/management control plane, an openFuyao business cluster, or a general Kubernetes cluster, and report BKE, Helm, LWS, Bridge, KServe, Gateway, scaling, and monitoring capabilities.",
+			Annotations: readOnly("Detect openFuyao and Kubernetes environment"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, kubeops.Environment, error) {
+			output, err := options.kubernetes.DetectEnvironment(ctx)
+			return nil, output, err
+		})
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "infernex_list_all_services",
-		Description: "List normalized InferNexService readiness summaries across all namespaces automatically discovered during installation.",
-		Annotations: readOnly("List all discovered InferNex services"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, allServicesOutput, error) {
-		output := allServicesOutput{Namespaces: make([]observer.ServiceList, 0, len(options.namespaces))}
-		for _, namespace := range options.namespaces {
-			services, err := domainObserver.ListServices(ctx, namespace)
-			if err != nil {
-				return nil, allServicesOutput{}, err
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_cluster_overview",
+			Description: "Summarize the active Kubernetes API server, nodes, accelerator resources, namespaces, and Pod health without requiring InferNex CRDs.",
+			Annotations: readOnly("Get Kubernetes cluster overview"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, kubeops.ClusterOverview, error) {
+			output, err := options.kubernetes.ClusterOverview(ctx)
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_list_workloads",
+			Description: "List bounded Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, and Services across the selected namespace scope with readiness, images, owners, selectors, and Helm association.",
+			Annotations: readOnly("List Kubernetes workloads and services"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input workloadInput) (*mcp.CallToolResult, kubeops.WorkloadInventory, error) {
+			output, err := options.kubernetes.ListWorkloads(ctx, kubeops.WorkloadRequest{
+				Namespace: input.Namespace, LabelSelector: input.LabelSelector, Limit: input.Limit,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_get_events",
+			Description: "Get recent bounded, redacted Kubernetes Events, optionally scoped to one object, without requiring InferNex ownership labels.",
+			Annotations: readOnly("Get Kubernetes events"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input kubernetesEventInput) (*mcp.CallToolResult, kubeops.EventList, error) {
+			output, err := options.kubernetes.GetEvents(ctx, kubeops.EventRequest{
+				Namespace: input.Namespace, Kind: input.Kind, Name: input.Name,
+				SinceMinutes: input.SinceMinutes, Limit: input.Limit,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_get_pod_logs",
+			Description: "Read bounded, credential-redacted current or previous Pod logs for explicit Pod/container targets returned by k8s_list_workloads. No exec or host-file access is performed.",
+			Annotations: readOnly("Get bounded Kubernetes Pod logs"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input podLogInput) (*mcp.CallToolResult, kubeops.PodLogResult, error) {
+			output, err := options.kubernetes.GetPodLogs(ctx, kubeops.PodLogRequest{
+				Namespace: input.Namespace, Pod: input.Pod, Container: input.Container,
+				Previous: input.Previous, SinceMinutes: input.SinceMinutes, TailLines: input.TailLines,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "helm_list_releases",
+			Description: "List Helm release name, namespace, current revision, and status from Kubernetes metadata only. Secret payloads and stored release values are never returned.",
+			Annotations: readOnly("List Helm releases"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input helmReleaseInput) (*mcp.CallToolResult, kubeops.HelmReleaseList, error) {
+			output, err := options.kubernetes.ListHelmReleases(ctx, kubeops.HelmReleaseRequest{
+				Namespace: input.Namespace, Limit: input.Limit,
+			})
+			return nil, output, err
+		})
+	}
+
+	if options.bridge {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_list_services",
+			Description: "List normalized InferNexService readiness summaries in one namespace.",
+			Annotations: readOnly("List InferNex services"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input namespaceInput) (*mcp.CallToolResult, observer.ServiceList, error) {
+			output, err := domainObserver.ListServices(ctx, input.Namespace)
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_list_all_services",
+			Description: "List normalized InferNexService readiness summaries across all namespaces automatically discovered during installation.",
+			Annotations: readOnly("List all discovered InferNex services"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, allServicesOutput, error) {
+			output := allServicesOutput{Namespaces: make([]observer.ServiceList, 0, len(options.namespaces))}
+			for _, namespace := range options.namespaces {
+				services, err := domainObserver.ListServices(ctx, namespace)
+				if err != nil {
+					return nil, allServicesOutput{}, err
+				}
+				output.Namespaces = append(output.Namespaces, services)
 			}
-			output.Namespaces = append(output.Namespaces, services)
-		}
-		return nil, output, nil
-	})
+			return nil, output, nil
+		})
+	}
 
-	if options.diagnoser != nil {
+	if options.bridge && options.diagnoser != nil {
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "infernex_diagnose_service",
 			Description: "Correlate bounded, redacted Pod log evidence and Kubernetes Events across the nodes and components managed for one InferNexService.",
@@ -236,40 +366,42 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		})
 	}
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "infernex_inspect_service",
-		Description: "Inspect one InferNexService using its existing status, model, source, base templates, components, and conditions.",
-		Annotations: readOnly("Inspect InferNex service"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.ServiceDetail, error) {
-		output, err := domainObserver.InspectService(ctx, input.Namespace, input.Name)
-		return nil, output, err
-	})
+	if options.bridge {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_inspect_service",
+			Description: "Inspect one InferNexService using its existing status, model, source, base templates, components, and conditions.",
+			Annotations: readOnly("Inspect InferNex service"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.ServiceDetail, error) {
+			output, err := domainObserver.InspectService(ctx, input.Namespace, input.Name)
+			return nil, output, err
+		})
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "infernex_get_topology",
-		Description: "Get the actual Deployment, DaemonSet, LeaderWorkerSet, and Pod topology managed for one InferNexService.",
-		Annotations: readOnly("Get InferNex service topology"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.Topology, error) {
-		output, err := domainObserver.GetTopology(ctx, input.Namespace, input.Name)
-		return nil, output, err
-	})
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_get_topology",
+			Description: "Get the actual Deployment, DaemonSet, LeaderWorkerSet, and Pod topology managed for one InferNexService.",
+			Annotations: readOnly("Get InferNex service topology"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.Topology, error) {
+			output, err := domainObserver.GetTopology(ctx, input.Namespace, input.Name)
+			return nil, output, err
+		})
 
-	mcp.AddTool(server, &mcp.Tool{
-		Name:        "infernex_get_events",
-		Description: "Get recent Kubernetes events only for one InferNexService and its InferNex-managed workloads and pods.",
-		Annotations: readOnly("Get InferNex service events"),
-	}, func(ctx context.Context, _ *mcp.CallToolRequest, input eventInput) (*mcp.CallToolResult, observer.EventEvidence, error) {
-		output, err := domainObserver.GetEvents(
-			ctx,
-			input.Namespace,
-			input.Name,
-			input.SinceMinutes,
-			input.Limit,
-		)
-		return nil, output, err
-	})
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_get_events",
+			Description: "Get recent Kubernetes events only for one InferNexService and its InferNex-managed workloads and pods.",
+			Annotations: readOnly("Get InferNex service events"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input eventInput) (*mcp.CallToolResult, observer.EventEvidence, error) {
+			output, err := domainObserver.GetEvents(
+				ctx,
+				input.Namespace,
+				input.Name,
+				input.SinceMinutes,
+				input.Limit,
+			)
+			return nil, output, err
+		})
+	}
 
-	if options.deployer != nil {
+	if options.bridge && options.deployer != nil {
 		mutating := func(title string, destructive bool) *mcp.ToolAnnotations {
 			openWorld := true
 			return &mcp.ToolAnnotations{
@@ -347,7 +479,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		})
 	}
 
-	if options.experiments != nil {
+	if options.bridge && options.experiments != nil {
 		mutating := func(title string) *mcp.ToolAnnotations {
 			destructive := false
 			openWorld := true

@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/metadata"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
@@ -41,6 +42,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
@@ -316,14 +318,32 @@ func serveAgent(opts options) error {
 	if err != nil {
 		return fmt.Errorf("create Kubernetes client: %w", err)
 	}
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes clientset: %w", err)
+	}
+	metadataClient, err := metadata.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes metadata client: %w", err)
+	}
+	logReader := diagnostics.NewKubernetesLogReader(clientset)
+	platformReader, err := kubeops.New(kubeClient, clientset.Discovery(), metadataClient, logReader, restConfig.Host)
+	if err != nil {
+		return fmt.Errorf("configure openFuyao and Kubernetes observation: %w", err)
+	}
 
 	domainObserver := observer.New(kubeClient)
-	serverOptions := make([]mcpserver.Option, 0, 3)
+	serverOptions := make([]mcpserver.Option, 0, 4)
 	namespaces := parseNamespaces(opts.scanNamespaces)
-	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces))
+	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	environment, err := platformReader.DetectEnvironment(ctx)
+	if err != nil {
+		return fmt.Errorf("detect openFuyao environment: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
 
 	var changeStore changesafety.Store
 	if opts.enableDeployment || opts.enableAutoRecovery || opts.enableExperiments {
@@ -361,13 +381,9 @@ func serveAgent(opts options) error {
 
 	var domainDiagnoser diagnostics.Diagnoser
 	if opts.enableDiagnostics {
-		clientset, clientsetErr := kubernetes.NewForConfig(restConfig)
-		if clientsetErr != nil {
-			return fmt.Errorf("create Kubernetes log client: %w", clientsetErr)
-		}
 		collector, collectorErr := diagnostics.New(
 			kubeClient,
-			diagnostics.NewKubernetesLogReader(clientset),
+			logReader,
 			domainObserver,
 		)
 		if collectorErr != nil {

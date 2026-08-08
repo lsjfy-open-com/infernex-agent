@@ -43,9 +43,10 @@ ServiceAccount 或 RBAC。
 Namespace，用于后续经批准的新实例。没有 Bridge 的 Helm/BKE 集群进入
 `generic-kubernetes` 基础兼容模式，安装阶段不修改任何 Kubernetes 资源。
 
-基础兼容模式当前先打通安装、systemd、模型配置、对话入口、健康检查和 Web 端口；
-Bridge 专属部署工具会关闭。面向 Helm release、Deployment/LWS、Pod、Service 及
-底层组件日志的资产适配器属于紧随其后的功能，不应通过安装 Bridge CRD 来伪装兼容。
+基础兼容模式已打通安装、systemd、模型配置、对话入口、健康检查和 Web 端口，并提供
+openFuyao 集群角色、Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、
+Service、Event 和受限日志的只读资产发现。Bridge 专属观察和部署工具都会关闭，不应
+通过安装 Bridge CRD 来伪装兼容。
 
 > 当前公开的 `0.3.0-rc.6` 仍是旧版候选包，不具备本页所述的新统一包名和默认流程。
 > 在新候选完成 A2 既有集群验收并发布前，请从 Draft PR 的 CI Artifact 验证，不能把
@@ -113,8 +114,11 @@ sudo infernex-agent chat
 容器命令或 YAML。只读工具自动执行；任何写操作都必须在本机展示摘要，并由用户输入
 精确的 `yes` 批准。
 
-在当前 Helm/BKE 基础兼容模式中，`chat`、模型接口和 Web 入口可以使用，但尚不会声称
-已经发现或能够部署现有 Helm 模型实例；这需要后续 Helm release/LWS/Pod 资产适配器。
+在 Helm/BKE 模式中，`chat` 会先调用 `openfuyao_detect_environment` 判断当前
+kubeconfig 指向引导/管理控制面还是业务集群，再使用 `helm_list_releases`、
+`k8s_list_workloads`、`k8s_get_events` 和 `k8s_get_pod_logs` 探索现有实例。当前只读
+能力不等于已经支持 Helm 创建/升级：自动部署需在下一阶段补齐 values/manifest/history
+备份、`helm upgrade --install` 预览、审批、Ready/服务链验证和 `helm rollback`。
 
 ## Web 展示
 
@@ -131,9 +135,11 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 
 V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具集”结构：
 
-- 自动识别 Bridge CRD 与 openFuyao Helm/BKE 两类部署入口；
+- 自动识别当前 kubeconfig 可见的 BKE/Cluster API、openFuyao 平台、推理业务集群、
+  InferNex 主 Chart 和可选 Bridge/KServe 能力；
 - Bridge 模式发现 InferNexService、profiles、工作负载、Pod、事件和拓扑；
-- Helm/BKE 模式后续从 release、Deployment/LWS、Pod、Service 和组件标签建立资产图；
+- Helm/BKE 模式从 release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service、
+  Event 和组件标签建立只读资产图；
 - 通过 typed tools 调用 Kubernetes/InferNex API，不给模型任意 shell 或任意 YAML；
 - 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
 - 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。

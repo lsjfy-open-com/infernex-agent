@@ -37,8 +37,14 @@ admin.conf，或选择下述 hardened identity。
 Bridge 时自动进入 `generic-kubernetes` 模式，不创建该 Namespace，也不修改集群。
 
 `generic-kubernetes` 用于按 openFuyao 管理面/业务面文档部署、再通过 Linux 终端执行
-`helm install <实例名> <InferNex离线Chart> -n <命名空间> ...` 的集群。当前版本先保证
-Agent 安装、模型配置和服务入口可用；Helm/LWS/组件资产扫描将在下一阶段接入。
+`helm install <实例名> <InferNex离线Chart> -n <命名空间> ...` 的集群。当前版本可通过
+只读工具识别当前 kubeconfig 指向的引导/管理/业务集群，扫描 Helm Release、原生
+Deployment/StatefulSet/DaemonSet、LWS、Pod、Service、Event 和受限日志。它不会因为
+缺少 Bridge CRD 而把业务集群误判为空，也不会自动安装 Bridge。
+
+一台宿主机可能同时存在引导 K3s 与业务 K8s。默认 kubeconfig 只代表一个 API Server；
+Agent 会报告当前视角，运维人员需要在安装时选择能够访问目标业务集群的 kubeconfig。
+引导 K3s 的明确路径通常是 `/etc/rancher/k3s/k3s.yaml`，不可据此推断业务集群内容。
 
 ## Hardened identity（可选）
 
