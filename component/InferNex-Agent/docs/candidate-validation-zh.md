@@ -5,7 +5,8 @@
 新统一安装流程仍在 Draft PR 中，必须先在 A2 既有 InferNex 集群验收，之后才能合并并
 发布新 Release。公开 `0.3.0-rc.6` 是旧版，不能用来验证新的一键安装入口。首个支持
 无 Bridge CRD 安装、启动前模型配置、端口冲突自适应、慢模型重试，以及 openFuyao /
-Kubernetes / Helm 只读发现及对话上下文预算、自动压缩的候选版本是 `0.4.0-rc.6`。
+Kubernetes / Helm 只读发现、上下文预算/自动压缩及 readline 终端编辑的候选版本是
+`0.4.0-rc.7`。
 
 CI 为每个架构生成一个默认 Agent Artifact：
 

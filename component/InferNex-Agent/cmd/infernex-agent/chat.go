@@ -28,6 +28,8 @@ import (
 	"time"
 
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
+	"github.com/chzyer/readline"
+	"golang.org/x/term"
 )
 
 const maxAPIKeyBytes = 64 * 1024
@@ -87,11 +89,18 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
-	reader := bufio.NewReader(os.Stdin)
-	approver := interactiveApprover(reader, os.Stdout)
+	var input chatInput
+	approver := infernexchat.Approver(nil)
 	if opts.ask != "" {
 		// One-shot mode is suitable for scripts, so it never grants a write action.
-		approver = nil
+	} else {
+		input, err = newChatInput(os.Stdin, os.Stdout, os.Stderr)
+		if err != nil {
+			_ = tools.Close()
+			return fmt.Errorf("initialize interactive terminal: %w", err)
+		}
+		defer input.Close()
+		approver = interactiveApprover(input, os.Stdout)
 	}
 	conversation, err := infernexchat.NewConversation(ctx, infernexchat.Config{
 		Model:         model,
@@ -121,7 +130,7 @@ func runChat(args []string) error {
 		fmt.Fprintln(os.Stdout, answer)
 		return nil
 	}
-	return interactiveChat(ctx, reader, os.Stdout, conversation)
+	return interactiveChat(ctx, input, os.Stdout, conversation)
 }
 
 func parseChatOptions(args []string) (chatOptions, error) {
@@ -283,16 +292,89 @@ func readAPIKey(path string) (string, error) {
 	return strings.TrimSpace(string(payload)), nil
 }
 
+var errInputInterrupted = errors.New("interactive input interrupted")
+
+type chatInput interface {
+	ReadLine(string, bool) (string, error)
+	Close() error
+}
+
+type readlineChatInput struct {
+	instance *readline.Instance
+}
+
+func (r *readlineChatInput) ReadLine(prompt string, addHistory bool) (string, error) {
+	r.instance.SetPrompt(prompt)
+	line, err := r.instance.Readline()
+	if errors.Is(err, readline.ErrInterrupt) {
+		return "", errInputInterrupted
+	}
+	if err == nil && addHistory && strings.TrimSpace(line) != "" {
+		_ = r.instance.SaveHistory(line)
+	}
+	return line, err
+}
+
+func (r *readlineChatInput) Close() error {
+	return r.instance.Close()
+}
+
+type bufferedChatInput struct {
+	reader *bufio.Reader
+	output io.Writer
+}
+
+func (b *bufferedChatInput) ReadLine(prompt string, _ bool) (string, error) {
+	fmt.Fprint(b.output, prompt)
+	line, err := b.reader.ReadString('\n')
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), err
+}
+
+func (b *bufferedChatInput) Close() error { return nil }
+
+func newChatInput(stdin *os.File, stdout, stderr io.Writer) (chatInput, error) {
+	if !term.IsTerminal(int(stdin.Fd())) {
+		return &bufferedChatInput{reader: bufio.NewReader(stdin), output: stdout}, nil
+	}
+	instance, err := readline.NewEx(&readline.Config{
+		Prompt:                 "infernex> ",
+		Stdin:                  stdin,
+		Stdout:                 stdout,
+		Stderr:                 stderr,
+		HistoryFile:            "",
+		HistoryLimit:           100,
+		HistorySearchFold:      true,
+		DisableAutoSaveHistory: true,
+		InterruptPrompt:        "^C",
+		EOFPrompt:              "exit",
+		AutoComplete: readline.NewPrefixCompleter(
+			readline.PcItem("/help"),
+			readline.PcItem("/context"),
+			readline.PcItem("/compact"),
+			readline.PcItem("/undo"),
+			readline.PcItem("/clear"),
+			readline.PcItem("/exit"),
+		),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &readlineChatInput{instance: instance}, nil
+}
+
 func interactiveChat(
 	ctx context.Context,
-	reader *bufio.Reader,
+	input chatInput,
 	output io.Writer,
 	conversation *infernexchat.Conversation,
 ) error {
-	fmt.Fprintln(output, "InferNex Agent interactive terminal. Enter /help for commands.")
+	fmt.Fprintln(output, "InferNex Agent interactive terminal. Enter /help for commands. Arrow keys edit/history; Ctrl+U clears the current line.")
 	for {
-		fmt.Fprint(output, "infernex> ")
-		line, err := reader.ReadString('\n')
+		line, err := input.ReadLine("infernex> ", true)
+		if errors.Is(err, errInputInterrupted) {
+			fmt.Fprintln(output, "Input cleared. Use /exit or Ctrl+D to quit.")
+			continue
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fmt.Errorf("read terminal input: %w", err)
 		}
@@ -310,13 +392,19 @@ func interactiveChat(
 			} else {
 				fmt.Fprintln(output, "Conversation context compacted.")
 			}
+		case "/undo":
+			if conversation.UndoLastTurn() {
+				fmt.Fprintln(output, "Last user turn removed from the model context. Press Up to recall, edit, and resend it.")
+			} else {
+				fmt.Fprintln(output, "There is no removable user turn in the current context.")
+			}
 		case "/context":
 			stats := conversation.ContextStats()
 			fmt.Fprintf(output, "Context: estimated=%d + output-reserve=%d / window=%d tokens; threshold=%d; messages=%d; compactions=%d; pruned-tool-results=%d\n",
 				stats.EstimatedInputTokens, stats.MaxOutputTokens, stats.WindowTokens, stats.ThresholdTokens,
 				stats.MessageCount, stats.Compactions, stats.PrunedToolResults)
 		case "/help":
-			fmt.Fprintln(output, "Commands: /help, /context, /compact, /clear, /exit. Read-only tools run automatically; every write asks for exact 'yes'.")
+			fmt.Fprintln(output, "Commands: /help, /context, /compact, /undo, /clear, /exit. Editing: Left/Right, Home/End, Backspace/Delete, Up/Down history, Ctrl+W delete word, Ctrl+U clear line, Ctrl+C cancel input, Ctrl+D exit. /undo removes model context only; it does not roll back approved cluster changes. Read-only tools run automatically; every write asks for exact 'yes'.")
 		default:
 			answer, askErr := conversation.Ask(ctx, input)
 			if askErr != nil {
@@ -334,7 +422,7 @@ func interactiveChat(
 	}
 }
 
-func interactiveApprover(reader *bufio.Reader, output io.Writer) infernexchat.Approver {
+func interactiveApprover(input chatInput, output io.Writer) infernexchat.Approver {
 	return func(_ context.Context, request infernexchat.ApprovalRequest) (bool, error) {
 		arguments, err := json.MarshalIndent(request.Arguments, "", "  ")
 		if err != nil {
@@ -342,12 +430,15 @@ func interactiveApprover(reader *bufio.Reader, output io.Writer) infernexchat.Ap
 		}
 		fmt.Fprintf(
 			output,
-			"\nWRITE approval required\ntool: %s\narguments: %s\nType yes to continue: ",
+			"\nWRITE approval required\ntool: %s\narguments: %s\n",
 			boundedTerminalText(request.Tool, 256),
 			boundedTerminalText(string(arguments), 4096),
 		)
-		answer, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		answer, err := input.ReadLine("Type yes to continue: ", false)
+		if errors.Is(err, errInputInterrupted) || errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		if err != nil {
 			return false, err
 		}
 		return strings.TrimSpace(answer) == "yes", nil

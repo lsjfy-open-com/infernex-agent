@@ -184,7 +184,10 @@ sudo systemctl restart infernex-agent
 sudo /opt/infernex-agent/bin/chat.sh
 ```
 
-交互命令包括 `/help`、`/context`、`/compact`、`/clear` 和 `/exit`。只读工具自动执行；写工具在本地显示
+交互命令包括 `/help`、`/context`、`/compact`、`/undo`、`/clear` 和 `/exit`。输入支持
+退格/Delete、左右移动、Home/End、Ctrl+W/Ctrl+U 和上下历史；发送错误后可用 `/undo`
+移除最后一轮模型上下文，再按 Up 修改重发。完整快捷键和“撤回不等于集群回滚”的边界见
+[Linux 终端交互说明](terminal-interaction-zh.md)。只读工具自动执行；写工具在本地显示
 名称与 JSON 参数并要求精确输入 `yes`。自动化查询可使用：
 
 ```bash

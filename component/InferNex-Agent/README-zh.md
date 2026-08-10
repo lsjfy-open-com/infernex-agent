@@ -64,8 +64,8 @@ Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service，查询 Eve
 sudo infernex-agent chat
 ```
 
-终端内使用 `/context` 查看当前预算，使用 `/compact` 主动压缩，使用 `/clear` 清空
-当前会话。
+终端支持标准 readline 行编辑和本次进程内历史。使用 `/undo` 撤回最后一个错误轮次，
+`/context` 查看当前预算，`/compact` 主动压缩，`/clear` 清空当前会话。
 
 ## Agent 如何探索
 
@@ -99,6 +99,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [离线安装](docs/offline-install-zh.md)
 - [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
 - [上下文预算与自动压缩](docs/context-management-zh.md)
+- [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
 - [产品设计与边界](docs/product-design-zh.md)
 - [变更保护与回退](docs/change-safety-zh.md)

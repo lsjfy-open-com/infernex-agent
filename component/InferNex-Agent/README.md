@@ -304,6 +304,13 @@ still exceeds the hard window. Use `/context` to inspect the estimate and
 `--tool-result-max-tokens`. See the
 [Chinese context management guide](docs/context-management-zh.md).
 
+On a TTY, chat uses a readline editor with cursor movement, Backspace/Delete,
+word/line deletion, in-process history, command completion, and safe Ctrl+C/
+Ctrl+D behavior. `/undo` removes the latest user turn and its assistant/tool
+messages from model context so it can be recalled with Up, edited, and resent;
+it never rolls back an already approved cluster mutation. See the
+[Chinese terminal interaction guide](docs/terminal-interaction-zh.md).
+
 For a production deployment, run kubectl-ai and InferNex Agent in the same
 restricted management namespace, keep the Agent Service internal, and enable
 the chart NetworkPolicy.
@@ -414,6 +421,7 @@ Product documentation:
 - [Change safety, backup, and rollback](docs/change-safety-zh.md)
 - [Model configuration lifecycle](docs/model-configuration-zh.md)
 - [Context budget and automatic compaction](docs/context-management-zh.md)
+- [Linux terminal editing and undo](docs/terminal-interaction-zh.md)
 - [Security and capability boundaries](docs/security-boundaries-zh.md)
 - [Operations runbook](docs/operations-runbook-zh.md)
 

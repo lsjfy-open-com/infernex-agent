@@ -181,6 +181,21 @@ func (c *Conversation) Reset() {
 	c.lastAfterTokens = 0
 }
 
+// UndoLastTurn removes the most recent user request and every assistant/tool
+// message produced from it. Compacted memory is intentionally left intact;
+// the context manager always retains at least the newest user turn verbatim.
+func (c *Conversation) UndoLastTurn() bool {
+	for index := len(c.messages) - 1; index >= 1; index-- {
+		if c.messages[index].Role == "user" {
+			c.messages = c.messages[:index]
+			c.lastBeforeTokens = 0
+			c.lastAfterTokens = 0
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Conversation) Close() error {
 	return c.tools.Close()
 }

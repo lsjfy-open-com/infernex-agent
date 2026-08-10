@@ -6,8 +6,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -86,5 +91,57 @@ func TestBoundedTerminalTextRemovesControlAndBidiCharacters(t *testing.T) {
 	got := boundedTerminalText("safe\x1b[31m\u202etext", 100)
 	if got != "safe[31mtext" {
 		t.Fatalf("terminal text=%q", got)
+	}
+}
+
+func TestBufferedChatInputSupportsNonTTYAndPrintsPrompt(t *testing.T) {
+	output := &bytes.Buffer{}
+	input := &bufferedChatInput{
+		reader: bufio.NewReader(strings.NewReader("inspect cluster\r\n")),
+		output: output,
+	}
+	line, err := input.ReadLine("infernex> ", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "inspect cluster" || output.String() != "infernex> " {
+		t.Fatalf("line=%q output=%q", line, output.String())
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+type scriptedChatInput struct {
+	lines []string
+	errs  []error
+	index int
+}
+
+func (s *scriptedChatInput) ReadLine(string, bool) (string, error) {
+	if s.index >= len(s.lines) {
+		return "", io.EOF
+	}
+	line := s.lines[s.index]
+	var err error
+	if s.index < len(s.errs) {
+		err = s.errs[s.index]
+	}
+	s.index++
+	return line, err
+}
+
+func (s *scriptedChatInput) Close() error { return nil }
+
+func TestInteractiveChatHelpDocumentsLineEditing(t *testing.T) {
+	input := &scriptedChatInput{lines: []string{"/help", "/exit"}}
+	output := &bytes.Buffer{}
+	if err := interactiveChat(context.Background(), input, output, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"/undo", "Backspace/Delete", "Up/Down history", "Ctrl+U"} {
+		if !strings.Contains(output.String(), expected) {
+			t.Fatalf("help does not contain %q: %s", expected, output.String())
+		}
 	}
 }

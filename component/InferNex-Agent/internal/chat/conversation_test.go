@@ -211,3 +211,41 @@ func TestConversationRejectsRequestBeyondHardWindow(t *testing.T) {
 		t.Fatalf("oversized request poisoned the conversation: %v", err)
 	}
 }
+
+func TestConversationUndoRemovesLastTurnAndAllowsCorrection(t *testing.T) {
+	model := &fakeModel{responses: []ModelResponse{
+		{Content: "first answer"},
+		{Content: "wrong answer"},
+		{Content: "corrected answer"},
+	}}
+	conversation, err := NewConversation(context.Background(), Config{
+		Model: model,
+		Tools: &fakeTools{definitions: []ToolDefinition{{Name: "scan", ReadOnly: true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conversation.Ask(context.Background(), "first request"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conversation.Ask(context.Background(), "mistaken request"); err != nil {
+		t.Fatal(err)
+	}
+	if !conversation.UndoLastTurn() {
+		t.Fatal("expected the last turn to be removed")
+	}
+	if _, err := conversation.Ask(context.Background(), "corrected request"); err != nil {
+		t.Fatal(err)
+	}
+	lastCall := model.messages[len(model.messages)-1]
+	joined := ""
+	for _, message := range lastCall {
+		joined += "\n" + message.Content
+	}
+	if strings.Contains(joined, "mistaken request") || strings.Contains(joined, "wrong answer") {
+		t.Fatalf("undone turn remained in model context: %s", joined)
+	}
+	if !strings.Contains(joined, "first request") || !strings.Contains(joined, "corrected request") {
+		t.Fatalf("expected retained and corrected turns: %s", joined)
+	}
+}
