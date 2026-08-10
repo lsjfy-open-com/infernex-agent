@@ -47,9 +47,9 @@ Agent 会从当前模型上下文中删除最后一个用户请求，以及由�
 | `/clear` | 清空整个当前会话 |
 | `/exit` | 退出终端 |
 
-历史记录默认只保存在当前进程内，不写入磁盘。退出 `chat` 后历史消失，避免把业务名称、
-故障条件和运维意图默认保存到管理节点。后续如果增加跨会话历史，会采用显式开启、权限隔离
-和可清理策略。
+输入历史和对话消息默认只保存在当前进程内。大型日志或工具结果可能按[上下文管理](context-management-zh.md)
+写入权限隔离的 SHA-256 Artifact；它们不是可恢复的聊天历史。后续跨会话历史会采用权限隔离、
+可清理策略，并允许用户查看和删除记忆。
 
 ## TTY 与管道模式
 
@@ -71,7 +71,8 @@ sudo infernex-agent chat --ask '检查当前集群异常，只读取不要修改
 - kubectl-ai 的 Terminal UI 使用 `github.com/chzyer/readline` 提供行编辑和历史；InferNex
   Agent 复用这一成熟方案，并增加不落盘历史和 `/undo` 上下文撤回。
 - OpenCode/Crush 一类工具使用 Bubble Tea 构建全屏 TUI，适合多面板、会话列表和流式布局；
-  当前 InferNex Agent 仍以 SSH 运维终端和低依赖静态二进制为第一优先，因此暂不引入完整 TUI。
+  InferNex Agent 将在事件流、Session 和记忆存储稳定后增加 Bubble Tea 界面，现有 readline
+  模式继续作为低能力终端和自动化场景的兼容入口。
 
 - kubectl-ai Terminal UI：<https://github.com/GoogleCloudPlatform/kubectl-ai/blob/main/pkg/ui/terminal.go>
 - chzyer/readline：<https://github.com/chzyer/readline>

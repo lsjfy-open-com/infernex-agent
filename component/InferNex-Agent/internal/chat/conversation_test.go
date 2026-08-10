@@ -151,6 +151,121 @@ func TestConversationCapsSingleToolResult(t *testing.T) {
 	}
 }
 
+func TestConversationStoresLargeToolResultAndReadsItProgressively(t *testing.T) {
+	largeResult := "first line\n" + strings.Repeat("ordinary log line\n", 200) + "fatal marker\n"
+	model := &fakeModel{responses: []ModelResponse{
+		{ToolCalls: []FunctionCall{{ID: "call-1", Name: "logs", Arguments: `{}`}}},
+		{Content: "found the failure"},
+	}}
+	tools := &fakeTools{
+		definitions: []ToolDefinition{{Name: "logs", ReadOnly: true}}, result: largeResult,
+	}
+	conversation, err := NewConversation(context.Background(), Config{
+		Model: model, Tools: tools, Artifacts: ArtifactConfig{Directory: t.TempDir()},
+		Context: ContextConfig{
+			WindowTokens: 4096, MaxOutputTokens: 128,
+			CompactionThresholdPercent: 95, KeepRecentTurns: 4, ToolResultMaxTokens: 128,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	answer, err := conversation.Ask(context.Background(), "inspect logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "found the failure" {
+		t.Fatalf("answer=%q", answer)
+	}
+	if len(model.messages) < 2 {
+		t.Fatalf("expected a model call after the artifact was stored, got %d", len(model.messages))
+	}
+	envelope := model.messages[1][len(model.messages[1])-1].Content
+	if !strings.Contains(envelope, `"artifact_id":"sha256:`) || strings.Contains(envelope, largeResult) {
+		t.Fatalf("large result was not externalized: %s", envelope)
+	}
+	var metadata struct {
+		ArtifactID string `json:"artifact_id"`
+	}
+	if err := json.Unmarshal([]byte(envelope), &metadata); err != nil || metadata.ArtifactID == "" {
+		t.Fatalf("decode artifact envelope: id=%q err=%v", metadata.ArtifactID, err)
+	}
+	readResult, err := conversation.artifacts.read(map[string]any{
+		"artifact_id": metadata.ArtifactID, "contains": "fatal", "max_lines": float64(10),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(readResult, "fatal marker") || strings.Contains(readResult, "ordinary log line") {
+		t.Fatalf("artifact filter did not return a bounded match: %s", readResult)
+	}
+}
+
+func TestConversationSummarizesWhenToolRoundBudgetIsExhausted(t *testing.T) {
+	model := &fakeModel{responses: []ModelResponse{
+		{ToolCalls: []FunctionCall{{ID: "call-1", Name: "scan", Arguments: `{}`}}},
+		{ToolCalls: []FunctionCall{{ID: "call-2", Name: "scan", Arguments: `{"page":2}`}}},
+		{Content: "partial conclusion from collected evidence"},
+	}}
+	tools := &fakeTools{definitions: []ToolDefinition{{Name: "scan", ReadOnly: true}}}
+	conversation, err := NewConversation(context.Background(), Config{
+		Model: model, Tools: tools, MaxToolRounds: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := conversation.Ask(context.Background(), "inspect everything")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "partial conclusion from collected evidence" || len(tools.calls) != 1 {
+		t.Fatalf("answer=%q calls=%v", answer, tools.calls)
+	}
+}
+
+func TestConversationBlocksRepeatedIdenticalToolLoop(t *testing.T) {
+	model := &fakeModel{responses: []ModelResponse{
+		{ToolCalls: []FunctionCall{{ID: "call-1", Name: "scan", Arguments: `{"namespace":"models"}`}}},
+		{ToolCalls: []FunctionCall{{ID: "call-2", Name: "scan", Arguments: `{ "namespace": "models" }`}}},
+		{ToolCalls: []FunctionCall{{ID: "call-3", Name: "scan", Arguments: `{"namespace":"models"}`}}},
+		{Content: "stopped the loop and summarized two observations"},
+	}}
+	tools := &fakeTools{definitions: []ToolDefinition{{Name: "scan", ReadOnly: true}}}
+	conversation, err := NewConversation(context.Background(), Config{Model: model, Tools: tools})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := conversation.Ask(context.Background(), "inspect namespace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "stopped the loop and summarized two observations" || len(tools.calls) != 2 {
+		t.Fatalf("answer=%q calls=%v", answer, tools.calls)
+	}
+}
+
+func TestConversationRetriesOneEmptyModelResponseAndTracksUsage(t *testing.T) {
+	model := &fakeModel{responses: []ModelResponse{
+		{Usage: TokenUsage{PromptTokens: 10, CompletionTokens: 1, TotalTokens: 11}},
+		{Content: "recovered", Usage: TokenUsage{PromptTokens: 10, CompletionTokens: 2, TotalTokens: 12}},
+	}}
+	conversation, err := NewConversation(context.Background(), Config{
+		Model: model, Tools: &fakeTools{definitions: []ToolDefinition{{Name: "scan", ReadOnly: true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := conversation.Ask(context.Background(), "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stats := conversation.ContextStats()
+	if answer != "recovered" || stats.ModelCalls != 2 || stats.ReportedTotalTokens != 23 {
+		t.Fatalf("answer=%q stats=%#v", answer, stats)
+	}
+}
+
 type contextAwareModel struct {
 	compactions int
 }

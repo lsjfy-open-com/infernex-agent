@@ -48,6 +48,10 @@ type ContextStats struct {
 	PrunedToolResults    int
 	LastBeforeTokens     int
 	LastAfterTokens      int
+	ModelCalls           int
+	ReportedPromptTokens int
+	ReportedOutputTokens int
+	ReportedTotalTokens  int
 }
 
 func normalizeContextConfig(config ContextConfig) (ContextConfig, error) {
@@ -105,6 +109,8 @@ func (c *Conversation) ContextStats() ContextStats {
 		EstimatedTotalTokens: input + c.context.MaxOutputTokens, MessageCount: len(c.messages),
 		Compactions: c.compactions, PrunedToolResults: c.prunedToolResults,
 		LastBeforeTokens: c.lastBeforeTokens, LastAfterTokens: c.lastAfterTokens,
+		ModelCalls: c.modelCalls, ReportedPromptTokens: c.promptTokens,
+		ReportedOutputTokens: c.completionTokens, ReportedTotalTokens: c.totalTokens,
 	}
 }
 
@@ -166,7 +172,7 @@ func (c *Conversation) compactHistory(ctx context.Context, force bool) (bool, er
 	}
 	summaryMessages = append(summaryMessages, older...)
 	summaryMessages = append(summaryMessages, Message{Role: "user", Content: "Produce the compacted working memory now."})
-	response, err := c.model.Complete(ctx, summaryMessages, nil)
+	response, err := c.complete(ctx, summaryMessages, nil)
 	summary := strings.TrimSpace(response.Content)
 	if err != nil || summary == "" || len(response.ToolCalls) != 0 {
 		summary = deterministicSummary(c.messages[1:keepIndex])

@@ -30,7 +30,7 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 			t.Errorf("unexpected request: %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}`))
 	}))
 	defer server.Close()
 
@@ -46,6 +46,9 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 	}
 	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Name != "scan" {
 		t.Fatalf("response=%#v", response)
+	}
+	if response.Usage.PromptTokens != 42 || response.Usage.CompletionTokens != 7 || response.Usage.TotalTokens != 49 {
+		t.Fatalf("usage=%#v", response.Usage)
 	}
 }
 
@@ -68,6 +71,7 @@ func TestOpenAICompleteReturnsBoundedServerError(t *testing.T) {
 
 func TestOpenAICompleteRetriesTransientFailure(t *testing.T) {
 	attempts := 0
+	retries := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		attempts++
 		writer.Header().Set("Content-Type", "application/json")
@@ -82,6 +86,11 @@ func TestOpenAICompleteRetriesTransientFailure(t *testing.T) {
 
 	model, err := NewOpenAI(OpenAIConfig{
 		BaseURL: server.URL, Model: "ops-model", MaxRetries: 3, RetryDelay: time.Millisecond,
+		Progress: func(event ProgressEvent) {
+			if event.Kind == "model-retry" {
+				retries++
+			}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,8 +99,8 @@ func TestOpenAICompleteRetriesTransientFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attempts != 3 || response.Content != "ready" {
-		t.Fatalf("attempts=%d response=%#v", attempts, response)
+	if attempts != 3 || retries != 2 || response.Content != "ready" {
+		t.Fatalf("attempts=%d retries=%d response=%#v", attempts, retries, response)
 	}
 }
 

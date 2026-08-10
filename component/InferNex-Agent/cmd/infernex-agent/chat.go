@@ -22,6 +22,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -48,6 +50,7 @@ type chatOptions struct {
 	contextThreshold    int
 	keepRecentTurns     int
 	toolResultMaxTokens int
+	artifactDir         string
 	verbose             bool
 }
 
@@ -72,12 +75,14 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
+	progress := terminalProgress(os.Stderr, opts.verbose)
 	model, err := infernexchat.NewOpenAI(infernexchat.OpenAIConfig{
 		BaseURL:         opts.baseURL,
 		Model:           opts.model,
 		APIKey:          apiKey,
 		Timeout:         opts.timeout,
 		MaxOutputTokens: opts.maxOutputTokens,
+		Progress:        progress,
 	})
 	if err != nil {
 		return fmt.Errorf("configure interactive model: %w", err)
@@ -106,7 +111,7 @@ func runChat(args []string) error {
 		Model:         model,
 		Tools:         tools,
 		Approver:      approver,
-		Progress:      terminalProgress(os.Stderr, opts.verbose),
+		Progress:      progress,
 		MaxToolRounds: opts.maxToolRounds,
 		Context: infernexchat.ContextConfig{
 			WindowTokens:               opts.contextWindowTokens,
@@ -115,6 +120,7 @@ func runChat(args []string) error {
 			KeepRecentTurns:            opts.keepRecentTurns,
 			ToolResultMaxTokens:        opts.toolResultMaxTokens,
 		},
+		Artifacts: infernexchat.ArtifactConfig{Directory: opts.artifactDir},
 	})
 	if err != nil {
 		_ = tools.Close()
@@ -150,6 +156,7 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	flags.IntVar(&opts.contextThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "context usage percent that triggers compaction")
 	flags.IntVar(&opts.keepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "recent user turns retained verbatim during compaction")
 	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "approximate token cap for one tool result; default is 15% of the window up to 4096")
+	flags.StringVar(&opts.artifactDir, "artifact-dir", defaultChatArtifactDir(), "directory for large tool-result artifacts; empty disables storage")
 	flags.BoolVar(&opts.verbose, "verbose", false, "print bounded tool results to stderr")
 	if err := flags.Parse(args); err != nil {
 		return chatOptions{}, err
@@ -213,6 +220,17 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	opts.keepRecentTurns = resolved.KeepRecentTurns
 	opts.toolResultMaxTokens = resolved.ToolResultMaxTokens
 	return opts, nil
+}
+
+func defaultChatArtifactDir() string {
+	if runtime.GOOS != "windows" {
+		return "/var/lib/infernex-agent/chat-artifacts"
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "infernex-agent", "chat-artifacts")
+	}
+	return filepath.Join(cache, "infernex-agent", "chat-artifacts")
 }
 
 func readModelFileOptions(path string) (modelFileOptions, error) {
@@ -400,9 +418,10 @@ func interactiveChat(
 			}
 		case "/context":
 			stats := conversation.ContextStats()
-			fmt.Fprintf(output, "Context: estimated=%d + output-reserve=%d / window=%d tokens; threshold=%d; messages=%d; compactions=%d; pruned-tool-results=%d\n",
+			fmt.Fprintf(output, "Context: estimated=%d + output-reserve=%d / window=%d tokens; threshold=%d; messages=%d; compactions=%d; pruned-tool-results=%d; model-calls=%d; provider-reported prompt=%d output=%d total=%d\n",
 				stats.EstimatedInputTokens, stats.MaxOutputTokens, stats.WindowTokens, stats.ThresholdTokens,
-				stats.MessageCount, stats.Compactions, stats.PrunedToolResults)
+				stats.MessageCount, stats.Compactions, stats.PrunedToolResults, stats.ModelCalls,
+				stats.ReportedPromptTokens, stats.ReportedOutputTokens, stats.ReportedTotalTokens)
 		case "/help":
 			fmt.Fprintln(output, "Commands: /help, /context, /compact, /undo, /clear, /exit. Editing: Left/Right, Home/End, Backspace/Delete, Up/Down history, Ctrl+W delete word, Ctrl+U clear line, Ctrl+C cancel input, Ctrl+D exit. /undo removes model context only; it does not roll back approved cluster changes. Read-only tools run automatically; every write asks for exact 'yes'.")
 		default:
@@ -467,6 +486,18 @@ func terminalProgress(output io.Writer, verbose bool) infernexchat.Progress {
 			}
 		case "context-compaction":
 			fmt.Fprintf(output, "[context] %s\n", boundedTerminalText(event.Message, 512))
+		case "model-call":
+			fmt.Fprintf(output, "[model] %s\n", boundedTerminalText(event.Message, 256))
+		case "model-usage":
+			fmt.Fprintf(output, "[tokens] %s\n", boundedTerminalText(event.Message, 512))
+		case "model-retry", "model-empty":
+			fmt.Fprintf(output, "[model retry] %s\n", boundedTerminalText(event.Message, 512))
+		case "tool-loop":
+			fmt.Fprintf(output, "[loop blocked] %s\n", boundedTerminalText(event.Tool, 256))
+		case "tool-budget":
+			fmt.Fprintf(output, "[checkpoint] %s; requesting a partial conclusion\n", boundedTerminalText(event.Message, 512))
+		case "artifact-stored":
+			fmt.Fprintf(output, "[artifact] %s\n", boundedTerminalText(event.Message, 1024))
 		}
 	}
 }

@@ -294,14 +294,18 @@ Then start kubectl-ai with MCP client mode:
 kubectl-ai --mcp-client
 ```
 
-The terminal enforces a configurable model context budget. It caps each tool
-result, reserves `max_tokens` for the answer, summarizes older turns before the
-configured threshold, keeps recent turns verbatim, and refuses a request that
-still exceeds the hard window. Use `/context` to inspect the estimate and
+The terminal enforces a configurable model context budget. Large tool results
+are stored as permission-restricted, SHA-256-addressed local artifacts; the
+model receives a preview and can read only bounded line ranges through an
+opaque artifact ID. It reserves `max_tokens` for the answer, summarizes older
+turns before the configured threshold, keeps recent turns verbatim, blocks
+repeated identical tool calls, and requests a partial conclusion when the tool
+round budget is exhausted. Use `/context` to inspect the estimate and
 `/compact` to compact immediately. Host configuration accepts
 `--context-window-tokens`, `--max-output-tokens`,
 `--context-compaction-threshold`, `--context-keep-recent-turns`, and
-`--tool-result-max-tokens`. See the
+`--tool-result-max-tokens`. `infernex-agent chat --artifact-dir=...` changes
+the artifact root; an empty value disables artifact storage. See the
 [Chinese context management guide](docs/context-management-zh.md).
 
 On a TTY, chat uses a readline editor with cursor movement, Backspace/Delete,

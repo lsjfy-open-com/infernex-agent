@@ -505,8 +505,12 @@ test_endpoint() (
   grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
     bundle_die "model endpoint response does not contain choices"
   if [[ "$test_tools" == "true" ]]; then
-    grep -Eq '"tool_calls"[[:space:]]*:' "$response_file" ||
-      bundle_die "model endpoint does not return OpenAI-compatible tool_calls"
+    if ! grep -Eq '"tool_calls"[[:space:]]*:' "$response_file"; then
+      bundle_warn "the endpoint accepted the tools request but returned no message.tool_calls; bounded response follows"
+      head -c 4096 "$response_file" >&2 || true
+      printf '\n' >&2
+      bundle_die "model endpoint does not return OpenAI-compatible tool_calls; verify the live model ID, gateway passthrough, chat template, --enable-auto-tool-choice, and the model-specific --tool-call-parser"
+    fi
     grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file" ||
       bundle_die "model endpoint returned an unexpected tool call"
   fi

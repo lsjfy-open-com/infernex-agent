@@ -28,6 +28,7 @@ type OpenAIConfig struct {
 	RetryDelay      time.Duration
 	MaxOutputTokens int
 	HTTPClient      *http.Client
+	Progress        Progress
 }
 
 type OpenAI struct {
@@ -38,6 +39,7 @@ type OpenAI struct {
 	maxRetries      int
 	retryDelay      time.Duration
 	maxOutputTokens int
+	progress        Progress
 }
 
 type openAITool struct {
@@ -88,6 +90,11 @@ type openAIResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error,omitempty"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 func NewOpenAI(config OpenAIConfig) (*OpenAI, error) {
@@ -125,6 +132,7 @@ func NewOpenAI(config OpenAIConfig) (*OpenAI, error) {
 		maxRetries:      maxRetries,
 		retryDelay:      retryDelay,
 		maxOutputTokens: config.MaxOutputTokens,
+		progress:        config.Progress,
 	}, nil
 }
 
@@ -212,6 +220,15 @@ func (o *OpenAI) Complete(
 			}
 			break
 		}
+		if o.progress != nil {
+			reason := "transport error"
+			if response != nil {
+				reason = response.Status
+			}
+			o.progress(ProgressEvent{Kind: "model-retry", Message: fmt.Sprintf(
+				"attempt %d failed with %s; retrying", attempt+1, bounded(reason),
+			)})
+		}
 		if waitErr := waitForRetry(ctx, o.retryDelay, attempt); waitErr != nil {
 			return ModelResponse{}, waitErr
 		}
@@ -244,7 +261,13 @@ func (o *OpenAI) Complete(
 		return ModelResponse{}, fmt.Errorf("OpenAI response has no choices")
 	}
 	choice := decoded.Choices[0].Message
-	result := ModelResponse{Content: strings.TrimSpace(choice.Content)}
+	result := ModelResponse{
+		Content: strings.TrimSpace(choice.Content),
+		Usage: TokenUsage{
+			PromptTokens: decoded.Usage.PromptTokens, CompletionTokens: decoded.Usage.CompletionTokens,
+			TotalTokens: decoded.Usage.TotalTokens,
+		},
+	}
 	for _, call := range choice.ToolCalls {
 		if strings.TrimSpace(call.ID) == "" || strings.TrimSpace(call.Function.Name) == "" {
 			return ModelResponse{}, fmt.Errorf("OpenAI response contains an invalid tool call")

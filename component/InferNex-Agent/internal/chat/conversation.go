@@ -47,6 +47,10 @@ operator; never evade or weaken approval. Existing write tools are Bridge-specif
 be used for a Helm-managed installation. Do not invent arbitrary YAML, shell commands, images,
 URLs, namespaces, or Kubernetes operations. For a future Helm mutation, require captured current
 values, manifests and history, a preview, an approval, readiness observation, and rollback.
+Large log or evidence results may be replaced by a local artifact envelope containing a SHA-256,
+line count, and preview. Use infernex_read_artifact with that opaque artifact_id to read only the
+relevant line ranges or literal matches. Do not repeatedly request the same tool with identical
+arguments; narrow the query, summarize the evidence, or ask the operator when progress stalls.
 Answer in the user's language and clearly distinguish evidence, inference, action, observation,
 and advice.`
 
@@ -79,6 +83,13 @@ type FunctionCall struct {
 type ModelResponse struct {
 	Content   string
 	ToolCalls []FunctionCall
+	Usage     TokenUsage
+}
+
+type TokenUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	TotalTokens      int
 }
 
 type Model interface {
@@ -116,6 +127,7 @@ type Config struct {
 	Progress      Progress
 	MaxToolRounds int
 	Context       ContextConfig
+	Artifacts     ArtifactConfig
 }
 
 type Conversation struct {
@@ -132,6 +144,11 @@ type Conversation struct {
 	prunedToolResults int
 	lastBeforeTokens  int
 	lastAfterTokens   int
+	artifacts         *artifactStore
+	modelCalls        int
+	promptTokens      int
+	completionTokens  int
+	totalTokens       int
 }
 
 func NewConversation(ctx context.Context, config Config) (*Conversation, error) {
@@ -147,6 +164,18 @@ func NewConversation(ctx context.Context, config Config) (*Conversation, error) 
 	}
 	if len(definitions) == 0 {
 		return nil, fmt.Errorf("operations tool server returned no tools")
+	}
+	artifacts, err := newArtifactStore(config.Artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("configure chat artifacts: %w", err)
+	}
+	if artifacts != nil {
+		for _, definition := range definitions {
+			if definition.Name == artifactReadToolName {
+				return nil, fmt.Errorf("operations tool name %q is reserved", artifactReadToolName)
+			}
+		}
+		definitions = append(definitions, artifactToolDefinition())
 	}
 	contextConfig, err := normalizeContextConfig(config.Context)
 	if err != nil {
@@ -170,6 +199,7 @@ func NewConversation(ctx context.Context, config Config) (*Conversation, error) 
 		byName:        byName,
 		messages:      []Message{{Role: "system", Content: systemPrompt}},
 		context:       contextConfig,
+		artifacts:     artifacts,
 	}, nil
 }
 
@@ -207,6 +237,7 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 	}
 	c.messages = append(c.messages, Message{Role: "user", Content: input})
 
+	seenCalls := map[string]int{}
 	for round := 0; round <= c.maxToolRounds; round++ {
 		if err := c.prepareContext(ctx); err != nil {
 			if round == 0 {
@@ -214,9 +245,23 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 			}
 			return "", err
 		}
-		response, err := c.model.Complete(ctx, append([]Message(nil), c.messages...), c.definitions)
+		if c.progress != nil {
+			c.progress(ProgressEvent{Kind: "model-call", Message: fmt.Sprintf(
+				"round %d of %d", round+1, c.maxToolRounds+1,
+			)})
+		}
+		response, err := c.complete(ctx, append([]Message(nil), c.messages...), c.definitions)
 		if err != nil {
 			return "", fmt.Errorf("call interactive model: %w", err)
+		}
+		if strings.TrimSpace(response.Content) == "" && len(response.ToolCalls) == 0 {
+			if c.progress != nil {
+				c.progress(ProgressEvent{Kind: "model-empty", Message: "empty response; retrying once"})
+			}
+			response, err = c.complete(ctx, append([]Message(nil), c.messages...), c.definitions)
+			if err != nil {
+				return "", fmt.Errorf("retry empty interactive model response: %w", err)
+			}
 		}
 		assistant := Message{
 			Role:      "assistant",
@@ -231,10 +276,33 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 			return assistant.Content, nil
 		}
 		if round == c.maxToolRounds {
-			return "", fmt.Errorf("model exceeded the maximum of %d tool rounds", c.maxToolRounds)
+			for _, call := range response.ToolCalls {
+				c.messages = append(c.messages, Message{
+					Role: "tool", ToolCallID: call.ID,
+					Content: toolError("tool round budget exhausted; summarize existing evidence without more tools"),
+				})
+			}
+			return c.finalizeWithoutTools(ctx, fmt.Sprintf(
+				"maximum of %d tool rounds reached", c.maxToolRounds,
+			))
 		}
+		loopBlocked := false
 		for _, call := range response.ToolCalls {
-			result := c.executeTool(ctx, call)
+			fingerprint := toolCallFingerprint(call)
+			seenCalls[fingerprint]++
+			var result string
+			if seenCalls[fingerprint] > 2 {
+				loopBlocked = true
+				result = toolError("repeated identical tool call blocked; summarize existing evidence or ask the operator")
+				if c.progress != nil {
+					c.progress(ProgressEvent{Kind: "tool-loop", Tool: call.Name})
+				}
+			} else {
+				result = c.executeTool(ctx, call)
+			}
+			if call.Name != artifactReadToolName {
+				result = c.externalizeLargeResult(result)
+			}
 			result, truncated := truncateTextTokens(result, c.context.ToolResultMaxTokens)
 			if truncated {
 				result += fmt.Sprintf("\n[tool result capped at approximately %d tokens; retry with a narrower query if more evidence is required]", c.context.ToolResultMaxTokens)
@@ -245,8 +313,91 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 				Content:    result,
 			})
 		}
+		if loopBlocked {
+			return c.finalizeWithoutTools(ctx, "repeated identical tool calls were blocked")
+		}
 	}
 	return "", fmt.Errorf("interactive tool loop stopped unexpectedly")
+}
+
+func (c *Conversation) finalizeWithoutTools(ctx context.Context, reason string) (string, error) {
+	if c.progress != nil {
+		c.progress(ProgressEvent{Kind: "tool-budget", Message: reason})
+	}
+	response, err := c.complete(ctx, append([]Message(nil), c.messages...), nil)
+	if err != nil {
+		return "", fmt.Errorf("summarize partial result after %s: %w", reason, err)
+	}
+	content := strings.TrimSpace(response.Content)
+	if content == "" {
+		return fmt.Sprintf(
+			"Tool execution stopped safely (%s). Existing evidence remains in the current conversation; narrow the request or continue from this checkpoint.",
+			reason,
+		), nil
+	}
+	c.messages = append(c.messages, Message{Role: "assistant", Content: content})
+	return content, nil
+}
+
+func (c *Conversation) complete(
+	ctx context.Context, messages []Message, tools []ToolDefinition,
+) (ModelResponse, error) {
+	response, err := c.model.Complete(ctx, messages, tools)
+	if err != nil {
+		return response, err
+	}
+	c.modelCalls++
+	usage := response.Usage
+	if usage.TotalTokens == 0 && (usage.PromptTokens > 0 || usage.CompletionTokens > 0) {
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	c.promptTokens += max(0, usage.PromptTokens)
+	c.completionTokens += max(0, usage.CompletionTokens)
+	c.totalTokens += max(0, usage.TotalTokens)
+	if c.progress != nil && usage.TotalTokens > 0 {
+		c.progress(ProgressEvent{Kind: "model-usage", Message: fmt.Sprintf(
+			"prompt=%d completion=%d total=%d; session-total=%d",
+			usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, c.totalTokens,
+		)})
+	}
+	return response, nil
+}
+
+func toolCallFingerprint(call FunctionCall) string {
+	arguments := strings.TrimSpace(call.Arguments)
+	var decoded any
+	if json.Unmarshal([]byte(arguments), &decoded) == nil {
+		if canonical, err := json.Marshal(decoded); err == nil {
+			arguments = string(canonical)
+		}
+	}
+	return call.Name + "\x00" + arguments
+}
+
+func (c *Conversation) externalizeLargeResult(result string) string {
+	if c.artifacts == nil || estimateTextTokens(result) <= c.context.ToolResultMaxTokens {
+		return result
+	}
+	record, err := c.artifacts.put(result)
+	if err != nil {
+		return result + "\n[large tool result could not be saved as an artifact: " + err.Error() + "]"
+	}
+	previewTokens := min(1024, max(128, c.context.ToolResultMaxTokens/2))
+	preview, _ := truncateTextTokens(result, previewTokens)
+	payload := map[string]any{
+		"artifact_id": record.ID, "sha256": record.SHA256, "bytes": record.Bytes,
+		"lines": record.Lines, "preview": preview,
+		"next": "Use infernex_read_artifact with this artifact_id and a bounded line range for more evidence.",
+	}
+	encoded, _ := json.Marshal(payload)
+	if c.progress != nil {
+		c.progress(ProgressEvent{
+			Kind: "artifact-stored", Message: fmt.Sprintf(
+				"%s (%d bytes, %d lines, sha256 %s)", record.Path, record.Bytes, record.Lines, record.SHA256,
+			),
+		})
+	}
+	return string(encoded)
 }
 
 func (c *Conversation) removeLastUserMessage(content string) {
@@ -276,6 +427,19 @@ func (c *Conversation) executeTool(ctx context.Context, call FunctionCall) strin
 			}
 			return toolError("decode trailing tool arguments: " + err.Error())
 		}
+	}
+	if call.Name == artifactReadToolName {
+		if c.artifacts == nil {
+			return toolError("chat artifact storage is disabled")
+		}
+		result, err := c.artifacts.read(arguments)
+		if err != nil {
+			return toolError(err.Error())
+		}
+		if c.progress != nil {
+			c.progress(ProgressEvent{Kind: "tool-result", Tool: call.Name, ReadOnly: true, Message: result})
+		}
+		return result
 	}
 	if c.progress != nil {
 		c.progress(ProgressEvent{
