@@ -37,6 +37,7 @@ import (
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/analyzer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
@@ -76,6 +77,11 @@ type options struct {
 	openAIModel                  string
 	openAIAPIKeyFile             string
 	openAITimeout                time.Duration
+	contextWindowTokens          int
+	maxOutputTokens              int
+	contextCompactionThreshold   int
+	contextKeepRecentTurns       int
+	toolResultMaxTokens          int
 	enableAutoRecovery           bool
 	recoveryTemplateNS           string
 	recoveryMinScans             int
@@ -189,6 +195,11 @@ func parseServerOptions(args []string) (options, error) {
 		10*time.Minute,
 		"Rollback a newly created catalog service if it is not Ready within this duration",
 	)
+	flags.IntVar(&opts.contextWindowTokens, "context-window-tokens", infernexchat.DefaultContextWindowTokens, "Interactive model context window token budget")
+	flags.IntVar(&opts.maxOutputTokens, "max-output-tokens", 0, "Interactive model output token reserve; zero derives a safe default")
+	flags.IntVar(&opts.contextCompactionThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "Context usage percent that triggers compaction")
+	flags.IntVar(&opts.contextKeepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "Recent interactive turns retained during compaction")
+	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "Approximate token cap for one interactive tool result; zero derives a safe default")
 	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
@@ -292,6 +303,13 @@ func parseServerOptions(args []string) (options, error) {
 	}
 	if opts.enableTestCatalog && !opts.enableDeployment {
 		return options{}, fmt.Errorf("--enable-test-catalog requires --enable-deployment")
+	}
+	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
+		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
+		CompactionThresholdPercent: opts.contextCompactionThreshold,
+		KeepRecentTurns:            opts.contextKeepRecentTurns, ToolResultMaxTokens: opts.toolResultMaxTokens,
+	}); err != nil {
+		return options{}, fmt.Errorf("invalid chat context configuration: %w", err)
 	}
 	return opts, nil
 }

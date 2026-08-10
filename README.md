@@ -103,6 +103,7 @@ an optional hardened installation policy, not a separate package.
 - [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
 - [工具集、知识库与业界方案取舍](component/InferNex-Agent/docs/toolsets-and-knowledge-zh.md)
 - [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
+- [上下文预算、自动压缩和窗口配置](component/InferNex-Agent/docs/context-management-zh.md)
 - [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
 - [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
 - [变更保护、备份与回退](component/InferNex-Agent/docs/change-safety-zh.md)

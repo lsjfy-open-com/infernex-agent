@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,22 +33,32 @@ import (
 const maxAPIKeyBytes = 64 * 1024
 
 type chatOptions struct {
-	configPath    string
-	mcpURL        string
-	baseURL       string
-	model         string
-	apiKeyFile    string
-	timeout       time.Duration
-	ask           string
-	maxToolRounds int
-	verbose       bool
+	configPath          string
+	mcpURL              string
+	baseURL             string
+	model               string
+	apiKeyFile          string
+	timeout             time.Duration
+	ask                 string
+	maxToolRounds       int
+	contextWindowTokens int
+	maxOutputTokens     int
+	contextThreshold    int
+	keepRecentTurns     int
+	toolResultMaxTokens int
+	verbose             bool
 }
 
 type modelFileOptions struct {
-	baseURL    string
-	model      string
-	apiKeyFile string
-	timeout    time.Duration
+	baseURL             string
+	model               string
+	apiKeyFile          string
+	timeout             time.Duration
+	contextWindowTokens int
+	maxOutputTokens     int
+	contextThreshold    int
+	keepRecentTurns     int
+	toolResultMaxTokens int
 }
 
 func runChat(args []string) error {
@@ -60,10 +71,11 @@ func runChat(args []string) error {
 		return err
 	}
 	model, err := infernexchat.NewOpenAI(infernexchat.OpenAIConfig{
-		BaseURL: opts.baseURL,
-		Model:   opts.model,
-		APIKey:  apiKey,
-		Timeout: opts.timeout,
+		BaseURL:         opts.baseURL,
+		Model:           opts.model,
+		APIKey:          apiKey,
+		Timeout:         opts.timeout,
+		MaxOutputTokens: opts.maxOutputTokens,
 	})
 	if err != nil {
 		return fmt.Errorf("configure interactive model: %w", err)
@@ -87,6 +99,13 @@ func runChat(args []string) error {
 		Approver:      approver,
 		Progress:      terminalProgress(os.Stderr, opts.verbose),
 		MaxToolRounds: opts.maxToolRounds,
+		Context: infernexchat.ContextConfig{
+			WindowTokens:               opts.contextWindowTokens,
+			MaxOutputTokens:            opts.maxOutputTokens,
+			CompactionThresholdPercent: opts.contextThreshold,
+			KeepRecentTurns:            opts.keepRecentTurns,
+			ToolResultMaxTokens:        opts.toolResultMaxTokens,
+		},
 	})
 	if err != nil {
 		_ = tools.Close()
@@ -117,6 +136,11 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	flags.DurationVar(&opts.timeout, "timeout", 3*time.Minute, "per-attempt model request timeout")
 	flags.StringVar(&opts.ask, "ask", "", "ask once and exit; write tools are denied")
 	flags.IntVar(&opts.maxToolRounds, "max-tool-rounds", 8, "maximum model/tool rounds per question")
+	flags.IntVar(&opts.contextWindowTokens, "context-window-tokens", infernexchat.DefaultContextWindowTokens, "model context window token budget")
+	flags.IntVar(&opts.maxOutputTokens, "max-output-tokens", 0, "output tokens reserved and requested per model call; default is derived from the context window")
+	flags.IntVar(&opts.contextThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "context usage percent that triggers compaction")
+	flags.IntVar(&opts.keepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "recent user turns retained verbatim during compaction")
+	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "approximate token cap for one tool result; default is 15% of the window up to 4096")
 	flags.BoolVar(&opts.verbose, "verbose", false, "print bounded tool results to stderr")
 	if err := flags.Parse(args); err != nil {
 		return chatOptions{}, err
@@ -146,11 +170,39 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	if !explicit["timeout"] && fileOpts.timeout > 0 {
 		opts.timeout = fileOpts.timeout
 	}
+	if !explicit["context-window-tokens"] && fileOpts.contextWindowTokens > 0 {
+		opts.contextWindowTokens = fileOpts.contextWindowTokens
+	}
+	if !explicit["max-output-tokens"] && fileOpts.maxOutputTokens > 0 {
+		opts.maxOutputTokens = fileOpts.maxOutputTokens
+	}
+	if !explicit["context-compaction-threshold"] && fileOpts.contextThreshold > 0 {
+		opts.contextThreshold = fileOpts.contextThreshold
+	}
+	if !explicit["context-keep-recent-turns"] && fileOpts.keepRecentTurns > 0 {
+		opts.keepRecentTurns = fileOpts.keepRecentTurns
+	}
+	if !explicit["tool-result-max-tokens"] && fileOpts.toolResultMaxTokens > 0 {
+		opts.toolResultMaxTokens = fileOpts.toolResultMaxTokens
+	}
 	if strings.TrimSpace(opts.baseURL) == "" || strings.TrimSpace(opts.model) == "" {
 		return chatOptions{}, fmt.Errorf(
 			"interactive model is not configured; run sudo /opt/infernex-agent/bin/configure-model.sh --base-url <URL> --model <MODEL> --api-key-file <FILE> --test-tools",
 		)
 	}
+	resolved, err := infernexchat.ResolveContextConfig(infernexchat.ContextConfig{
+		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
+		CompactionThresholdPercent: opts.contextThreshold, KeepRecentTurns: opts.keepRecentTurns,
+		ToolResultMaxTokens: opts.toolResultMaxTokens,
+	})
+	if err != nil {
+		return chatOptions{}, fmt.Errorf("invalid chat context configuration: %w", err)
+	}
+	opts.contextWindowTokens = resolved.WindowTokens
+	opts.maxOutputTokens = resolved.MaxOutputTokens
+	opts.contextThreshold = resolved.CompactionThresholdPercent
+	opts.keepRecentTurns = resolved.KeepRecentTurns
+	opts.toolResultMaxTokens = resolved.ToolResultMaxTokens
 	return opts, nil
 }
 
@@ -181,12 +233,34 @@ func readModelFileOptions(path string) (modelFileOptions, error) {
 			if err != nil {
 				return modelFileOptions{}, fmt.Errorf("parse --openai-timeout in %s: %w", path, err)
 			}
+		case strings.HasPrefix(line, "--context-window-tokens="):
+			result.contextWindowTokens, err = parsePositiveConfigInt(line, "--context-window-tokens=")
+		case strings.HasPrefix(line, "--max-output-tokens="):
+			result.maxOutputTokens, err = parsePositiveConfigInt(line, "--max-output-tokens=")
+		case strings.HasPrefix(line, "--context-compaction-threshold="):
+			result.contextThreshold, err = parsePositiveConfigInt(line, "--context-compaction-threshold=")
+		case strings.HasPrefix(line, "--context-keep-recent-turns="):
+			result.keepRecentTurns, err = parsePositiveConfigInt(line, "--context-keep-recent-turns=")
+		case strings.HasPrefix(line, "--tool-result-max-tokens="):
+			result.toolResultMaxTokens, err = parsePositiveConfigInt(line, "--tool-result-max-tokens=")
+		}
+		if err != nil {
+			return modelFileOptions{}, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return modelFileOptions{}, fmt.Errorf("read Agent configuration %s: %w", path, err)
 	}
 	return result, nil
+}
+
+func parsePositiveConfigInt(line, prefix string) (int, error) {
+	value := strings.TrimPrefix(line, prefix)
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("parse %s in Agent configuration: expected a positive integer", strings.TrimSuffix(prefix, "="))
+	}
+	return parsed, nil
 }
 
 func readAPIKey(path string) (string, error) {
@@ -230,8 +304,19 @@ func interactiveChat(
 		case "/clear":
 			conversation.Reset()
 			fmt.Fprintln(output, "Conversation cleared.")
+		case "/compact":
+			if compactErr := conversation.Compact(ctx); compactErr != nil {
+				fmt.Fprintf(output, "error: %v\n", compactErr)
+			} else {
+				fmt.Fprintln(output, "Conversation context compacted.")
+			}
+		case "/context":
+			stats := conversation.ContextStats()
+			fmt.Fprintf(output, "Context: estimated=%d + output-reserve=%d / window=%d tokens; threshold=%d; messages=%d; compactions=%d; pruned-tool-results=%d\n",
+				stats.EstimatedInputTokens, stats.MaxOutputTokens, stats.WindowTokens, stats.ThresholdTokens,
+				stats.MessageCount, stats.Compactions, stats.PrunedToolResults)
 		case "/help":
-			fmt.Fprintln(output, "Commands: /help, /clear, /exit. Read-only tools run automatically; every write asks for exact 'yes'.")
+			fmt.Fprintln(output, "Commands: /help, /context, /compact, /clear, /exit. Read-only tools run automatically; every write asks for exact 'yes'.")
 		default:
 			answer, askErr := conversation.Ask(ctx, input)
 			if askErr != nil {
@@ -289,6 +374,8 @@ func terminalProgress(output io.Writer, verbose bool) infernexchat.Progress {
 					boundedTerminalText(event.Message, 4096),
 				)
 			}
+		case "context-compaction":
+			fmt.Fprintf(output, "[context] %s\n", boundedTerminalText(event.Message, 512))
 		}
 	}
 }

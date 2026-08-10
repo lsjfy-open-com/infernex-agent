@@ -20,22 +20,24 @@ import (
 const maxModelResponseBytes = 1024 * 1024
 
 type OpenAIConfig struct {
-	BaseURL    string
-	Model      string
-	APIKey     string
-	Timeout    time.Duration
-	MaxRetries int
-	RetryDelay time.Duration
-	HTTPClient *http.Client
+	BaseURL         string
+	Model           string
+	APIKey          string
+	Timeout         time.Duration
+	MaxRetries      int
+	RetryDelay      time.Duration
+	MaxOutputTokens int
+	HTTPClient      *http.Client
 }
 
 type OpenAI struct {
-	endpoint   string
-	model      string
-	apiKey     string
-	client     *http.Client
-	maxRetries int
-	retryDelay time.Duration
+	endpoint        string
+	model           string
+	apiKey          string
+	client          *http.Client
+	maxRetries      int
+	retryDelay      time.Duration
+	maxOutputTokens int
 }
 
 type openAITool struct {
@@ -74,6 +76,7 @@ type openAIRequest struct {
 	ToolChoice  string          `json:"tool_choice,omitempty"`
 	Temperature float64         `json:"temperature"`
 	Stream      bool            `json:"stream"`
+	MaxTokens   int             `json:"max_tokens,omitempty"`
 }
 
 type openAIResponse struct {
@@ -115,12 +118,13 @@ func NewOpenAI(config OpenAIConfig) (*OpenAI, error) {
 		retryDelay = time.Second
 	}
 	return &OpenAI{
-		endpoint:   endpoint,
-		model:      model,
-		apiKey:     strings.TrimSpace(config.APIKey),
-		client:     client,
-		maxRetries: maxRetries,
-		retryDelay: retryDelay,
+		endpoint:        endpoint,
+		model:           model,
+		apiKey:          strings.TrimSpace(config.APIKey),
+		client:          client,
+		maxRetries:      maxRetries,
+		retryDelay:      retryDelay,
+		maxOutputTokens: config.MaxOutputTokens,
 	}, nil
 }
 
@@ -169,6 +173,7 @@ func (o *OpenAI) Complete(
 		Tools:       requestTools,
 		Temperature: 0,
 		Stream:      false,
+		MaxTokens:   o.maxOutputTokens,
 	}
 	if len(requestTools) > 0 {
 		requestPayload.ToolChoice = "auto"

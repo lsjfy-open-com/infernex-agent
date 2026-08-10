@@ -24,6 +24,15 @@ Actions:
   --api-key-file FILE     Install or rotate the protected API key
   --clear-api-key         Remove the installed API key
   --timeout DURATION      Per-attempt timeout, for example 3m or 300s
+  --context-window-tokens N
+                         Model context window (default: 32768)
+  --max-output-tokens N  Output reservation and per-call maximum
+  --context-compaction-threshold PERCENT
+                         Compact at this context usage (default: 80)
+  --context-keep-recent-turns N
+                         Recent user turns kept verbatim (default: 4)
+  --tool-result-max-tokens N
+                         Approximate cap for one tool result
   --disable               Disable model analysis and remove its API key
   --test                  Send a small chat-completions request before applying
   --test-tools            Force a harmless function call for terminal compatibility
@@ -49,10 +58,20 @@ service_user="infernex-agent"
 base_url=""
 model=""
 request_timeout=""
+context_window_tokens=""
+max_output_tokens=""
+context_compaction_threshold=""
+context_keep_recent_turns=""
+tool_result_max_tokens=""
 api_key_source=""
 base_url_set="false"
 model_set="false"
 timeout_set="false"
+context_window_set="false"
+max_output_set="false"
+context_threshold_set="false"
+keep_recent_set="false"
+tool_result_max_set="false"
 api_key_set="false"
 clear_api_key="false"
 disable_model="false"
@@ -95,6 +114,36 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--timeout requires a value"
       request_timeout="$2"
       timeout_set="true"
+      shift 2
+      ;;
+    --context-window-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--context-window-tokens requires a value"
+      context_window_tokens="$2"
+      context_window_set="true"
+      shift 2
+      ;;
+    --max-output-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--max-output-tokens requires a value"
+      max_output_tokens="$2"
+      max_output_set="true"
+      shift 2
+      ;;
+    --context-compaction-threshold)
+      [[ $# -ge 2 ]] || bundle_die "--context-compaction-threshold requires a value"
+      context_compaction_threshold="$2"
+      context_threshold_set="true"
+      shift 2
+      ;;
+    --context-keep-recent-turns)
+      [[ $# -ge 2 ]] || bundle_die "--context-keep-recent-turns requires a value"
+      context_keep_recent_turns="$2"
+      keep_recent_set="true"
+      shift 2
+      ;;
+    --tool-result-max-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--tool-result-max-tokens requires a value"
+      tool_result_max_tokens="$2"
+      tool_result_max_set="true"
       shift 2
       ;;
     --disable)
@@ -153,6 +202,20 @@ if [[ "$interactive" == "true" ]]; then
   model_set="true"
   test_model="true"
   test_tools="true"
+  interactive_context_default="32768"
+  if [[ "$context_window_set" == "true" ]]; then
+    interactive_context_default="$context_window_tokens"
+  elif [[ -r "$config_file" ]]; then
+    while IFS= read -r existing_argument; do
+      case "$existing_argument" in
+        --context-window-tokens=*) interactive_context_default="${existing_argument#*=}" ;;
+      esac
+    done <"$config_file"
+  fi
+  printf '模型上下文窗口 token 数 [%s]: ' "$interactive_context_default"
+  IFS= read -r context_window_tokens
+  context_window_tokens="${context_window_tokens:-$interactive_context_default}"
+  context_window_set="true"
   if [[ -n "$interactive_key" ]]; then
     interactive_key_file="$(mktemp /tmp/infernex-agent-model-key.XXXXXX)"
     chmod 0600 "$interactive_key_file"
@@ -189,6 +252,11 @@ mapfile -t current_args <"$config_file"
 current_base_url=""
 current_model=""
 current_timeout="3m"
+current_context_window="32768"
+current_max_output=""
+current_context_threshold="80"
+current_keep_recent="4"
+current_tool_result_max=""
 for argument in "${current_args[@]}"; do
   [[ -n "$argument" && "$argument" == --* ]] ||
     bundle_die "${config_file} contains an invalid argument"
@@ -196,6 +264,11 @@ for argument in "${current_args[@]}"; do
     --openai-base-url=*) current_base_url="${argument#*=}" ;;
     --openai-model=*) current_model="${argument#*=}" ;;
     --openai-timeout=*) current_timeout="${argument#*=}" ;;
+    --context-window-tokens=*) current_context_window="${argument#*=}" ;;
+    --max-output-tokens=*) current_max_output="${argument#*=}" ;;
+    --context-compaction-threshold=*) current_context_threshold="${argument#*=}" ;;
+    --context-keep-recent-turns=*) current_keep_recent="${argument#*=}" ;;
+    --tool-result-max-tokens=*) current_tool_result_max="${argument#*=}" ;;
   esac
 done
 [[ -z "$current_base_url" && -z "$current_model" ||
@@ -205,14 +278,51 @@ done
 candidate_base_url="$current_base_url"
 candidate_model="$current_model"
 candidate_timeout="$current_timeout"
+candidate_context_window="$current_context_window"
+candidate_max_output="$current_max_output"
+candidate_context_threshold="$current_context_threshold"
+candidate_keep_recent="$current_keep_recent"
+candidate_tool_result_max="$current_tool_result_max"
 [[ "$base_url_set" == "false" ]] || candidate_base_url="$base_url"
 [[ "$model_set" == "false" ]] || candidate_model="$model"
 [[ "$timeout_set" == "false" ]] || candidate_timeout="$request_timeout"
+[[ "$context_window_set" == "false" ]] || candidate_context_window="$context_window_tokens"
+[[ "$max_output_set" == "false" ]] || candidate_max_output="$max_output_tokens"
+[[ "$context_threshold_set" == "false" ]] || candidate_context_threshold="$context_compaction_threshold"
+[[ "$keep_recent_set" == "false" ]] || candidate_keep_recent="$context_keep_recent_turns"
+[[ "$tool_result_max_set" == "false" ]] || candidate_tool_result_max="$tool_result_max_tokens"
+
+# Recalculate safe derived defaults when an operator changes only the window.
+[[ "$candidate_context_window" =~ ^[0-9]+$ ]] ||
+  bundle_die "context window tokens must be a positive integer"
+((candidate_context_window >= 2048 && candidate_context_window <= 4000000)) ||
+  bundle_die "context window tokens must be between 2048 and 4000000"
+if [[ "$context_window_set" == "true" && "$max_output_set" == "false" ]]; then
+  candidate_max_output=$((candidate_context_window / 8))
+  ((candidate_max_output <= 2048)) || candidate_max_output=2048
+fi
+if [[ "$context_window_set" == "true" && "$tool_result_max_set" == "false" ]]; then
+  candidate_tool_result_max=$((candidate_context_window * 15 / 100))
+  ((candidate_tool_result_max <= 4096)) || candidate_tool_result_max=4096
+fi
+if [[ -z "$candidate_max_output" ]]; then
+  candidate_max_output=$((candidate_context_window / 8))
+  ((candidate_max_output <= 2048)) || candidate_max_output=2048
+fi
+if [[ -z "$candidate_tool_result_max" ]]; then
+  candidate_tool_result_max=$((candidate_context_window * 15 / 100))
+  ((candidate_tool_result_max <= 4096)) || candidate_tool_result_max=4096
+fi
 
 modify_requested="false"
 if [[ "$base_url_set" == "true" ||
   "$model_set" == "true" ||
   "$timeout_set" == "true" ||
+  "$context_window_set" == "true" ||
+  "$max_output_set" == "true" ||
+  "$context_threshold_set" == "true" ||
+  "$keep_recent_set" == "true" ||
+  "$tool_result_max_set" == "true" ||
   "$api_key_set" == "true" ||
   "$clear_api_key" == "true" ||
   "$disable_model" == "true" ]]; then
@@ -250,6 +360,29 @@ validate_model_config \
   "$candidate_base_url" \
   "$candidate_model" \
   "$candidate_timeout"
+
+validate_context_config() {
+  local window="$1" output="$2" threshold="$3" keep_recent="$4" tool_max="$5"
+  for value in "$window" "$output" "$threshold" "$keep_recent" "$tool_max"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || bundle_die "context values must be positive integers"
+  done
+  ((window >= 2048 && window <= 4000000)) ||
+    bundle_die "context window tokens must be between 2048 and 4000000"
+  ((output >= 128 && output < window)) ||
+    bundle_die "max output tokens must be at least 128 and smaller than the context window"
+  ((threshold >= 50 && threshold <= 95)) ||
+    bundle_die "context compaction threshold must be between 50 and 95 percent"
+  ((keep_recent >= 1 && keep_recent <= 32)) ||
+    bundle_die "recent turns to keep must be between 1 and 32"
+  ((tool_max >= 128 && tool_max < window)) ||
+    bundle_die "tool result token limit must be at least 128 and smaller than the context window"
+  ((output < window * threshold / 100)) ||
+    bundle_die "max output tokens must be smaller than the compaction threshold budget"
+}
+validate_context_config \
+  "$candidate_context_window" "$candidate_max_output" \
+  "$candidate_context_threshold" "$candidate_keep_recent" \
+  "$candidate_tool_result_max"
 
 validate_api_key_file() {
   local source_file="$1"
@@ -400,6 +533,11 @@ show_configuration() {
   printf 'base_url=%s\n' "${candidate_base_url:--}"
   printf 'model=%s\n' "${candidate_model:--}"
   printf 'timeout=%s\n' "$candidate_timeout"
+  printf 'context_window_tokens=%s\n' "$candidate_context_window"
+  printf 'max_output_tokens=%s\n' "$candidate_max_output"
+  printf 'context_compaction_threshold_percent=%s\n' "$candidate_context_threshold"
+  printf 'context_keep_recent_turns=%s\n' "$candidate_keep_recent"
+  printf 'tool_result_max_tokens=%s\n' "$candidate_tool_result_max"
   printf 'api_key=%s\n' "$credential"
 }
 
@@ -408,7 +546,10 @@ if [[ "$modify_requested" == "true" ]]; then
   declare -a updated_args=()
   for argument in "${current_args[@]}"; do
     case "$argument" in
-      --openai-base-url=* | --openai-model=* | --openai-api-key-file=* | --openai-timeout=*)
+      --openai-base-url=* | --openai-model=* | --openai-api-key-file=* | --openai-timeout=* | \
+        --context-window-tokens=* | --max-output-tokens=* | \
+        --context-compaction-threshold=* | --context-keep-recent-turns=* | \
+        --tool-result-max-tokens=*)
         ;;
       *) updated_args+=("$argument") ;;
     esac
@@ -424,6 +565,13 @@ if [[ "$modify_requested" == "true" ]]; then
       updated_args+=("--openai-api-key-file=${credential_file}")
     fi
   fi
+  updated_args+=(
+    "--context-window-tokens=${candidate_context_window}"
+    "--max-output-tokens=${candidate_max_output}"
+    "--context-compaction-threshold=${candidate_context_threshold}"
+    "--context-keep-recent-turns=${candidate_keep_recent}"
+    "--tool-result-max-tokens=${candidate_tool_result_max}"
+  )
 
   config_backup="$(mktemp /etc/infernex-agent/.agent.conf.backup.XXXXXX)"
   cp --preserve=mode,ownership,timestamps -- "$config_file" "$config_backup"

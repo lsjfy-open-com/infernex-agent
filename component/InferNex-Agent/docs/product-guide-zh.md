@@ -88,6 +88,9 @@ sudo ./install.sh
 
 这里的 model ID 是 Agent 背后的对话/规划模型，不是要部署的推理实例名。也可先执行
 `sudo ./install.sh --skip-model-setup`，稍后运行 `sudo infernex-agent setup`。
+安装器还会询问这个模型的上下文窗口；不知道时直接使用 32768。Agent 会限制每次输出与
+工具结果，在到达窗口前自动压缩较早对话。运行中可用 `/context` 查看预算、用 `/compact`
+手动压缩；完整说明见[上下文管理](context-management-zh.md)。
 
 正常交互安装的顺序是：发现环境、建立安装恢复点、写入候选文件、配置并测试模型、启动
 systemd、检查 MCP 与 Dashboard。这样启动失败时模型已经可用于分析，而不是失败后才

@@ -294,6 +294,16 @@ Then start kubectl-ai with MCP client mode:
 kubectl-ai --mcp-client
 ```
 
+The terminal enforces a configurable model context budget. It caps each tool
+result, reserves `max_tokens` for the answer, summarizes older turns before the
+configured threshold, keeps recent turns verbatim, and refuses a request that
+still exceeds the hard window. Use `/context` to inspect the estimate and
+`/compact` to compact immediately. Host configuration accepts
+`--context-window-tokens`, `--max-output-tokens`,
+`--context-compaction-threshold`, `--context-keep-recent-turns`, and
+`--tool-result-max-tokens`. See the
+[Chinese context management guide](docs/context-management-zh.md).
+
 For a production deployment, run kubectl-ai and InferNex Agent in the same
 restricted management namespace, keep the Agent Service internal, and enable
 the chart NetworkPolicy.
@@ -403,6 +413,7 @@ Product documentation:
 - [Progressive experiments and cross-node diagnostics](docs/progressive-experiments-zh.md)
 - [Change safety, backup, and rollback](docs/change-safety-zh.md)
 - [Model configuration lifecycle](docs/model-configuration-zh.md)
+- [Context budget and automatic compaction](docs/context-management-zh.md)
 - [Security and capability boundaries](docs/security-boundaries-zh.md)
 - [Operations runbook](docs/operations-runbook-zh.md)
 

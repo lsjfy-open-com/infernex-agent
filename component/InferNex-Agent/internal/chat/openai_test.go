@@ -26,7 +26,7 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Model != "ops-model" || len(body.Tools) != 1 || body.Tools[0].Function.Name != "scan" {
+		if body.Model != "ops-model" || body.MaxTokens != 321 || len(body.Tools) != 1 || body.Tools[0].Function.Name != "scan" {
 			t.Errorf("unexpected request: %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
@@ -34,7 +34,7 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model", APIKey: "secret"})
+	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model", APIKey: "secret", MaxOutputTokens: 321})
 	if err != nil {
 		t.Fatal(err)
 	}

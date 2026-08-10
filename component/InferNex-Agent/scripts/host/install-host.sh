@@ -29,6 +29,11 @@ Options:
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
   --openai-timeout DURATION        Per-attempt model timeout (default: 3m)
+  --context-window-tokens N        Model context window (default: 32768)
+  --max-output-tokens N            Output reservation and per-call maximum
+  --context-compaction-threshold P Compact at this usage percent (default: 80)
+  --context-keep-recent-turns N    Recent user turns kept verbatim (default: 4)
+  --tool-result-max-tokens N       Approximate cap for one tool result
   --enable-log-diagnostics         Read bounded InferNex-owned Pod logs
   --max-diagnostics-per-scan N     Degraded services read per scan (default: 10)
   --enable-experiments             Run durable, single-feature experiments
@@ -63,6 +68,16 @@ openai_base_url=""
 openai_model=""
 openai_api_key_source=""
 openai_timeout=""
+context_window_tokens="32768"
+max_output_tokens=""
+context_compaction_threshold="80"
+context_keep_recent_turns="4"
+tool_result_max_tokens=""
+context_window_set="false"
+max_output_set="false"
+context_threshold_set="false"
+keep_recent_set="false"
+tool_result_max_set="false"
 enable_log_diagnostics="false"
 max_diagnostics_per_scan="10"
 enable_experiments="false"
@@ -137,6 +152,36 @@ while (($#)); do
     --openai-timeout)
       [[ $# -ge 2 ]] || bundle_die "--openai-timeout requires a value"
       openai_timeout="$2"
+      shift 2
+      ;;
+    --context-window-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--context-window-tokens requires a value"
+      context_window_tokens="$2"
+      context_window_set="true"
+      shift 2
+      ;;
+    --max-output-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--max-output-tokens requires a value"
+      max_output_tokens="$2"
+      max_output_set="true"
+      shift 2
+      ;;
+    --context-compaction-threshold)
+      [[ $# -ge 2 ]] || bundle_die "--context-compaction-threshold requires a value"
+      context_compaction_threshold="$2"
+      context_threshold_set="true"
+      shift 2
+      ;;
+    --context-keep-recent-turns)
+      [[ $# -ge 2 ]] || bundle_die "--context-keep-recent-turns requires a value"
+      context_keep_recent_turns="$2"
+      keep_recent_set="true"
+      shift 2
+      ;;
+    --tool-result-max-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--tool-result-max-tokens requires a value"
+      tool_result_max_tokens="$2"
+      tool_result_max_set="true"
       shift 2
       ;;
     --enable-log-diagnostics)
@@ -708,6 +753,25 @@ if [[ "$preserve_model_config" == "true" ]]; then
       --openai-timeout=*)
         agent_args+=("$argument")
         ;;
+      --context-window-tokens=*)
+        [[ "$context_window_set" == "true" ]] || context_window_tokens="${argument#*=}"
+        ;;
+      --max-output-tokens=*)
+        if [[ "$max_output_set" == "false" && "$context_window_set" == "false" ]]; then
+          max_output_tokens="${argument#*=}"
+        fi
+        ;;
+      --context-compaction-threshold=*)
+        [[ "$context_threshold_set" == "true" ]] || context_compaction_threshold="${argument#*=}"
+        ;;
+      --context-keep-recent-turns=*)
+        [[ "$keep_recent_set" == "true" ]] || context_keep_recent_turns="${argument#*=}"
+        ;;
+      --tool-result-max-tokens=*)
+        if [[ "$tool_result_max_set" == "false" && "$context_window_set" == "false" ]]; then
+          tool_result_max_tokens="${argument#*=}"
+        fi
+        ;;
     esac
   done <"$agent_config"
   [[ "$preserved_base_url" == "$preserved_model" ]] ||
@@ -715,6 +779,40 @@ if [[ "$preserve_model_config" == "true" ]]; then
   [[ "$preserved_api_key" != "true" || -f "$installed_api_key" ]] ||
     bundle_die "${agent_config} references a missing OpenAI API key"
 fi
+
+[[ "$context_window_tokens" =~ ^[0-9]+$ ]] ||
+  bundle_die "context window tokens must be a positive integer"
+((context_window_tokens >= 2048 && context_window_tokens <= 4000000)) ||
+  bundle_die "context window tokens must be between 2048 and 4000000"
+if [[ -z "$max_output_tokens" ]]; then
+  max_output_tokens=$((context_window_tokens / 8))
+  ((max_output_tokens <= 2048)) || max_output_tokens=2048
+fi
+if [[ -z "$tool_result_max_tokens" ]]; then
+  tool_result_max_tokens=$((context_window_tokens * 15 / 100))
+  ((tool_result_max_tokens <= 4096)) || tool_result_max_tokens=4096
+fi
+for value in "$max_output_tokens" "$context_compaction_threshold" \
+  "$context_keep_recent_turns" "$tool_result_max_tokens"; do
+  [[ "$value" =~ ^[0-9]+$ ]] || bundle_die "context values must be positive integers"
+done
+((max_output_tokens >= 128 && max_output_tokens < context_window_tokens)) ||
+  bundle_die "max output tokens must be at least 128 and smaller than the context window"
+((context_compaction_threshold >= 50 && context_compaction_threshold <= 95)) ||
+  bundle_die "context compaction threshold must be between 50 and 95 percent"
+((context_keep_recent_turns >= 1 && context_keep_recent_turns <= 32)) ||
+  bundle_die "recent turns to keep must be between 1 and 32"
+((tool_result_max_tokens >= 128 && tool_result_max_tokens < context_window_tokens)) ||
+  bundle_die "tool result token limit must be at least 128 and smaller than the context window"
+((max_output_tokens < context_window_tokens * context_compaction_threshold / 100)) ||
+  bundle_die "max output tokens must be smaller than the compaction threshold budget"
+agent_args+=(
+  "--context-window-tokens=${context_window_tokens}"
+  "--max-output-tokens=${max_output_tokens}"
+  "--context-compaction-threshold=${context_compaction_threshold}"
+  "--context-keep-recent-turns=${context_keep_recent_turns}"
+  "--tool-result-max-tokens=${tool_result_max_tokens}"
+)
 if [[ "$enable_deployment" == "true" ]]; then
   scan_namespaces_csv="$(IFS=,; printf '%s' "${scan_namespaces[*]}")"
   agent_args+=(

@@ -57,11 +57,15 @@ Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service，查询 Eve
 发布给模型，避免 Agent 在不存在 InferNexService 的集群里反复调用无效工具。
 
 唯一需要人工提供的是 Agent 模型接口：OpenAI 兼容 Base URL、真实 model ID 和
-可选 API Key。安装完成后：
+可选 API Key，以及该模型实际支持的上下文窗口（不确定时使用默认 32768）。Agent 会
+限制单次工具结果和模型输出，在到达窗口前自动压缩较早轮次。安装完成后：
 
 ```bash
 sudo infernex-agent chat
 ```
+
+终端内使用 `/context` 查看当前预算，使用 `/compact` 主动压缩，使用 `/clear` 清空
+当前会话。
 
 ## Agent 如何探索
 
@@ -94,6 +98,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [产品使用指南](docs/product-guide-zh.md)
 - [离线安装](docs/offline-install-zh.md)
 - [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
+- [上下文预算与自动压缩](docs/context-management-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
 - [产品设计与边界](docs/product-design-zh.md)
 - [变更保护与回退](docs/change-safety-zh.md)

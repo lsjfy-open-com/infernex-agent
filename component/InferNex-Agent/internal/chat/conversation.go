@@ -115,17 +115,23 @@ type Config struct {
 	Approver      Approver
 	Progress      Progress
 	MaxToolRounds int
+	Context       ContextConfig
 }
 
 type Conversation struct {
-	model         Model
-	tools         ToolClient
-	approver      Approver
-	progress      Progress
-	maxToolRounds int
-	definitions   []ToolDefinition
-	byName        map[string]ToolDefinition
-	messages      []Message
+	model             Model
+	tools             ToolClient
+	approver          Approver
+	progress          Progress
+	maxToolRounds     int
+	definitions       []ToolDefinition
+	byName            map[string]ToolDefinition
+	messages          []Message
+	context           ContextConfig
+	compactions       int
+	prunedToolResults int
+	lastBeforeTokens  int
+	lastAfterTokens   int
 }
 
 func NewConversation(ctx context.Context, config Config) (*Conversation, error) {
@@ -141,6 +147,10 @@ func NewConversation(ctx context.Context, config Config) (*Conversation, error) 
 	}
 	if len(definitions) == 0 {
 		return nil, fmt.Errorf("operations tool server returned no tools")
+	}
+	contextConfig, err := normalizeContextConfig(config.Context)
+	if err != nil {
+		return nil, fmt.Errorf("configure conversation context: %w", err)
 	}
 	maxToolRounds := config.MaxToolRounds
 	if maxToolRounds <= 0 {
@@ -159,11 +169,16 @@ func NewConversation(ctx context.Context, config Config) (*Conversation, error) 
 		definitions:   definitions,
 		byName:        byName,
 		messages:      []Message{{Role: "system", Content: systemPrompt}},
+		context:       contextConfig,
 	}, nil
 }
 
 func (c *Conversation) Reset() {
 	c.messages = []Message{{Role: "system", Content: systemPrompt}}
+	c.compactions = 0
+	c.prunedToolResults = 0
+	c.lastBeforeTokens = 0
+	c.lastAfterTokens = 0
 }
 
 func (c *Conversation) Close() error {
@@ -178,6 +193,12 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 	c.messages = append(c.messages, Message{Role: "user", Content: input})
 
 	for round := 0; round <= c.maxToolRounds; round++ {
+		if err := c.prepareContext(ctx); err != nil {
+			if round == 0 {
+				c.removeLastUserMessage(input)
+			}
+			return "", err
+		}
 		response, err := c.model.Complete(ctx, append([]Message(nil), c.messages...), c.definitions)
 		if err != nil {
 			return "", fmt.Errorf("call interactive model: %w", err)
@@ -199,6 +220,10 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 		}
 		for _, call := range response.ToolCalls {
 			result := c.executeTool(ctx, call)
+			result, truncated := truncateTextTokens(result, c.context.ToolResultMaxTokens)
+			if truncated {
+				result += fmt.Sprintf("\n[tool result capped at approximately %d tokens; retry with a narrower query if more evidence is required]", c.context.ToolResultMaxTokens)
+			}
 			c.messages = append(c.messages, Message{
 				Role:       "tool",
 				ToolCallID: call.ID,
@@ -207,6 +232,15 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("interactive tool loop stopped unexpectedly")
+}
+
+func (c *Conversation) removeLastUserMessage(content string) {
+	for index := len(c.messages) - 1; index >= 1; index-- {
+		if c.messages[index].Role == "user" && c.messages[index].Content == content {
+			c.messages = append(c.messages[:index], c.messages[index+1:]...)
+			return
+		}
+	}
 }
 
 func (c *Conversation) executeTool(ctx context.Context, call FunctionCall) string {

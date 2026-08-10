@@ -8,7 +8,8 @@ sudo infernex-agent setup
 
 按提示填写 OpenAI 兼容接口的真实 Base URL、真实 model ID 和可选 API Key。不要把
 文档中的示例域名或模型名原样复制。`setup` 会测试 Chat Completions 和 tool calling，
-失败时恢复原配置。后文命令用于非交互自动化、密钥轮换和高级维护。
+并询问该模型真实支持的上下文窗口；失败时恢复原配置。后文命令用于非交互自动化、
+密钥轮换和高级维护。
 
 ## 1. 模型是否必需
 
@@ -61,7 +62,8 @@ sudo ./bin/install-host.sh \
   --openai-base-url http://10.20.0.30:8000/v1 \
   --openai-model ops-diagnostic-model \
   --openai-api-key-file /root/infernex-openai.key \
-  --openai-timeout 3m
+  --openai-timeout 3m \
+  --context-window-tokens 32768
 ```
 
 如果端点不要求认证，省略 `--openai-api-key-file`。
@@ -107,6 +109,25 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 HTTP 408、429、500、502、503、504 等瞬态故障最多重试 3 次，并按 2、4、8 秒退避。
 401、403、404 等鉴权或配置错误不会重试。后台诊断、自然语言终端和安装失败 AI 分析
 同样采用最多 3 次的瞬态重试；总等待时间可能大于单次 `--timeout`。
+
+### 上下文窗口与自动压缩
+
+`--context-window-tokens` 必须填写 Agent 背后的模型接口实际支持的窗口，而不是待部署
+推理模型的 `max_model_len`。默认 32768；Agent 默认在预计使用到 80% 时总结较早对话，
+原样保留最近 4 个用户轮次，并把单个工具结果限制在约 4096 token。每次请求还会通过
+`max_tokens` 显式限制输出，默认最多 2048 token。
+
+查看或修改：
+
+```bash
+sudo /opt/infernex-agent/bin/configure-model.sh --show
+sudo /opt/infernex-agent/bin/configure-model.sh \
+  --context-window-tokens 16384 \
+  --show
+```
+
+只修改窗口时，输出预留和工具结果限额会自动按窗口重新计算。高级参数、会话中的
+`/context`、`/compact` 命令和精确边界见[上下文管理说明](context-management-zh.md)。
 
 ### 换模型或端点
 
@@ -163,7 +184,7 @@ sudo systemctl restart infernex-agent
 sudo /opt/infernex-agent/bin/chat.sh
 ```
 
-交互命令包括 `/help`、`/clear` 和 `/exit`。只读工具自动执行；写工具在本地显示
+交互命令包括 `/help`、`/context`、`/compact`、`/clear` 和 `/exit`。只读工具自动执行；写工具在本地显示
 名称与 JSON 参数并要求精确输入 `yes`。自动化查询可使用：
 
 ```bash
@@ -179,7 +200,7 @@ sudo /opt/infernex-agent/bin/chat.sh \
 ```text
 /etc/infernex-agent/agent.conf
   root:infernex-agent 0640
-  保存 base URL、模型名、超时以及其他非敏感有效参数
+  保存 base URL、模型名、超时、上下文预算以及其他非敏感有效参数
 
 /etc/infernex-agent/openai-api-key
   infernex-agent:infernex-agent 0600
