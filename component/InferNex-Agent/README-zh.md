@@ -53,7 +53,9 @@ kubectl 身份，不创建 ServiceAccount/RBAC；有合规隔离要求时才使�
 没有 Bridge CRD 不再导致安装失败：Agent 会进入不修改集群的 Kubernetes/Helm 模式。
 该模式已经能够识别当前 kubeconfig 指向的 openFuyao 引导/管理/业务集群角色，列出
 Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、Service，查询 Event 和
-经过限长、脱敏的 current/previous Pod 日志。Bridge 专属观察和写工具都不会在此模式
+经过限长、脱敏的 current/previous Pod 日志。对于其他原生资源和 CRD，Agent 可使用 API
+discovery 与分页 GET/LIST 自动探索当前 kubeconfig/RBAC 可见的对象；Node、Pod 和 Service
+的网络地址也会返回。Secret payload 始终排除。Bridge 专属观察和写工具都不会在此模式
 发布给模型，避免 Agent 在不存在 InferNexService 的集群里反复调用无效工具。
 
 唯一需要人工提供的是 Agent 模型接口：OpenAI 兼容 Base URL、真实 model ID 和
@@ -65,7 +67,8 @@ sudo infernex-agent chat
 ```
 
 终端支持标准 readline 行编辑和本次进程内历史。使用 `/undo` 撤回最后一个错误轮次，
-`/context` 查看当前预算，`/compact` 主动压缩，`/clear` 清空当前会话。
+`/context` 查看当前预算，`/usage` 查看模型调用与 token，`/compact` 主动压缩，`/clear` 清空当前会话。
+如果模型以 `finish_reason=length` 截断回答，Agent 会自动续写并在无法完整恢复时明确提示。
 
 ## Agent 如何探索
 
@@ -105,6 +108,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [变更保护与回退](docs/change-safety-zh.md)
 - [安全边界](docs/security-boundaries-zh.md)
 - [候选版本验证](docs/candidate-validation-zh.md)
+- [v0.5 产品与工程推进提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 
 Helm/Pod 安装保留给确实需要 Kubernetes 原生托管 Agent 的团队，属于高级模式，
 不出现在 V1 默认 Release 下载项中。

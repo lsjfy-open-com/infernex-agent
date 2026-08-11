@@ -12,7 +12,7 @@ package kubeops
 import "context"
 
 // Reader is the read-only Kubernetes/openFuyao boundary exposed to the agent.
-// It intentionally excludes arbitrary object reads, Secrets, exec and mutations.
+// Generic discovery follows the active kubeconfig's RBAC and redacts Secret payloads.
 type Reader interface {
 	DetectEnvironment(context.Context) (Environment, error)
 	ClusterOverview(context.Context) (ClusterOverview, error)
@@ -20,6 +20,50 @@ type Reader interface {
 	GetEvents(context.Context, EventRequest) (EventList, error)
 	GetPodLogs(context.Context, PodLogRequest) (PodLogResult, error)
 	ListHelmReleases(context.Context, HelmReleaseRequest) (HelmReleaseList, error)
+	DiscoverResources(context.Context, ResourceDiscoveryRequest) (ResourceDiscovery, error)
+	ReadResources(context.Context, ResourceReadRequest) (ResourceReadResult, error)
+}
+
+type ResourceDiscoveryRequest struct {
+	GroupVersion string `json:"groupVersion,omitempty"`
+}
+
+type ResourceDiscovery struct {
+	GroupVersions []APIGroupResources `json:"groupVersions"`
+	Warnings      []string            `json:"warnings,omitempty"`
+}
+
+type APIGroupResources struct {
+	GroupVersion string               `json:"groupVersion"`
+	Resources    []APIResourceSummary `json:"resources"`
+}
+
+type APIResourceSummary struct {
+	Resource   string   `json:"resource"`
+	Kind       string   `json:"kind"`
+	Namespaced bool     `json:"namespaced"`
+	Verbs      []string `json:"verbs"`
+}
+
+type ResourceReadRequest struct {
+	GroupVersion  string `json:"groupVersion"`
+	Resource      string `json:"resource"`
+	Namespace     string `json:"namespace,omitempty"`
+	Name          string `json:"name,omitempty"`
+	LabelSelector string `json:"labelSelector,omitempty"`
+	FieldSelector string `json:"fieldSelector,omitempty"`
+	Limit         int    `json:"limit,omitempty"`
+	Continue      string `json:"continue,omitempty"`
+}
+
+type ResourceReadResult struct {
+	GroupVersion string           `json:"groupVersion"`
+	Resource     string           `json:"resource"`
+	Namespace    string           `json:"namespace,omitempty"`
+	Total        int              `json:"total"`
+	Continue     string           `json:"continue,omitempty"`
+	Objects      []map[string]any `json:"objects"`
+	Redactions   []string         `json:"redactions,omitempty"`
 }
 
 type Environment struct {
@@ -49,12 +93,20 @@ type ClusterOverview struct {
 type NodeSummary struct {
 	Name         string            `json:"name"`
 	Ready        bool              `json:"ready"`
+	Addresses    []NodeAddress     `json:"addresses,omitempty"`
+	ProviderID   string            `json:"providerID,omitempty"`
+	PodCIDRs     []string          `json:"podCIDRs,omitempty"`
 	OS           string            `json:"os,omitempty"`
 	Architecture string            `json:"architecture,omitempty"`
 	Kubelet      string            `json:"kubeletVersion,omitempty"`
 	Capacity     map[string]string `json:"acceleratorCapacity,omitempty"`
 	Allocatable  map[string]string `json:"acceleratorAllocatable,omitempty"`
 	Taints       []string          `json:"taints,omitempty"`
+}
+
+type NodeAddress struct {
+	Type    string `json:"type"`
+	Address string `json:"address"`
 }
 
 type WorkloadRequest struct {
@@ -91,6 +143,9 @@ type PodSummary struct {
 	Namespace   string   `json:"namespace"`
 	Name        string   `json:"name"`
 	Node        string   `json:"node,omitempty"`
+	HostIP      string   `json:"hostIP,omitempty"`
+	PodIP       string   `json:"podIP,omitempty"`
+	PodIPs      []string `json:"podIPs,omitempty"`
 	Phase       string   `json:"phase"`
 	Ready       bool     `json:"ready"`
 	Restarts    int32    `json:"restarts"`
@@ -105,6 +160,9 @@ type ServiceSummary struct {
 	Name        string            `json:"name"`
 	Type        string            `json:"type"`
 	ClusterIP   string            `json:"clusterIP,omitempty"`
+	ClusterIPs  []string          `json:"clusterIPs,omitempty"`
+	ExternalIPs []string          `json:"externalIPs,omitempty"`
+	Ingress     []string          `json:"loadBalancerIngress,omitempty"`
 	Ports       []string          `json:"ports,omitempty"`
 	Selector    map[string]string `json:"selector,omitempty"`
 	HelmRelease string            `json:"helmRelease,omitempty"`

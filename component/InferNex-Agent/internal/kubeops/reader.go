@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/metadata"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
@@ -59,6 +60,7 @@ type KubernetesReader struct {
 	client    client.Client
 	discovery discovery.DiscoveryInterface
 	metadata  metadata.Interface
+	dynamic   dynamic.Interface
 	logs      diagnostics.PodLogReader
 	apiServer string
 	now       func() time.Time
@@ -68,14 +70,15 @@ func New(
 	kubeClient client.Client,
 	discoveryClient discovery.DiscoveryInterface,
 	metadataClient metadata.Interface,
+	dynamicClient dynamic.Interface,
 	logs diagnostics.PodLogReader,
 	apiServer string,
 ) (*KubernetesReader, error) {
-	if kubeClient == nil || discoveryClient == nil || metadataClient == nil || logs == nil {
-		return nil, fmt.Errorf("Kubernetes object, discovery, metadata, and log clients are required")
+	if kubeClient == nil || discoveryClient == nil || metadataClient == nil || dynamicClient == nil || logs == nil {
+		return nil, fmt.Errorf("Kubernetes object, discovery, metadata, dynamic, and log clients are required")
 	}
 	return &KubernetesReader{
-		client: kubeClient, discovery: discoveryClient, metadata: metadataClient,
+		client: kubeClient, discovery: discoveryClient, metadata: metadataClient, dynamic: dynamicClient,
 		logs: logs, apiServer: sanitize(apiServer, 512), now: time.Now,
 	}, nil
 }
@@ -224,7 +227,17 @@ func summarizeNode(node *corev1.Node) NodeSummary {
 		Name: node.Name, OS: node.Status.NodeInfo.OSImage,
 		Architecture: node.Status.NodeInfo.Architecture,
 		Kubelet:      node.Status.NodeInfo.KubeletVersion,
+		ProviderID:   sanitize(node.Spec.ProviderID, 512),
+		PodCIDRs:     append([]string(nil), node.Spec.PodCIDRs...),
 		Capacity:     map[string]string{}, Allocatable: map[string]string{}, Taints: []string{},
+	}
+	for _, address := range node.Status.Addresses {
+		if strings.TrimSpace(address.Address) == "" {
+			continue
+		}
+		result.Addresses = append(result.Addresses, NodeAddress{
+			Type: string(address.Type), Address: sanitize(address.Address, 512),
+		})
 	}
 	for _, condition := range node.Status.Conditions {
 		if condition.Type == corev1.NodeReady {
@@ -551,6 +564,7 @@ func (r *KubernetesReader) ListHelmReleases(ctx context.Context, request HelmRel
 func summarizePod(pod *corev1.Pod) PodSummary {
 	result := PodSummary{
 		Namespace: pod.Namespace, Name: pod.Name, Node: pod.Spec.NodeName,
+		HostIP: pod.Status.HostIP, PodIP: pod.Status.PodIP, PodIPs: podIPStrings(pod.Status.PodIPs),
 		Phase: string(pod.Status.Phase), Ready: podReady(pod),
 		Containers: podContainerNames(pod), HelmRelease: helmRelease(pod),
 	}
@@ -578,8 +592,18 @@ func summarizePod(pod *corev1.Pod) PodSummary {
 func summarizeService(service *corev1.Service) ServiceSummary {
 	result := ServiceSummary{
 		Namespace: service.Namespace, Name: service.Name, Type: string(service.Spec.Type),
-		ClusterIP: service.Spec.ClusterIP, Selector: service.Spec.Selector,
+		ClusterIP: service.Spec.ClusterIP, ClusterIPs: append([]string(nil), service.Spec.ClusterIPs...),
+		ExternalIPs: append([]string(nil), service.Spec.ExternalIPs...), Selector: service.Spec.Selector,
 		Ports: []string{}, HelmRelease: helmRelease(service),
+	}
+	for _, ingress := range service.Status.LoadBalancer.Ingress {
+		value := strings.TrimSpace(ingress.IP)
+		if value == "" {
+			value = strings.TrimSpace(ingress.Hostname)
+		}
+		if value != "" {
+			result.Ingress = append(result.Ingress, sanitize(value, 512))
+		}
 	}
 	for _, port := range service.Spec.Ports {
 		value := fmt.Sprintf("%s:%d/%s", port.Name, port.Port, port.Protocol)
@@ -587,6 +611,16 @@ func summarizeService(service *corev1.Service) ServiceSummary {
 			value += fmt.Sprintf(" nodePort=%d", port.NodePort)
 		}
 		result.Ports = append(result.Ports, value)
+	}
+	return result
+}
+
+func podIPStrings(values []corev1.PodIP) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value.IP) != "" {
+			result = append(result, value.IP)
+		}
 	}
 	return result
 }

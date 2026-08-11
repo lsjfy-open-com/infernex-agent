@@ -50,7 +50,8 @@ token，中文等非 ASCII 字符按每字符一个 token 计算。模型服务�
 所以不应把压缩阈值设到 100%。
 
 Agent 同时读取 Chat Completions 响应中的 `usage.prompt_tokens`、`completion_tokens` 和
-`total_tokens`，在终端显示 `[tokens]` 并累计到 `/context`。`usage` 是服务端实际报告的消费量，
+`total_tokens`，在终端显示 `[tokens]` 并累计到 `/context` 和 `/usage`。`/usage` 还会显示
+模型调用次数以及其中多少次响应真正携带 `usage`，便于识别“不支持统计”和“实际为零”。`usage` 是服务端实际报告的消费量，
 本地 `estimated` 用于在下一次请求前保护上下文窗口，两者分别展示。部分内网网关不返回
 `usage`，此时 reported 数值为 0，Agent 不会把估算值伪装成服务端精确统计。`/clear` 清除
 对话上下文，但不会抹掉本进程已经消费的累计 token。
@@ -108,12 +109,14 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 在 `sudo infernex-agent chat` 中：
 
 - `/context`：查看预计输入、输出预留、硬窗口、压缩阈值、消息数、压缩/裁剪次数，以及模型接口报告的本进程累计 token；
+- `/usage`：单独查看模型调用数、服务端 usage 覆盖次数、累计输入/输出/总 token 和当前窗口占用估算；
 - `/compact`：立即压缩可压缩的旧轮次；
 - `/clear`：清空当前会话，重新从系统指令开始；
 - 自动压缩发生时终端输出 `[context] ...`，便于运维人员观察工作流。
 - 大结果落盘时输出 `[artifact] 路径、字节数、行数、SHA-256`；
 - 每次模型轮次输出 `[model] round ...`；相同工具与参数第三次出现时输出 `[loop blocked]`；
 - 达到工具轮次上限时输出 `[checkpoint]`，停止继续调用工具并让模型基于已有证据给出阶段性结论。
+- 当模型以 `finish_reason=length` 截断最终回答时输出 `[model] output reached max_tokens`，最多自动续写 3 次；续写仍失败或仍被截断时保留已有正文并打印明确提示，不再静默停在半句。
 
 当前对话消息和压缩记忆仍只存在于正在运行的 `chat` 进程内；退出终端或重启进程后不会恢复。
 大型工具结果 Artifact 会保留在受控目录，便于本地核验，但当前不能恢复为新对话的上下文。

@@ -26,17 +26,18 @@ Namespace for future approved model deployments. A cluster without Bridge
 enters a no-mutation base Kubernetes/Helm compatibility mode instead of
 failing installation. That mode can inspect Helm release metadata,
 Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, Services,
-Events, and bounded redacted logs; Bridge is not a prerequisite. See the
+Events, and bounded redacted logs. API discovery plus paginated GET/LIST also
+covers native resources and CRDs visible to the active kubeconfig/RBAC, while
+Secret payloads remain excluded. Node, Pod, and Service summaries include
+network addresses; Bridge is not a prerequisite. See the
 [Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 
-The older
-[0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6)
-contains the legacy/manual installer, but not the unified package name or
-zero-parameter entry
-point described above. Validate this branch's CI Agent package on an existing
-cluster before publishing or merging the next release; the online one-liner
-must not be advertised as usable until that bundle is published.
+The current public candidate is
+[v0.4.0-rc.8](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.4.0-rc.8).
+Generic Kubernetes reads, network fields, truncated-answer continuation, and
+the `/usage` command described on this branch are planned for the next
+candidate and must pass Kind plus an existing-cluster acceptance run.
 
 The management-node installation provides one Agentic terminal:
 
@@ -49,7 +50,7 @@ The model must support OpenAI-compatible function/tool calling. Read-only MCP
 tools run automatically; every mutating tool requires an exact local `yes`.
 One-shot `--ask` mode always denies writes.
 
-The default installation publishes six typed, read-only tools on any
+The default installation publishes eight read-only tools on any
 authorized Kubernetes/openFuyao cluster:
 
 - `openfuyao_detect_environment`
@@ -58,6 +59,8 @@ authorized Kubernetes/openFuyao cluster:
 - `k8s_get_events`
 - `k8s_get_pod_logs`
 - `helm_list_releases`
+- `k8s_discover_api_resources`
+- `k8s_read_resources`
 
 Only when discovery confirms InferNex Bridge does the Agent publish five more
 Bridge-specific tools:
@@ -75,12 +78,15 @@ When conversational deployment is enabled, it also publishes:
 - `infernex_delete_model`
 - `infernex_get_change` (read-only change/rollback status)
 
-The output is deliberately normalized and bounded. Helm inventory reads only
+The output is deliberately bounded. Generic reads use exact API
+group/version/resource identifiers, selectors, limits, and continuation
+tokens; they do not expose a generic write surface. Helm inventory reads only
 Kubernetes metadata for storage objects and never returns Secret payloads,
 stored values, or manifests. Kubernetes logs require explicit Pod targets,
-cap containers/time/lines/bytes, and redact common credentials. The Agent does
-not return environment variables, full Pod specs, or a generic Kubernetes
-command surface.
+cap containers/time/lines/bytes, and redact common credentials. Generic
+objects omit managed fields, redact credential-like content, cap long strings,
+and return only metadata/type for Secrets. The Agent does not expose a generic
+Kubernetes command or write surface.
 
 The deployment tools are deliberately narrower than Kubernetes write access.
 The Agent first discovers existing Ready services and administrator-created

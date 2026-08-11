@@ -2,6 +2,9 @@
 
 [English README](../README.md) | 简体中文
 
+> v0.5 的产品目标、架构、阶段验收和项目推进机制见
+> [InferNex Agent v0.5 产品与工程推进提案](proposals/infernex-agent-v0.5-proposal-zh.md)。
+
 ## 一句话定位
 
 InferNex Agent 是运行在 InferNex 管理节点、master 节点或引导节点上的本地 AI
@@ -45,12 +48,13 @@ Namespace，用于后续经批准的新实例。没有 Bridge 的 Helm/BKE 集�
 
 基础兼容模式已打通安装、systemd、模型配置、对话入口、健康检查和 Web 端口，并提供
 openFuyao 集群角色、Helm Release、Deployment/StatefulSet/DaemonSet/LWS、Pod、
-Service、Event 和受限日志的只读资产发现。Bridge 专属观察和部署工具都会关闭，不应
-通过安装 Bridge CRD 来伪装兼容。
+Service、Event 和受限日志的只读资产发现。对于没有预置专用工具的资源，Agent 还可通过
+Kubernetes API discovery 和分页 GET/LIST 读取当前 kubeconfig/RBAC 可见的原生资源及 CRD；
+Node 地址、Pod IP、宿主机 IP、Service 地址等事实可直接采集。Secret payload 始终排除。
+Bridge 专属观察和部署工具都会关闭，不应通过安装 Bridge CRD 来伪装兼容。
 
-> 当前公开的 `0.3.0-rc.6` 仍是旧版候选包，不具备本页所述的新统一包名和默认流程。
-> 在新候选完成 A2 既有集群验收并发布前，请从 Draft PR 的 CI Artifact 验证，不能把
-> 上述在线命令当作已经可用的正式交付。
+> `v0.4.0-rc.8` 是当前公开候选包；本文新增的 Kubernetes 通用只读、Node/Pod/Service 网络字段、
+> 长回答自动续写与 `/usage` 将进入下一个候选版。候选版通过 Kind 和既有 A2 集群验收后再晋级稳定版。
 
 ## Release 到底下载哪个
 

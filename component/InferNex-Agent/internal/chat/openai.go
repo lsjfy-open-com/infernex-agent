@@ -84,7 +84,8 @@ type openAIRequest struct {
 type openAIResponse struct {
 	Model   string `json:"model"`
 	Choices []struct {
-		Message openAIMessage `json:"message"`
+		Message      openAIMessage `json:"message"`
+		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
@@ -262,7 +263,7 @@ func (o *OpenAI) Complete(
 	}
 	choice := decoded.Choices[0].Message
 	result := ModelResponse{
-		Content: strings.TrimSpace(choice.Content),
+		Content: strings.TrimSpace(choice.Content), FinishReason: decoded.Choices[0].FinishReason,
 		Usage: TokenUsage{
 			PromptTokens: decoded.Usage.PromptTokens, CompletionTokens: decoded.Usage.CompletionTokens,
 			TotalTokens: decoded.Usage.TotalTokens,

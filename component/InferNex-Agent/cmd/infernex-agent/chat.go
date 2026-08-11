@@ -368,6 +368,7 @@ func newChatInput(stdin *os.File, stdout, stderr io.Writer) (chatInput, error) {
 		AutoComplete: readline.NewPrefixCompleter(
 			readline.PcItem("/help"),
 			readline.PcItem("/context"),
+			readline.PcItem("/usage"),
 			readline.PcItem("/compact"),
 			readline.PcItem("/undo"),
 			readline.PcItem("/clear"),
@@ -422,8 +423,15 @@ func interactiveChat(
 				stats.EstimatedInputTokens, stats.MaxOutputTokens, stats.WindowTokens, stats.ThresholdTokens,
 				stats.MessageCount, stats.Compactions, stats.PrunedToolResults, stats.ModelCalls,
 				stats.ReportedPromptTokens, stats.ReportedOutputTokens, stats.ReportedTotalTokens)
+		case "/usage":
+			stats := conversation.ContextStats()
+			fmt.Fprintf(output, "Usage: model-calls=%d; provider-usage-responses=%d; prompt=%d; output=%d; total=%d tokens; current-context-estimate=%d/%d (%d%%). Provider totals are zero when the endpoint omits usage.\n",
+				stats.ModelCalls, stats.ReportedUsageCalls, stats.ReportedPromptTokens,
+				stats.ReportedOutputTokens, stats.ReportedTotalTokens,
+				stats.EstimatedTotalTokens, stats.WindowTokens,
+				stats.EstimatedTotalTokens*100/max(1, stats.WindowTokens))
 		case "/help":
-			fmt.Fprintln(output, "Commands: /help, /context, /compact, /undo, /clear, /exit. Editing: Left/Right, Home/End, Backspace/Delete, Up/Down history, Ctrl+W delete word, Ctrl+U clear line, Ctrl+C cancel input, Ctrl+D exit. /undo removes model context only; it does not roll back approved cluster changes. Read-only tools run automatically; every write asks for exact 'yes'.")
+			fmt.Fprintln(output, "Commands: /help, /context, /usage, /compact, /undo, /clear, /exit. Editing: Left/Right, Home/End, Backspace/Delete, Up/Down history, Ctrl+W delete word, Ctrl+U clear line, Ctrl+C cancel input, Ctrl+D exit. /undo removes model context only; it does not roll back approved cluster changes. Read-only tools run automatically; every write asks for exact 'yes'.")
 		default:
 			answer, askErr := conversation.Ask(ctx, input)
 			if askErr != nil {
@@ -492,6 +500,8 @@ func terminalProgress(output io.Writer, verbose bool) infernexchat.Progress {
 			fmt.Fprintf(output, "[tokens] %s\n", boundedTerminalText(event.Message, 512))
 		case "model-retry", "model-empty":
 			fmt.Fprintf(output, "[model retry] %s\n", boundedTerminalText(event.Message, 512))
+		case "answer-continuation":
+			fmt.Fprintf(output, "[model] %s\n", boundedTerminalText(event.Message, 512))
 		case "tool-loop":
 			fmt.Fprintf(output, "[loop blocked] %s\n", boundedTerminalText(event.Tool, 256))
 		case "tool-budget":

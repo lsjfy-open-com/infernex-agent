@@ -36,10 +36,12 @@ const kubernetesInstructions = `
 General openFuyao, Kubernetes, and Helm observation is enabled. Start environment-wide
 requests with openfuyao_detect_environment because one host may point at a bootstrap K3s,
 management, or business cluster and each kubeconfig represents only one API server. Use
-k8s_cluster_overview, k8s_list_workloads, k8s_get_events, and k8s_get_pod_logs for native
-resources. Use helm_list_releases for the main-chart application lifecycle. These tools are
-bounded, read-only, redact common credentials, do not return Secret data, and do not provide
-exec or arbitrary object access. InferNex Bridge is optional; use InferNexService tools only
+k8s_cluster_overview, k8s_list_workloads, k8s_get_events, and k8s_get_pod_logs for common native
+resources. For other installed APIs, call k8s_discover_api_resources and then k8s_read_resources
+with the exact groupVersion and plural resource name. Generic reads follow kubeconfig RBAC,
+paginate large lists, omit managedFields, redact credential-like values, and return Secret metadata
+without Secret payloads. Use helm_list_releases for the main-chart application lifecycle. No read
+tool provides exec or host-file access. InferNex Bridge is optional; use InferNexService tools only
 when the environment evidence shows that Bridge is installed.`
 
 const deploymentInstructions = `
@@ -151,6 +153,21 @@ type podLogInput struct {
 type helmReleaseInput struct {
 	Namespace string `json:"namespace,omitempty" jsonschema:"Optional namespace; omit to scan all visible namespaces"`
 	Limit     int    `json:"limit,omitempty" jsonschema:"Maximum releases; defaults to 100 and must not exceed 300"`
+}
+
+type resourceDiscoveryInput struct {
+	GroupVersion string `json:"groupVersion,omitempty" jsonschema:"Optional API group/version such as v1 or leaderworkerset.x-k8s.io/v1; omit to discover all preferred readable resources"`
+}
+
+type resourceReadInput struct {
+	GroupVersion  string `json:"groupVersion" jsonschema:"Exact API group/version returned by k8s_discover_api_resources, for example v1 or apps/v1"`
+	Resource      string `json:"resource" jsonschema:"Exact plural resource name returned by discovery, for example nodes, configmaps, or leaderworkersets"`
+	Namespace     string `json:"namespace,omitempty" jsonschema:"Namespace for a namespaced resource; omit for cluster-scoped resources or all namespaces"`
+	Name          string `json:"name,omitempty" jsonschema:"Optional exact object name; omit to list"`
+	LabelSelector string `json:"labelSelector,omitempty" jsonschema:"Optional Kubernetes label selector for list requests"`
+	FieldSelector string `json:"fieldSelector,omitempty" jsonschema:"Optional Kubernetes field selector for list requests"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"Maximum objects in this page; defaults to 100 and must not exceed 300"`
+	Continue      string `json:"continue,omitempty" jsonschema:"Opaque continuation token returned by the previous page"`
 }
 
 type allServicesOutput struct {
@@ -282,6 +299,29 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input workloadInput) (*mcp.CallToolResult, kubeops.WorkloadInventory, error) {
 			output, err := options.kubernetes.ListWorkloads(ctx, kubeops.WorkloadRequest{
 				Namespace: input.Namespace, LabelSelector: input.LabelSelector, Limit: input.Limit,
+			})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_discover_api_resources",
+			Description: "Discover readable Kubernetes API groupVersions, plural resource names, kinds, scope, and verbs visible through the active kubeconfig. Use before generic reads instead of guessing resource names.",
+			Annotations: readOnly("Discover Kubernetes API resources"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input resourceDiscoveryInput) (*mcp.CallToolResult, kubeops.ResourceDiscovery, error) {
+			output, err := options.kubernetes.DiscoverResources(ctx, kubeops.ResourceDiscoveryRequest{GroupVersion: input.GroupVersion})
+			return nil, output, err
+		})
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_read_resources",
+			Description: "Get one or list a page of any discovered Kubernetes resource using read-only API calls. Follows kubeconfig RBAC, supports selectors and continuation, removes managedFields, redacts credential-like fields, and never returns Secret data/stringData.",
+			Annotations: readOnly("Read discovered Kubernetes resources"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input resourceReadInput) (*mcp.CallToolResult, kubeops.ResourceReadResult, error) {
+			output, err := options.kubernetes.ReadResources(ctx, kubeops.ResourceReadRequest{
+				GroupVersion: input.GroupVersion, Resource: input.Resource,
+				Namespace: input.Namespace, Name: input.Name,
+				LabelSelector: input.LabelSelector, FieldSelector: input.FieldSelector,
+				Limit: input.Limit, Continue: input.Continue,
 			})
 			return nil, output, err
 		})

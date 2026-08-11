@@ -261,8 +261,34 @@ func TestConversationRetriesOneEmptyModelResponseAndTracksUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	stats := conversation.ContextStats()
-	if answer != "recovered" || stats.ModelCalls != 2 || stats.ReportedTotalTokens != 23 {
+	if answer != "recovered" || stats.ModelCalls != 2 || stats.ReportedUsageCalls != 2 || stats.ReportedTotalTokens != 23 {
 		t.Fatalf("answer=%q stats=%#v", answer, stats)
+	}
+}
+
+func TestConversationContinuesLengthLimitedAnswer(t *testing.T) {
+	model := &fakeModel{responses: []ModelResponse{
+		{Content: "first half ", FinishReason: "length"},
+		{Content: "second half", FinishReason: "stop"},
+	}}
+	conversation, err := NewConversation(context.Background(), Config{
+		Model: model, Tools: &fakeTools{definitions: []ToolDefinition{{Name: "scan", ReadOnly: true}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, err := conversation.Ask(context.Background(), "give a long answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if answer != "first half\nsecond half" || len(model.messages) != 2 {
+		t.Fatalf("answer=%q model calls=%d", answer, len(model.messages))
+	}
+	if !conversation.messages[len(conversation.messages)-2].Internal {
+		t.Fatalf("continuation prompt must not become a user-visible turn: %#v", conversation.messages)
+	}
+	if !conversation.UndoLastTurn() || len(conversation.messages) != 1 {
+		t.Fatalf("undo did not remove the complete continued turn: %#v", conversation.messages)
 	}
 }
 

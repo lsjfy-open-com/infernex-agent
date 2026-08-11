@@ -139,7 +139,7 @@ func TestInteractiveChatHelpDocumentsLineEditing(t *testing.T) {
 	if err := interactiveChat(context.Background(), input, output, nil); err != nil {
 		t.Fatal(err)
 	}
-	for _, expected := range []string{"/undo", "Backspace/Delete", "Up/Down history", "Ctrl+U"} {
+	for _, expected := range []string{"/undo", "/usage", "Backspace/Delete", "Up/Down history", "Ctrl+U"} {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("help does not contain %q: %s", expected, output.String())
 		}

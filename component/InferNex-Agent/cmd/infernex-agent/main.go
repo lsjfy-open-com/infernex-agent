@@ -28,6 +28,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/metadata"
@@ -344,8 +345,12 @@ func serveAgent(opts options) error {
 	if err != nil {
 		return fmt.Errorf("create Kubernetes metadata client: %w", err)
 	}
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes dynamic client: %w", err)
+	}
 	logReader := diagnostics.NewKubernetesLogReader(clientset)
-	platformReader, err := kubeops.New(kubeClient, clientset.Discovery(), metadataClient, logReader, restConfig.Host)
+	platformReader, err := kubeops.New(kubeClient, clientset.Discovery(), metadataClient, dynamicClient, logReader, restConfig.Host)
 	if err != nil {
 		return fmt.Errorf("configure openFuyao and Kubernetes observation: %w", err)
 	}

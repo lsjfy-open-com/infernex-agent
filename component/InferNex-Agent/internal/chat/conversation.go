@@ -34,6 +34,9 @@ cluster. InferNex is normally installed as a main Helm Chart whose runtime consi
 Kubernetes resources such as LeaderWorkerSet, Pod, Service, Gateway, HTTPRoute, and optional
 PD-Orchestrator resources. InferNex Bridge and KServe are optional alternative entry points;
 use InferNexService-specific tools only when discovery evidence shows that Bridge is installed.
+When a requested read-only fact is absent from the common summaries, use
+k8s_discover_api_resources and k8s_read_resources instead of claiming that Kubernetes inspection
+is unsupported. Paginate when a continuation token is returned. Secret payloads remain unavailable.
 
 Use k8s_get_events and bounded k8s_get_pod_logs to investigate creation, scheduling, image,
 model-loading, network, and runtime failures. Reuse the official infernex-checker workflow for
@@ -54,7 +57,10 @@ arguments; narrow the query, summarize the evidence, or ask the operator when pr
 Answer in the user's language and clearly distinguish evidence, inference, action, observation,
 and advice.`
 
-const defaultMaxToolRounds = 8
+const (
+	defaultMaxToolRounds   = 8
+	maxAnswerContinuations = 3
+)
 
 type ToolDefinition struct {
 	Name        string
@@ -81,9 +87,10 @@ type FunctionCall struct {
 }
 
 type ModelResponse struct {
-	Content   string
-	ToolCalls []FunctionCall
-	Usage     TokenUsage
+	Content      string
+	ToolCalls    []FunctionCall
+	Usage        TokenUsage
+	FinishReason string
 }
 
 type TokenUsage struct {
@@ -101,6 +108,7 @@ type Message struct {
 	Content    string
 	ToolCallID string
 	ToolCalls  []FunctionCall
+	Internal   bool
 }
 
 type ApprovalRequest struct {
@@ -131,24 +139,25 @@ type Config struct {
 }
 
 type Conversation struct {
-	model             Model
-	tools             ToolClient
-	approver          Approver
-	progress          Progress
-	maxToolRounds     int
-	definitions       []ToolDefinition
-	byName            map[string]ToolDefinition
-	messages          []Message
-	context           ContextConfig
-	compactions       int
-	prunedToolResults int
-	lastBeforeTokens  int
-	lastAfterTokens   int
-	artifacts         *artifactStore
-	modelCalls        int
-	promptTokens      int
-	completionTokens  int
-	totalTokens       int
+	model              Model
+	tools              ToolClient
+	approver           Approver
+	progress           Progress
+	maxToolRounds      int
+	definitions        []ToolDefinition
+	byName             map[string]ToolDefinition
+	messages           []Message
+	context            ContextConfig
+	compactions        int
+	prunedToolResults  int
+	lastBeforeTokens   int
+	lastAfterTokens    int
+	artifacts          *artifactStore
+	modelCalls         int
+	promptTokens       int
+	completionTokens   int
+	totalTokens        int
+	reportedUsageCalls int
 }
 
 func NewConversation(ctx context.Context, config Config) (*Conversation, error) {
@@ -216,7 +225,7 @@ func (c *Conversation) Reset() {
 // the context manager always retains at least the newest user turn verbatim.
 func (c *Conversation) UndoLastTurn() bool {
 	for index := len(c.messages) - 1; index >= 1; index-- {
-		if c.messages[index].Role == "user" {
+		if c.messages[index].Role == "user" && !c.messages[index].Internal {
 			c.messages = c.messages[:index]
 			c.lastBeforeTokens = 0
 			c.lastAfterTokens = 0
@@ -273,7 +282,7 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 			if assistant.Content == "" {
 				return "", fmt.Errorf("model returned neither text nor tool calls")
 			}
-			return assistant.Content, nil
+			return c.completeTruncatedAnswer(ctx, assistant.Content, response.FinishReason)
 		}
 		if round == c.maxToolRounds {
 			for _, call := range response.ToolCalls {
@@ -320,6 +329,67 @@ func (c *Conversation) Ask(ctx context.Context, input string) (string, error) {
 	return "", fmt.Errorf("interactive tool loop stopped unexpectedly")
 }
 
+func (c *Conversation) completeTruncatedAnswer(
+	ctx context.Context, initial, finishReason string,
+) (string, error) {
+	parts := []string{initial}
+	for continuation := 1; finishReason == "length" && continuation <= maxAnswerContinuations; continuation++ {
+		if c.progress != nil {
+			c.progress(ProgressEvent{Kind: "answer-continuation", Message: fmt.Sprintf(
+				"output reached max_tokens; requesting continuation %d of %d",
+				continuation, maxAnswerContinuations,
+			)})
+		}
+		c.messages = append(c.messages, Message{
+			Role: "user", Internal: true,
+			Content: "Continue the preceding answer exactly where it stopped. " +
+				"Do not repeat earlier text, call tools, or restart the explanation.",
+		})
+		if err := c.prepareContext(ctx); err != nil {
+			return strings.Join(parts, "") + "\n\n[automatic continuation stopped by the context budget]", nil
+		}
+		response, err := c.complete(ctx, append([]Message(nil), c.messages...), nil)
+		if err != nil {
+			return strings.Join(parts, "") + fmt.Sprintf(
+				"\n\n[automatic continuation failed: %v]", err,
+			), nil
+		}
+		assistant := Message{
+			Role: "assistant", Content: strings.TrimSpace(response.Content),
+			ToolCalls: append([]FunctionCall(nil), response.ToolCalls...), Internal: true,
+		}
+		c.messages = append(c.messages, assistant)
+		if len(response.ToolCalls) != 0 {
+			for _, call := range response.ToolCalls {
+				c.messages = append(c.messages, Message{
+					Role: "tool", ToolCallID: call.ID, Internal: true,
+					Content: toolError("tools are disabled while continuing a truncated final answer"),
+				})
+			}
+			final, finalErr := c.finalizeWithoutTools(ctx, "a continuation attempted to call tools")
+			if finalErr == nil {
+				parts = append(parts, "\n", final)
+			}
+			return strings.Join(parts, ""), nil
+		}
+		if assistant.Content == "" {
+			return strings.Join(parts, "") + "\n\n[model returned an empty automatic continuation]", nil
+		}
+		// The provider boundary may fall between words and response content is
+		// normalized before storage. A newline avoids silently merging two words.
+		parts = append(parts, "\n", assistant.Content)
+		finishReason = response.FinishReason
+	}
+	answer := strings.Join(parts, "")
+	if finishReason == "length" {
+		answer += fmt.Sprintf(
+			"\n\n[response remains truncated after %d automatic continuations; increase max-output-tokens or ask to continue]",
+			maxAnswerContinuations,
+		)
+	}
+	return answer, nil
+}
+
 func (c *Conversation) finalizeWithoutTools(ctx context.Context, reason string) (string, error) {
 	if c.progress != nil {
 		c.progress(ProgressEvent{Kind: "tool-budget", Message: reason})
@@ -350,6 +420,9 @@ func (c *Conversation) complete(
 	usage := response.Usage
 	if usage.TotalTokens == 0 && (usage.PromptTokens > 0 || usage.CompletionTokens > 0) {
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	}
+	if usage.PromptTokens > 0 || usage.CompletionTokens > 0 || usage.TotalTokens > 0 {
+		c.reportedUsageCalls++
 	}
 	c.promptTokens += max(0, usage.PromptTokens)
 	c.completionTokens += max(0, usage.CompletionTokens)

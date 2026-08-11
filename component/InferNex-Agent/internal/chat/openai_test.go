@@ -30,7 +30,7 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 			t.Errorf("unexpected request: %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}`))
 	}))
 	defer server.Close()
 
@@ -49,6 +49,9 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 	}
 	if response.Usage.PromptTokens != 42 || response.Usage.CompletionTokens != 7 || response.Usage.TotalTokens != 49 {
 		t.Fatalf("usage=%#v", response.Usage)
+	}
+	if response.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason=%q", response.FinishReason)
 	}
 }
 

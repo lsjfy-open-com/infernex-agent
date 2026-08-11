@@ -15,10 +15,14 @@ Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型�
 ## 2. 默认权限
 
 默认安装复用运维人员当前 kubeconfig，因此 Kubernetes 层的有效权限与该身份一致；
-安装器不额外创建 ServiceAccount 或 RBAC。Agent 对模型暴露的能力仍由 typed tools
-收窄，只读取 openFuyao/Kubernetes API 能力、Helm Release metadata、
-Deployment/StatefulSet/DaemonSet/LeaderWorkerSet、Pod、Service、Event 和有界 Pod
-日志；检测到 Bridge 后再增加 InferNexService 专属观察能力。
+安装器不额外创建 ServiceAccount 或 RBAC。只读能力采用“广读取、严写入”：模型可先通过
+Kubernetes API discovery 找到当前集群公开的资源，再对当前身份具备 `get/list` 权限的原生资源、
+CRD 和跨命名空间对象进行分页读取。Node 地址、Pod/Service 网络字段等运行事实不再因为缺少
+专用 typed tool 而被隐藏。InferNex/openFuyao 的常用对象仍保留结构化专用工具，便于诊断和归一化。
+
+通用读取不是权限提升：apiserver RBAC 拒绝的对象仍不可见；请求有单页数量上限并支持 continuation
+token；`managedFields` 被删除，疑似凭据字段和超长字符串会脱敏或截断；Secret 只返回 metadata 与
+type，永不返回 `data`/`stringData`。写入、删除、exec、端口转发和宿主机命令不属于通用读取。
 
 Helm 3 默认把 Release 存在 Secret 中，因此 `helm_list_releases` 的运行身份需要在目标
 命名空间拥有 `list secrets`（ConfigMap 存储后端则需要 `list configmaps`）。Agent 使用
@@ -83,7 +87,7 @@ ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允�
 - Event note 原文；
 - 节点名（交互式集群总览工具可按用户请求返回节点名和资源状态）；
 - 模型 URI 中的用户名、密码、query 和 fragment；
-- 任意原始 Kubernetes 对象遍历能力。
+- 超出当前 kubeconfig/RBAC 的 Kubernetes 对象，或 Secret payload；
 
 后台 Supervisor 的分析模型输出仅作为文本建议保存到内存快照，不进入自动恢复
 或回退条件。交互式对话模型可以提出 typed tool 调用和对象名称，但它不持有集群

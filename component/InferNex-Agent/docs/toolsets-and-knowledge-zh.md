@@ -47,6 +47,11 @@ InferNex 主 Chart 部署权威；只有实际使用 Bridge 时，InferNexServic
 | `infernex/hardware` | 后续接入 infernex-checker/Eagle-Eye 的连通性、带宽和时延报告 |
 | `infernex/evaluation` | 后续接入 warmup、EvalScope 单轮/多轮测试及报告 |
 
+通用 Kubernetes 读取采用 discovery + GET/LIST，而不是为每种资源硬编码一个工具。它覆盖当前
+kubeconfig/RBAC 可见的原生资源和 CRD，支持 namespace、name、label/field selector、limit 与
+continuation token。Secret payload、任意写入、exec 和 shell 不在该通道内；常用资源仍优先使用
+专用工具，以获得更稳定的小型结构化结果。
+
 工具输出必须限长、结构化和可溯源。大规模日志在本地过滤，不能把完整集群对象或
 无限日志直接塞入模型上下文。
 

@@ -52,6 +52,7 @@ type ContextStats struct {
 	ReportedPromptTokens int
 	ReportedOutputTokens int
 	ReportedTotalTokens  int
+	ReportedUsageCalls   int
 }
 
 func normalizeContextConfig(config ContextConfig) (ContextConfig, error) {
@@ -111,6 +112,7 @@ func (c *Conversation) ContextStats() ContextStats {
 		LastBeforeTokens: c.lastBeforeTokens, LastAfterTokens: c.lastAfterTokens,
 		ModelCalls: c.modelCalls, ReportedPromptTokens: c.promptTokens,
 		ReportedOutputTokens: c.completionTokens, ReportedTotalTokens: c.totalTokens,
+		ReportedUsageCalls: c.reportedUsageCalls,
 	}
 }
 
@@ -147,7 +149,7 @@ func (c *Conversation) compactHistory(ctx context.Context, force bool) (bool, er
 	}
 	userIndexes := make([]int, 0)
 	for index := start; index < len(c.messages); index++ {
-		if c.messages[index].Role == "user" {
+		if c.messages[index].Role == "user" && !c.messages[index].Internal {
 			userIndexes = append(userIndexes, index)
 		}
 	}

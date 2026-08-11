@@ -69,6 +69,14 @@ func (stubKubernetes) ListHelmReleases(_ context.Context, request kubeops.HelmRe
 	return kubeops.HelmReleaseList{Namespace: request.Namespace, Releases: []kubeops.HelmReleaseSummary{}}, nil
 }
 
+func (stubKubernetes) DiscoverResources(_ context.Context, request kubeops.ResourceDiscoveryRequest) (kubeops.ResourceDiscovery, error) {
+	return kubeops.ResourceDiscovery{GroupVersions: []kubeops.APIGroupResources{{GroupVersion: request.GroupVersion}}}, nil
+}
+
+func (stubKubernetes) ReadResources(_ context.Context, request kubeops.ResourceReadRequest) (kubeops.ResourceReadResult, error) {
+	return kubeops.ResourceReadResult{GroupVersion: request.GroupVersion, Resource: request.Resource, Objects: []map[string]any{}}, nil
+}
+
 func (stubDeployer) ListSources(context.Context) (deployer.SourceList, error) {
 	return deployer.SourceList{
 		TargetNamespace: "infernex-agent-workspace",
@@ -299,13 +307,15 @@ func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 6 {
-		t.Fatalf("tool count = %d, want 6", len(list.Tools))
+	if len(list.Tools) != 8 {
+		t.Fatalf("tool count = %d, want 8", len(list.Tools))
 	}
 	want := map[string]bool{
 		"openfuyao_detect_environment": false,
 		"k8s_cluster_overview":         false,
 		"k8s_list_workloads":           false,
+		"k8s_discover_api_resources":   false,
+		"k8s_read_resources":           false,
 		"k8s_get_events":               false,
 		"k8s_get_pod_logs":             false,
 		"helm_list_releases":           false,

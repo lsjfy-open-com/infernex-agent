@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/version"
 	fakediscovery "k8s.io/client-go/discovery/fake"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	metafake "k8s.io/client-go/metadata/fake"
@@ -53,6 +54,13 @@ func TestDetectEnvironmentAndListNativeWorkloads(t *testing.T) {
 	}
 	if environment.APIServer != "https://business-api.example.invalid:6443" {
 		t.Fatalf("api server = %q", environment.APIServer)
+	}
+	overview, err := reader.ClusterOverview(context.Background())
+	if err != nil {
+		t.Fatalf("cluster overview: %v", err)
+	}
+	if len(overview.Nodes) != 1 || len(overview.Nodes[0].Addresses) != 2 || overview.Nodes[0].Addresses[0].Address != "10.20.0.11" {
+		t.Fatalf("node addresses = %#v", overview.Nodes)
 	}
 	if !contains(environment.ClusterRoles, "bootstrap-or-management-control-plane") || !contains(environment.ClusterRoles, "inference-business-cluster") {
 		t.Fatalf("roles = %#v", environment.ClusterRoles)
@@ -109,6 +117,39 @@ func TestListHelmReleasesUsesMetadataOnlyAndLatestRevision(t *testing.T) {
 	}
 }
 
+func TestGenericReadDiscoversResourcesAndRedactsSensitivePayloads(t *testing.T) {
+	reader := newTestReader(t, fixedLogReader{})
+	discovery, err := reader.DiscoverResources(context.Background(), ResourceDiscoveryRequest{GroupVersion: "v1"})
+	if err != nil || len(discovery.GroupVersions) != 1 || len(discovery.GroupVersions[0].Resources) == 0 {
+		t.Fatalf("discovery=%#v err=%v", discovery, err)
+	}
+	nodes, err := reader.ReadResources(context.Background(), ResourceReadRequest{
+		GroupVersion: "v1", Resource: "nodes", Name: "npu-01",
+	})
+	if err != nil || nodes.Total != 1 {
+		t.Fatalf("nodes=%#v err=%v", nodes, err)
+	}
+	secrets, err := reader.ReadResources(context.Background(), ResourceReadRequest{
+		GroupVersion: "v1", Resource: "secrets", Namespace: "ai-inference", Name: "model-key",
+	})
+	if err != nil || secrets.Total != 1 {
+		t.Fatalf("secrets=%#v err=%v", secrets, err)
+	}
+	if _, found := secrets.Objects[0]["data"]; found {
+		t.Fatalf("Secret payload leaked: %#v", secrets.Objects[0])
+	}
+	configMaps, err := reader.ReadResources(context.Background(), ResourceReadRequest{
+		GroupVersion: "v1", Resource: "configmaps", Namespace: "ai-inference", Name: "runtime-config",
+	})
+	if err != nil || configMaps.Total != 1 {
+		t.Fatalf("configmaps=%#v err=%v", configMaps, err)
+	}
+	data := configMaps.Objects[0]["data"].(map[string]any)
+	if data["password"] != "<redacted>" || data["mode"] != "pd-separation" {
+		t.Fatalf("ConfigMap redaction=%#v", data)
+	}
+}
+
 func newTestReader(t *testing.T, logs fixedLogReader) *KubernetesReader {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -125,8 +166,14 @@ func newTestReader(t *testing.T, logs fixedLogReader) *KubernetesReader {
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ai-inference"}},
 		&corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{Name: "npu-01"},
-			Status:     corev1.NodeStatus{Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}},
+			Spec:       corev1.NodeSpec{PodCIDRs: []string{"10.244.1.0/24"}, ProviderID: "baremetal://npu-01"},
+			Status: corev1.NodeStatus{
+				Addresses:  []corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: "10.20.0.11"}, {Type: corev1.NodeHostName, Address: "npu-01"}},
+				Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}},
+			},
 		},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "ai-inference", Name: "model-key"}, Data: map[string][]byte{"apiKey": []byte("do-not-leak")}},
+		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "ai-inference", Name: "runtime-config"}, Data: map[string]string{"mode": "pd-separation", "password": "do-not-leak"}},
 		&appsv1.Deployment{
 			ObjectMeta: metav1.ObjectMeta{Namespace: "ai-inference", Name: "router"},
 			Spec:       appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "router"}}, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "router", Image: "router:v1"}}}}},
@@ -154,6 +201,7 @@ func newTestReader(t *testing.T, logs fixedLogReader) *KubernetesReader {
 	clientset := fake.NewSimpleClientset()
 	fakeDiscovery := clientset.Discovery().(*fakediscovery.FakeDiscovery)
 	fakeDiscovery.Resources = []*metav1.APIResourceList{
+		{GroupVersion: "v1", APIResources: []metav1.APIResource{{Name: "nodes", Kind: "Node", Verbs: metav1.Verbs{"get", "list"}}, {Name: "configmaps", Kind: "ConfigMap", Namespaced: true, Verbs: metav1.Verbs{"get", "list"}}, {Name: "secrets", Kind: "Secret", Namespaced: true, Verbs: metav1.Verbs{"get", "list"}}}},
 		{GroupVersion: "bke.bocloud.com/v1beta1", APIResources: []metav1.APIResource{{Name: "bkeclusters"}, {Name: "bkenodes"}}},
 		{GroupVersion: "leaderworkerset.x-k8s.io/v1", APIResources: []metav1.APIResource{{Name: "leaderworkersets"}}},
 	}
@@ -165,7 +213,8 @@ func newTestReader(t *testing.T, logs fixedLogReader) *KubernetesReader {
 		helmMetadata("ai-inference", "sh.helm.release.v1.qwen.v1", "qwen", "1", "superseded"),
 		helmMetadata("ai-inference", "sh.helm.release.v1.qwen.v2", "qwen", "2", "deployed"),
 	)
-	reader, err := New(controllerClient, fakeDiscovery, metadataClient, logs, "https://business-api.example.invalid:6443")
+	dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, objects...)
+	reader, err := New(controllerClient, fakeDiscovery, metadataClient, dynamicClient, logs, "https://business-api.example.invalid:6443")
 	if err != nil {
 		t.Fatal(err)
 	}
