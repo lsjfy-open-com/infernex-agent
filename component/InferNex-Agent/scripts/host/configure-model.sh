@@ -35,7 +35,7 @@ Actions:
                          Approximate cap for one tool result
   --disable               Disable model analysis and remove its API key
   --test                  Send a small chat-completions request before applying
-  --test-tools            Force a harmless function call for terminal compatibility
+  --test-tools            Verify harmless auto tool calling used by the terminal
   --show                  Print effective non-secret model configuration
 
 Control:
@@ -428,8 +428,9 @@ test_endpoint() (
   local key_file="$3"
   local test_tools="$4"
   local value_timeout="$5"
+  local value_max_output_tokens="$6"
   local endpoint response_file header_file http_code escaped_model payload
-  local request_timeout_seconds retry_max_seconds
+  local request_timeout_seconds retry_max_seconds probe_attempt probe_attempts
 
   [[ -n "$value_base_url" && -n "$value_model" ]] ||
     bundle_die "model analysis is disabled; there is no endpoint to test"
@@ -443,8 +444,8 @@ test_endpoint() (
   escaped_model="${escaped_model//\"/\\\"}"
   if [[ "$test_tools" == "true" ]]; then
     payload="$(
-      printf '{"model":"%s","messages":[{"role":"user","content":"Call the supplied test tool."}],"tools":[{"type":"function","function":{"name":"infernex_test_tool","description":"Harmless compatibility test","parameters":{"type":"object","properties":{},"additionalProperties":false}}}],"tool_choice":{"type":"function","function":{"name":"infernex_test_tool"}},"temperature":0,"stream":false,"max_tokens":32}' \
-        "$escaped_model"
+      printf '{"model":"%s","messages":[{"role":"system","content":"You are testing OpenAI-compatible automatic tool calling. Follow the user request by calling the supplied tool and return no prose."},{"role":"user","content":"Use infernex_test_tool to inspect scope cluster now."}],"tools":[{"type":"function","function":{"name":"infernex_test_tool","description":"Harmless compatibility test that reports the requested scope","parameters":{"type":"object","properties":{"scope":{"type":"string","enum":["cluster"]}},"required":["scope"],"additionalProperties":false}}}],"tool_choice":"auto","temperature":0,"stream":false,"max_tokens":%s}' \
+        "$escaped_model" "$value_max_output_tokens"
     )"
   else
     payload="$(
@@ -497,22 +498,45 @@ test_endpoint() (
   fi
 
   endpoint="$(chat_completions_endpoint "$value_base_url")"
-  if ! http_code="$(curl "${curl_args[@]}" "$endpoint")"; then
-    bundle_die "model endpoint request failed: ${endpoint}"
-  fi
-  [[ "$http_code" =~ ^2[0-9][0-9]$ ]] ||
-    bundle_die "model endpoint returned HTTP ${http_code}"
-  grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
-    bundle_die "model endpoint response does not contain choices"
+  probe_attempts=1
+  [[ "$test_tools" != "true" ]] || probe_attempts=3
+  for ((probe_attempt = 1; probe_attempt <= probe_attempts; probe_attempt++)); do
+    : >"$response_file"
+    if ! http_code="$(curl "${curl_args[@]}" "$endpoint")"; then
+      bundle_die "model endpoint request failed: ${endpoint}"
+    fi
+    [[ "$http_code" =~ ^2[0-9][0-9]$ ]] ||
+      bundle_die "model endpoint returned HTTP ${http_code}"
+    grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
+      bundle_die "model endpoint response does not contain choices"
+    if [[ "$test_tools" != "true" ]] || {
+      grep -Eq '"tool_calls"[[:space:]]*:[[:space:]]*\[' "$response_file" &&
+        grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file"
+    }; then
+      break
+    fi
+    if ((probe_attempt < probe_attempts)); then
+      bundle_warn "auto tool-call probe ${probe_attempt}/${probe_attempts} returned no message.tool_calls; retrying because model generation and parser output may be non-deterministic"
+    fi
+  done
   if [[ "$test_tools" == "true" ]]; then
-    if ! grep -Eq '"tool_calls"[[:space:]]*:' "$response_file"; then
-      bundle_warn "the endpoint accepted the tools request but returned no message.tool_calls; bounded response follows"
+    if ! grep -Eq '"tool_calls"[[:space:]]*:[[:space:]]*\[' "$response_file"; then
+      bundle_warn "the endpoint accepted an auto-tools request but returned no message.tool_calls"
+      if grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"length"' "$response_file"; then
+        bundle_warn "the compatibility response ended with finish_reason=length even with max_tokens=${value_max_output_tokens}"
+      fi
+      if grep -Eq '(<tool_call>|&lt;tool_call&gt;)' "$response_file"; then
+        bundle_warn "raw tool-call markup was left in content/reasoning; the serving parser did not convert it to message.tool_calls"
+      fi
+      bundle_warn "bounded response follows (credentials and request headers are not included)"
       head -c 4096 "$response_file" >&2 || true
       printf '\n' >&2
-      bundle_die "model endpoint does not return OpenAI-compatible tool_calls; verify the live model ID, gateway passthrough, chat template, --enable-auto-tool-choice, and the model-specific --tool-call-parser"
+      bundle_die "model endpoint did not return OpenAI-compatible message.tool_calls in ${probe_attempts} attempts using the same tool_choice=auto mode as infernex-agent; verify the live model ID, gateway passthrough, reasoning/chat template, --enable-auto-tool-choice, and the model-specific --tool-call-parser"
     fi
     grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file" ||
-      bundle_die "model endpoint returned an unexpected tool call"
+      bundle_die "model endpoint returned tool_calls in ${probe_attempts} attempts, but never called infernex_test_tool"
+    grep -Eq 'scope.{0,32}cluster' "$response_file" ||
+      bundle_warn "tool call was parsed, but its arguments did not contain the expected scope=cluster; runtime validation may reject malformed arguments"
   fi
   bundle_info "model endpoint test succeeded: ${endpoint}"
 )
@@ -520,7 +544,7 @@ test_endpoint() (
 if [[ "$test_model" == "true" ]]; then
   test_endpoint \
     "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools" \
-    "$candidate_timeout"
+    "$candidate_timeout" "$candidate_max_output"
 fi
 
 show_configuration() {

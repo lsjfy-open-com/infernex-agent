@@ -101,9 +101,21 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 ```
 
 `--test` 在写入和重启之前发送固定的短提示词，验证网络、鉴权、模型名和普通响应
-结构。`--test-tools` 会进一步强制调用无副作用的 `infernex_test_tool`，验证交互终端
-依赖的 OpenAI tool-calling 响应结构。两种操作都会产生少量 Token；计划使用自然
-语言终端时应使用 `--test-tools`。
+结构。`--test-tools` 会使用与正式终端相同的 `tool_choice: "auto"` 请求无副作用的
+`infernex_test_tool`，验证交互终端依赖的 OpenAI tool-calling 响应结构。探测使用当前
+`max-output-tokens`，并在成功前最多尝试 3 次，避免 reasoning 模型一次采样或 parser
+偶发漏解析造成安装假阴性。两种操作都会产生少量 Token；计划使用自然语言终端时应使用
+`--test-tools`。
+
+早期候选版使用仅 32 个输出 token 的“指定函数”探测，与正式终端的 `auto` 模式不一致。
+GLM-5.x 一类带 reasoning 的模型可能因此在生成工具调用前达到输出上限；部分 vLLM 组合还可能
+把原始 `<tool_call>` 留在 `content`/reasoning 中而没有转换成 `message.tool_calls`。配置器会分别
+提示 `finish_reason=length` 和原始工具标记泄漏，不能再把两者笼统报告为“模型不支持”。
+
+GLM-5/5.1/5.2 通常应组合 `--tool-call-parser glm47`、`--reasoning-parser glm45` 和
+`--enable-auto-tool-choice`；Qwen 应使用与具体型号及 vLLM 版本匹配的 parser。还要确认 Agent
+配置的 model ID 与服务端 `--served-model-name` 完全一致。parser 能力属于模型、模板、reasoning
+parser、tool parser 和 vLLM/vLLM-Ascend 版本的组合，Agent 不根据模型名猜测。
 
 `--timeout` 是每次请求尝试的超时，默认 `3m`。安装探测使用 15 秒建连超时；连接拒绝、
 HTTP 408、429、500、502、503、504 等瞬态故障最多重试 3 次，并按 2、4、8 秒退避。
