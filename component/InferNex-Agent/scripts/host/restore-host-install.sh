@@ -111,6 +111,10 @@ host_targets=(
   /etc/systemd/system/infernex-agent.service
   /opt/infernex-agent/bin/chat.sh
   /usr/local/bin/infernex-agent
+  /opt/infernex-agent/bin/tui.sh
+  /opt/infernex-agent/pi-runtime
+  /opt/infernex-agent/pi/infernex.ts
+  /opt/infernex-agent/pi/LICENSE.pi.txt
 )
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"
@@ -130,7 +134,7 @@ for target_index in "${!host_targets[@]}"; do
   [[ "$manifest_status" == "present" || "$manifest_status" == "absent" ]] ||
     bundle_die "recovery manifest does not match target ${target}"
   if [[ "$manifest_status" == "present" ]]; then
-    [[ -f "${backup_dir}/host/${target_index}" &&
+    [[ -e "${backup_dir}/host/${target_index}" &&
       ! -L "${backup_dir}/host/${target_index}" ]] ||
       bundle_die "backup file is missing or unsafe for ${target}"
   fi
@@ -170,10 +174,19 @@ for target_index in "${!host_targets[@]}"; do
     manifest_status="absent"
   fi
   if [[ "$manifest_status" == "present" ]]; then
+    if [[ -L "$target" ]]; then
+      rm -f -- "$target"
+    elif [[ -d "$target" ]]; then
+      rm -rf -- "$target"
+    fi
     cp --archive --no-dereference -- \
       "${backup_dir}/host/${target_index}" "$target"
   else
-    rm -f -- "$target"
+    if [[ -d "$target" && ! -L "$target" ]]; then
+      rm -rf -- "$target"
+    else
+      rm -f -- "$target"
+    fi
   fi
 done
 

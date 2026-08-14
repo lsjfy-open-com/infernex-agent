@@ -499,7 +499,14 @@ installed_configurator="${install_root}/bin/configure-model.sh"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 installed_chat="${install_root}/bin/chat.sh"
+installed_tui="${install_root}/bin/tui.sh"
+installed_pi_runtime="${install_root}/pi-runtime"
+installed_pi="${installed_pi_runtime}/pi"
+installed_pi_extension="${install_root}/pi/infernex.ts"
+installed_pi_license="${install_root}/pi/LICENSE.pi.txt"
 installed_cli="/usr/local/bin/infernex-agent"
+[[ ! -e "$installed_pi_runtime" || ( -d "$installed_pi_runtime" && ! -L "$installed_pi_runtime" ) ]] ||
+  bundle_die "refusing unsafe Pi runtime path: ${installed_pi_runtime}"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -557,6 +564,10 @@ host_backup_targets=(
   "$unit_path"
   "$installed_chat"
   "$installed_cli"
+  "$installed_tui"
+  "$installed_pi_runtime"
+  "$installed_pi_extension"
+  "$installed_pi_license"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -590,6 +601,13 @@ for target_index in "${!host_backup_targets[@]}"; do
       cd -- "${install_backup_root}/host"
       sha256sum "$target_index"
     ) >>"${install_backup_root}/host/checksums.sha256"
+  elif [[ -d "$backup" && ! -L "$backup" ]]; then
+    (
+      cd -- "${install_backup_root}/host"
+      while IFS= read -r -d '' backup_file; do
+        sha256sum "$backup_file"
+      done < <(find "$target_index" -type f -print0 | LC_ALL=C sort -z)
+    ) >>"${install_backup_root}/host/checksums.sha256"
   fi
 done
 (
@@ -608,9 +626,18 @@ rollback_failed_install() {
     target="${host_backup_targets[$target_index]}"
     backup="${install_backup_root}/host/${target_index}"
     if [[ -e "$backup" ]]; then
+      if [[ -L "$target" ]]; then
+        rm -f -- "$target"
+      elif [[ -d "$target" ]]; then
+        rm -rf -- "$target"
+      fi
       cp --archive --no-dereference -- "$backup" "$target" || true
     else
-      rm -f -- "$target" || true
+      if [[ -d "$target" && ! -L "$target" ]]; then
+        rm -rf -- "$target" || true
+      else
+        rm -f -- "$target" || true
+      fi
     fi
   done
   systemctl daemon-reload >/dev/null 2>&1 || true
@@ -641,6 +668,7 @@ if [[ ! -f "$bundle_lib_source" ]]; then
 fi
 [[ -f "${script_dir}/configure-model.sh" &&
   -f "${script_dir}/chat.sh" &&
+  -f "${script_dir}/tui.sh" &&
   -f "${script_dir}/restore-host-install.sh" &&
   -f "$bundle_lib_source" ]] ||
   bundle_die "host configuration and restore tools are missing"
@@ -656,6 +684,27 @@ install -m 0644 -o root -g root \
 install -m 0755 -o root -g root \
   "${script_dir}/chat.sh" \
   "$installed_chat"
+install -m 0755 -o root -g root \
+  "${script_dir}/tui.sh" \
+  "$installed_tui"
+if [[ -n "$bundle_root" && -x "${bundle_root}/payload/pi-runtime/pi" &&
+  -f "${bundle_root}/pi/infernex.ts" && -f "${bundle_root}/pi/LICENSE.pi.txt" ]]; then
+  install -d -m 0755 -o root -g root "${install_root}/pi"
+  if [[ -d "$installed_pi_runtime" ]]; then
+    rm -rf -- "$installed_pi_runtime"
+  fi
+  install -d -m 0755 -o root -g root "$installed_pi_runtime"
+  cp -a -- "${bundle_root}/payload/pi-runtime/." "$installed_pi_runtime/"
+  chown -R root:root "$installed_pi_runtime"
+  chmod 0755 "$installed_pi"
+  install -m 0644 -o root -g root "${bundle_root}/pi/infernex.ts" "$installed_pi_extension"
+  install -m 0644 -o root -g root "${bundle_root}/pi/LICENSE.pi.txt" "$installed_pi_license"
+else
+  if [[ -d "$installed_pi_runtime" ]]; then
+    rm -rf -- "$installed_pi_runtime"
+  fi
+  rm -f -- "$installed_pi_extension" "$installed_pi_license"
+fi
 
 if [[ -f "$installed_binary" ]]; then
   install -m 0755 -o root -g root "$installed_binary" "${installed_binary}.previous"
@@ -1011,3 +1060,6 @@ else
   bundle_info "model analysis is disabled; configure it later with ${installed_configurator}"
 fi
 bundle_info "interactive terminal: sudo ${installed_chat}"
+if [[ -x "$installed_pi" ]]; then
+  bundle_info "Pi TUI: sudo ${installed_tui}"
+fi

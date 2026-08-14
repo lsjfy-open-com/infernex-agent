@@ -1,6 +1,6 @@
 # InferNex Agent v0.5 产品与工程推进提案
 
-状态：Draft for review
+状态：Draft for review（2026-08-14 更新：采用 Pi Agent foundation 分支验证）
 
 目标读者：InferNex/openFuyao 维护者、推理平台与运维团队、模型服务团队
 
@@ -71,24 +71,40 @@ Agent runtime 对 CLI、Dashboard 和未来 API 发布同一组事件：计划�
 
 ```mermaid
 flowchart LR
-    CLI["Bubble Tea TUI / readline"] --> Runtime["Agent Runtime"]
-    Web["Dashboard / SSE"] --> Runtime
-    Runtime --> Planner["OpenAI-compatible model"]
-    Runtime --> Policy["Policy + approval + budgets"]
-    Runtime --> Tools["Typed + generic read tools"]
+    CLI["Pi TUI / compatible chat"] --> Pi["Pi Agent runtime"]
+    Pi --> Model["OpenAI-compatible model"]
+    Pi --> Extension["InferNex Pi extension"]
+    Extension --> MCP["loopback MCP"]
+    Web["Dashboard / SSE"] --> Go["InferNex Go service"]
+    MCP --> Go
+    Go --> Policy["Policy + approval + budgets"]
+    Go --> Tools["Typed + generic read tools"]
     Tools --> K8s["Kubernetes / Helm / InferNex APIs"]
     Tools --> Evidence["Evidence Store: log + hash + reports"]
-    Runtime --> Session["SQLite Session + event log + usage"]
+    Pi --> Session["Pi Session + compaction + usage"]
     Policy --> Safety["Snapshot / change record / rollback"]
 ```
 
 实现建议：
 
-- 保留 Go 单二进制和 `CGO_ENABLED=0`，适配 openEuler aarch64 离线安装；
-- 使用 Bubble Tea/Bubbles/Lip Gloss/Glamour 构建 TUI，不复制 Claude Code；
-- 使用纯 Go SQLite 驱动保存 Session、事件和用量；Artifact 仍以文件保存，数据库只存索引和 hash；
-- MCP 继续承载工具协议，InferNex/openFuyao 领域逻辑留在现有 typed tools；
-- CLI 与 Dashboard 消费相同事件流，避免两套执行逻辑。
+- 保留 Go 静态二进制和 `CGO_ENABLED=0`，作为管理节点常驻服务、安全边界与兼容 `chat` 入口；
+- 以 Pi v0.84.1 为首个固定验证基线，复用其 TUI、Session、分叉/恢复、上下文压缩和 token 展示；
+- 新增 InferNex Pi extension，通过本机无状态 MCP 动态加载现有 typed tools，不复制领域实现；
+- 固定禁用 Pi 内置 `bash/read/write/edit` 等 coding tools，模型不能绕过 MCP 直接操作宿主机或集群；
+- Pi 负责会话和模型循环，Go 服务负责 RBAC、脱敏、证据、审批、快照、验证、回退与审计；
+- Artifact 仍以受保护文件保存；后续由统一任务事件把 Pi Session、Dashboard 和报告关联起来；
+- 离线宿主机包包含固定版本的 Pi standalone binary、SHA-256、MIT License 和本项目扩展，不要求 Node/Bun/npm。
+
+### 4.1 为什么不直接 fork 成另一个通用 coding agent
+
+Pi 上游明确不是权限沙箱，其默认工具会以启动用户权限执行。因此 InferNex 不能只换品牌或修改
+system prompt，而必须用启动参数和扩展形成可测试的硬边界：只加载本项目扩展、只允许本机 MCP、
+未标记只读的工具需要交互确认、无 UI 时默认拒绝。即使 Pi TUI 退出，持续扫描、Dashboard、
+安装备份和失败回退仍由 Go 服务运行。
+
+上游依赖采用 pinned-version 策略，不直接跟随 latest。每次升级须经过许可证/SBOM、双架构构建、
+OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi 验证不满足 openEuler aarch64
+或内部模型兼容性，现有 `infernex-agent chat` 保持可用，不阻断 Agent 后端演进。
 
 ## 5. 迭代计划
 
@@ -114,12 +130,17 @@ flowchart LR
 
 验收：进程退出或 SSH 断开后可以恢复；恢复不会重新执行已完成写操作；用户能删除会话和记忆。
 
-### 阶段 C：Agent TUI
+### 阶段 C：Agent TUI（Pi foundation，已开始）
 
-- 多行编辑、流式 Markdown、可折叠工具结果、计划/审批面板；
-- 状态栏显示模型、Session、上下文比例、累计 token、耗时和当前阶段；
-- Session picker、Artifact 浏览、报告导出；
-- readline 和 `--ask` 保留为兼容与自动化模式。
+- 第一纵向切片：`infernex-agent tui` 生成隔离的模型配置，启动 pinned Pi，并动态桥接现有 MCP 工具；
+- 默认禁用所有 Pi 内置 coding tools，只读工具自动执行，写工具在终端逐次确认；
+- 复用 Pi 的多行编辑、流式 Markdown、工具过程、状态栏、Session picker、恢复/分叉和压缩；
+- 第二纵向切片增加 InferNex 计划/审批、Artifact 渐进浏览和报告专用渲染；
+- `chat`、`--ask` 和 Go 后端保留为兼容、自动化与回退模式。
+
+阶段 C 的首个验收门槛：同一个现场任务可分别由 `chat` 和 `tui` 完成；TUI 能在 SSH 断开后恢复
+Session；模型看不到 `bash/read/write/edit`；所有写工具仍出现 InferNex 变更预览并产生 change ID；
+Pi 进程退出不影响后台扫描和 Dashboard。
 
 ### 阶段 D：推理专项闭环
 

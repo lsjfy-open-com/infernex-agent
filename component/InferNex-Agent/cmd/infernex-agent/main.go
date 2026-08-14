@@ -111,6 +111,8 @@ func run() error {
 			return runClusterState(os.Args[2:])
 		case "chat":
 			return runChat(os.Args[2:])
+		case "tui":
+			return runTUI(os.Args[2:])
 		case "serve":
 			return runServer(os.Args[2:])
 		case "doctor":

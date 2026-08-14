@@ -1,0 +1,48 @@
+# Pi TUI 使用与边界
+
+`agent/pi-agent-foundation` 分支把 Pi 作为 InferNex Agent 的交互层候选实现。当前 `infernex-agent chat` 仍然保留，Pi TUI 是可并行验证的入口。
+
+## 为什么采用 Pi
+
+Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Session 恢复/分叉、上下文压缩、模型选择和 token/context 状态。InferNex Agent 因而可以把工程投入集中到集群发现、推理故障知识、证据关联、审批和回退，而不是继续自行重写通用 Agent UI。
+
+本项目固定验证 Pi v0.84.1。上游采用 MIT License，正式发行包必须同时携带其许可证和版本清单。
+
+## 安装与启动
+
+包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
+
+```bash
+sudo /opt/infernex-agent/bin/tui.sh
+```
+
+恢复或选择已有会话时，把 Pi 参数放在 `--` 后：
+
+```bash
+sudo /opt/infernex-agent/bin/tui.sh -- --resume
+sudo /opt/infernex-agent/bin/tui.sh -- --continue
+```
+
+模型地址、模型名、上下文窗口和输出预算继续来自 `/etc/infernex-agent/agent.conf`，API key 只通过子进程环境传递，不写入 Pi 的 `models.json`。Session 保存在 `/var/lib/infernex-agent/pi/sessions`。
+
+## 工具与安全边界
+
+启动器固定使用 `--no-builtin-tools`，因此模型不能使用 Pi 自带的任意 Shell 和文件读写能力。`infernex.ts` 从 `http://127.0.0.1:8080/mcp` 动态加载现有 InferNex 工具：
+
+- MCP 标记为只读的发现、日志和诊断工具可主动执行；
+- 任何未明确标记只读的工具都需要当前终端确认；
+- 没有交互终端时写工具默认拒绝；
+- Kubernetes RBAC、Secret 脱敏、快照、变更记录、readiness 验证和回退仍由 Go 后端执行；
+- Pi 不能绕过 MCP 直接执行 `kubectl`、`helm` 或宿主机命令。
+
+Pi 自身不是安全沙箱。若启动时移除上述限制、手工加载其他扩展或直接运行原始 Pi 二进制，行为不属于 InferNex Agent 的受支持模式。
+
+## 当前阶段
+
+当前分支已完成 TUI 启动器、OpenAI-compatible 模型配置转换、MCP 动态工具桥接、写操作确认和 Session 目录隔离。进入正式 RC 前仍需完成：
+
+1. 在 openEuler aarch64 管理节点验证 Pi standalone binary；
+2. 用 GLM 5.x、Qwen 3.x 验证工具调用、压缩和恢复；
+3. 将 Pi ARM64/AMD64 二进制、SHA-256 与 MIT License 固定进 Release 构建；
+4. 对大日志 Artifact 渐进读取和审批事件做专用渲染；
+5. 保留 `chat` 与 `tui` 的同任务对比报告，确认后再决定默认入口。

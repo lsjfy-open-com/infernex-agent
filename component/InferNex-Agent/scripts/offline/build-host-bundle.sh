@@ -19,6 +19,7 @@ Options:
   --version VERSION       Agent version (default: Chart.yaml version)
   --architecture ARCH    amd64 or arm64 (default: current host)
   --binary FILE          Reuse an already-built static Linux binary
+  --pi-runtime-dir DIR   Include an extracted, pinned Pi Linux release and TUI
   --output-dir DIR       Destination directory (default: ./dist)
   --force                Replace an existing bundle with the same name
   -h, --help             Show this help
@@ -35,6 +36,7 @@ version="$(
 )"
 architecture="$(bundle_host_architecture)"
 binary_source=""
+pi_runtime_source="${PI_RUNTIME_DIR:-}"
 output_dir="${PWD}/dist"
 force="false"
 go_bin="${GO_BIN:-go}"
@@ -54,6 +56,11 @@ while (($#)); do
     --binary)
       [[ $# -ge 2 ]] || bundle_die "--binary requires a value"
       binary_source="$2"
+      shift 2
+      ;;
+    --pi-runtime-dir)
+      [[ $# -ge 2 ]] || bundle_die "--pi-runtime-dir requires a value"
+      pi_runtime_source="$2"
       shift 2
       ;;
     --output-dir)
@@ -84,6 +91,10 @@ esac
 if [[ -n "$binary_source" ]]; then
   [[ -f "$binary_source" ]] ||
     bundle_die "binary does not exist: ${binary_source}"
+fi
+if [[ -n "$pi_runtime_source" ]]; then
+  [[ -d "$pi_runtime_source" && -f "${pi_runtime_source}/pi" ]] ||
+    bundle_die "Pi runtime directory must contain the pi executable: ${pi_runtime_source}"
 fi
 
 bundle_require_command sha256sum
@@ -136,12 +147,22 @@ install -m 0755 \
   "${script_dir}/bundle-lib.sh" \
   "${agent_dir}/scripts/host/configure-model.sh" \
   "${agent_dir}/scripts/host/chat.sh" \
+  "${agent_dir}/scripts/host/tui.sh" \
   "${agent_dir}/scripts/host/create-kubeconfig.sh" \
   "${agent_dir}/scripts/host/install-host.sh" \
   "${agent_dir}/scripts/host/restore-host-install.sh" \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
+if [[ -n "$pi_runtime_source" ]]; then
+  bundle_info "including pinned Pi TUI runtime"
+  install -d -m 0755 "${bundle_root}/payload/pi-runtime"
+  cp -a -- "${pi_runtime_source}/." "${bundle_root}/payload/pi-runtime/"
+  chmod 0755 "${bundle_root}/payload/pi-runtime/pi"
+  install -d -m 0755 "${bundle_root}/pi"
+  install -m 0644 "${agent_dir}/pi/infernex.ts" "${bundle_root}/pi/infernex.ts"
+  install -m 0644 "${agent_dir}/pi/LICENSE.pi.txt" "${bundle_root}/pi/LICENSE.pi.txt"
+fi
 install -m 0755 \
   "${agent_dir}/scripts/host/quick-install.sh" \
   "${bundle_root}/install.sh"
@@ -157,6 +178,7 @@ install -m 0644 \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/context-management-zh.md" \
   "${agent_dir}/docs/terminal-interaction-zh.md" \
+  "${agent_dir}/docs/pi-tui-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \
   "${agent_dir}/docs/operations-runbook-zh.md" \
   "${agent_dir}/docs/change-safety-zh.md" \
@@ -170,6 +192,7 @@ format=infernex-agent-linux-v1
 agent_version=${version}
 architecture=${architecture}
 binary=payload/infernex-agent
+pi_runtime=$([[ -n "$pi_runtime_source" ]] && printf 'payload/pi-runtime' || printf 'none')
 created_utc=${created_utc}
 EOF
 

@@ -1,0 +1,14 @@
+{
+  "name": "@infernex/agent-pi-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test infernex.test.ts"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.1",
+    "typescript": "5.9.3"
+  }
+}

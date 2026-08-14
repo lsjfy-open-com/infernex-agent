@@ -70,6 +70,10 @@ sudo infernex-agent chat
 `/context` 查看当前预算，`/usage` 查看模型调用与 token，`/compact` 主动压缩，`/clear` 清空当前会话。
 如果模型以 `finish_reason=length` 截断回答，Agent 会自动续写并在无法完整恢复时明确提示。
 
+`agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
+token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
+[Pi TUI 使用与边界](docs/pi-tui-zh.md)。
+
 ## Agent 如何探索
 
 Agent 的知识库描述 InferNex 组件关系、常见故障模式、稳定变更方法和安全边界；

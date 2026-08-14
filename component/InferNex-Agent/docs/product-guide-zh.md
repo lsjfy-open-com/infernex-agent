@@ -4,6 +4,7 @@
 
 > v0.5 的产品目标、架构、阶段验收和项目推进机制见
 > [InferNex Agent v0.5 产品与工程推进提案](proposals/infernex-agent-v0.5-proposal-zh.md)。
+> Pi TUI foundation 分支的安装、使用和安全边界见 [Pi TUI 使用与边界](pi-tui-zh.md)。
 
 ## 一句话定位
 
