@@ -35,7 +35,7 @@ if (bundle_verify_checksums "$test_root" >/dev/null 2>&1); then
   exit 1
 fi
 
-"${agent_dir}/scripts/host/quick-install.sh" --help |
+bash "${agent_dir}/scripts/host/quick-install.sh" --help |
   grep -Fq -- '--skip-checksums'
 
 printf 'bundle path safety tests passed\n'
