@@ -25,6 +25,11 @@ sudo /opt/infernex-agent/bin/tui.sh -- --continue
 
 模型地址、模型名、上下文窗口和输出预算继续来自 `/etc/infernex-agent/agent.conf`，API key 只通过子进程环境传递，不写入 Pi 的 `models.json`。Session 保存在 `/var/lib/infernex-agent/pi/sessions`。
 
+当一个 MCP 工具结果超过 16 KiB 时，TUI 不会把全文反复加入模型上下文。原文以 SHA-256
+作为 Artifact ID 保存到 `/var/lib/infernex-agent/pi/artifacts`，模型先收到头尾预览，再通过
+`infernex_read_artifact` 按字节偏移读取最多 16 KiB 的相关片段。状态栏会显示当前 InferNex
+工具和本次进程生成的 Artifact 数量。
+
 ## 工具与安全边界
 
 启动器固定使用 `--no-builtin-tools`，因此模型不能使用 Pi 自带的任意 Shell 和文件读写能力。`infernex.ts` 从 `http://127.0.0.1:8080/mcp` 动态加载现有 InferNex 工具：
@@ -39,10 +44,11 @@ Pi 自身不是安全沙箱。若启动时移除上述限制、手工加载其�
 
 ## 当前阶段
 
-当前分支已完成 TUI 启动器、OpenAI-compatible 模型配置转换、MCP 动态工具桥接、写操作确认和 Session 目录隔离。进入正式 RC 前仍需完成：
+当前分支已完成 TUI 启动器、OpenAI-compatible 模型配置转换、MCP 动态工具桥接、写操作确认、
+Session 目录隔离，以及大工具结果的 Artifact 化和渐进读取。进入正式 RC 前仍需完成：
 
 1. 在 openEuler aarch64 管理节点验证 Pi standalone binary；
 2. 用 GLM 5.x、Qwen 3.x 验证工具调用、压缩和恢复；
 3. 将 Pi ARM64/AMD64 二进制、SHA-256 与 MIT License 固定进 Release 构建；
-4. 对大日志 Artifact 渐进读取和审批事件做专用渲染；
+4. 对 Artifact 分页和审批事件做折叠面板等专用渲染；
 5. 保留 `chat` 与 `tui` 的同任务对比报告，确认后再决定默认入口。

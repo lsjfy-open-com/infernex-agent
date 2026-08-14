@@ -1,4 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
+import { mkdir, open, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Type } from "typebox";
 
 type MCPTool = {
 	name: string;
@@ -18,6 +22,13 @@ type MCPResponse<T> = {
 };
 
 const endpoint = process.env.INFERNEX_MCP_URL || "http://127.0.0.1:8080/mcp";
+const artifactThresholdBytes = 16 * 1024;
+const artifactPreviewBytes = 4 * 1024;
+const artifactReadMaxBytes = 16 * 1024;
+
+function artifactDirectory(): string {
+	return process.env.INFERNEX_ARTIFACT_DIR || "/var/lib/infernex-agent/pi/artifacts";
+}
 
 async function requestMCP<T>(method: string, params: unknown, signal?: AbortSignal): Promise<T> {
 	const response = await fetch(endpoint, {
@@ -53,8 +64,32 @@ function resultText(result: { content?: Array<{ type?: string; text?: string }>;
 	return "InferNex tool completed without textual output.";
 }
 
+async function boundedResultText(text: string): Promise<{ text: string; artifact?: { id: string; bytes: number } }> {
+	const payload = Buffer.from(text, "utf8");
+	if (payload.byteLength <= artifactThresholdBytes) return { text };
+	const id = createHash("sha256").update(payload).digest("hex");
+	const directory = artifactDirectory();
+	await mkdir(directory, { recursive: true, mode: 0o700 });
+	try {
+		await writeFile(join(directory, `${id}.log`), payload, { flag: "wx", mode: 0o600 });
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+	}
+	const head = payload.subarray(0, artifactPreviewBytes).toString("utf8");
+	const tail = payload.subarray(-artifactPreviewBytes).toString("utf8");
+	return {
+		artifact: { id, bytes: payload.byteLength },
+		text:
+			`Large tool result stored as artifact ${id} (${payload.byteLength} bytes).\n` +
+			`Use infernex_read_artifact with this id and byte offsets for progressive reading.\n\n` +
+			`--- beginning preview ---\n${head}\n--- end beginning preview ---\n\n` +
+			`--- ending preview ---\n${tail}\n--- end ending preview ---`,
+	};
+}
+
 export default async function infernexExtension(pi: ExtensionAPI) {
 	const list = await requestMCP<{ tools: MCPTool[] }>("tools/list", {});
+	let artifactsCreated = 0;
 	for (const tool of list.tools || []) {
 		pi.registerTool({
 			name: tool.name,
@@ -80,15 +115,65 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 					structuredContent?: unknown;
 					isError?: boolean;
 				}>("tools/call", { name: tool.name, arguments: params }, signal);
-				const text = resultText(result);
-				if (result.isError) throw new Error(text);
+				const rawText = resultText(result);
+				if (result.isError) throw new Error(rawText);
+				const bounded = await boundedResultText(rawText);
+				if (bounded.artifact) artifactsCreated += 1;
 				return {
-					content: [{ type: "text", text }],
-					details: { tool: tool.name, endpoint, annotations: tool.annotations },
+					content: [{ type: "text", text: bounded.text }],
+					details: { tool: tool.name, endpoint, annotations: tool.annotations, artifact: bounded.artifact },
 				};
 			},
 		});
 	}
+
+	pi.registerTool({
+		name: "infernex_read_artifact",
+		label: "Read InferNex Artifact",
+		description: "Read a bounded byte range from a large InferNex tool result previously stored by this TUI.",
+		promptSnippet: "Progressively read a large InferNex evidence artifact by SHA-256 id and byte offset",
+		promptGuidelines: [
+			"Read only the artifact ranges needed for the current diagnosis; do not repeatedly read the whole artifact.",
+		],
+		parameters: Type.Object({
+			id: Type.String({ pattern: "^[a-f0-9]{64}$", description: "SHA-256 artifact id" }),
+			offset: Type.Optional(Type.Integer({ minimum: 0, description: "Starting byte offset; default 0" })),
+			limit: Type.Optional(
+				Type.Integer({ minimum: 256, maximum: artifactReadMaxBytes, description: "Maximum bytes to read" }),
+			),
+		}),
+		async execute(_toolCallId, params) {
+			const offset = params.offset ?? 0;
+			const limit = params.limit ?? 4096;
+			const handle = await open(join(artifactDirectory(), `${params.id}.log`), "r");
+			try {
+				const file = await handle.stat();
+				if (offset >= file.size) {
+					return {
+						content: [{ type: "text", text: `Artifact ${params.id}: offset ${offset} is at or beyond EOF (${file.size} bytes).` }],
+						details: { id: params.id, offset, bytesRead: 0, nextOffset: offset, totalBytes: file.size, eof: true },
+					};
+				}
+				const buffer = Buffer.alloc(Math.min(limit, file.size - offset));
+				const { bytesRead } = await handle.read(buffer, 0, buffer.length, offset);
+				const nextOffset = offset + bytesRead;
+				return {
+					content: [
+						{
+							type: "text",
+							text:
+								`Artifact ${params.id} bytes ${offset}-${nextOffset - 1} of ${file.size}` +
+								`${nextOffset < file.size ? `; next offset ${nextOffset}` : "; EOF"}\n\n` +
+								buffer.subarray(0, bytesRead).toString("utf8"),
+						},
+					],
+					details: { id: params.id, offset, bytesRead, nextOffset, totalBytes: file.size, eof: nextOffset >= file.size },
+				};
+			} finally {
+				await handle.close();
+			}
+		},
+	});
 
 	pi.registerCommand("infernex-tools", {
 		description: "Show the InferNex tools loaded into this TUI session",
@@ -99,6 +184,17 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 
 	pi.on("session_start", (_event, ctx) => {
 		ctx.ui.notify(`InferNex TUI connected: ${list.tools.length} tools`, "info");
+		ctx.ui.setStatus("infernex", `InferNex MCP · ${list.tools.length} tools · ${artifactsCreated} artifacts`);
+	});
+
+	pi.on("tool_execution_start", (event, ctx) => {
+		if (event.toolName.startsWith("infernex_") || list.tools.some((tool) => tool.name === event.toolName)) {
+			ctx.ui.setStatus("infernex", `InferNex running · ${event.toolName}`);
+		}
+	});
+
+	pi.on("tool_execution_end", (_event, ctx) => {
+		ctx.ui.setStatus("infernex", `InferNex ready · ${artifactsCreated} artifacts`);
 	});
 
 	pi.on("before_agent_start", (event) => ({

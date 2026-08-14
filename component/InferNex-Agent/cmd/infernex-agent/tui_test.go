@@ -44,4 +44,8 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("models.json mode=%v", info.Mode().Perm())
 	}
+	artifactInfo, err := os.Stat(filepath.Join(dir, "artifacts"))
+	if err != nil || !artifactInfo.IsDir() {
+		t.Fatalf("artifact directory is unavailable: info=%v err=%v", artifactInfo, err)
+	}
 }

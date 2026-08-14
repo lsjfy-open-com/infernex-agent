@@ -135,7 +135,8 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 - 第一纵向切片：`infernex-agent tui` 生成隔离的模型配置，启动 pinned Pi，并动态桥接现有 MCP 工具；
 - 默认禁用所有 Pi 内置 coding tools，只读工具自动执行，写工具在终端逐次确认；
 - 复用 Pi 的多行编辑、流式 Markdown、工具过程、状态栏、Session picker、恢复/分叉和压缩；
-- 第二纵向切片增加 InferNex 计划/审批、Artifact 渐进浏览和报告专用渲染；
+- 第二纵向切片已提供大工具结果的 `log + SHA-256` Artifact 化、头尾预览、受限渐进读取和状态栏；
+- 下一纵向切片增加 InferNex 计划/审批、Artifact 折叠浏览和报告专用渲染；
 - `chat`、`--ask` 和 Go 后端保留为兼容、自动化与回退模式。
 
 阶段 C 的首个验收门槛：同一个现场任务可分别由 `chat` 和 `tui` 完成；TUI 能在 SSH 断开后恢复

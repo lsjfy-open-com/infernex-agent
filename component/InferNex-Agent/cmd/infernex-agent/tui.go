@@ -82,6 +82,7 @@ func runTUI(args []string) error {
 		"PI_CODING_AGENT_DIR="+opts.stateDir,
 		"INFERNEX_PI_API_KEY="+apiKey,
 		"INFERNEX_MCP_URL="+opts.mcpURL,
+		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
 	)
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("Pi TUI stopped: %w", err)
@@ -125,6 +126,9 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 func preparePiState(stateDir string, modelOpts modelFileOptions) error {
 	if err := os.MkdirAll(filepath.Join(stateDir, "sessions"), 0o700); err != nil {
 		return fmt.Errorf("create Pi state directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, "artifacts"), 0o700); err != nil {
+		return fmt.Errorf("create Pi artifact directory: %w", err)
 	}
 	contextWindow := modelOpts.contextWindowTokens
 	if contextWindow <= 0 {
