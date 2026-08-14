@@ -6,6 +6,31 @@
 
 提案目标：把当前可安装候选版推进为可持续迭代的 AI 运维 Agent，而不是继续堆叠孤立命令。
 
+## 0. 第一优先级：成为 InferNex 的原生能力
+
+v0.5 的最高优先级不是独立发布速度，也不是 TUI 功能数量，而是最终能够以低风险、可审阅、
+可维护的方式合入 InferNex 主仓，并与 InferNex 后续版本无缝演进。任何功能如果会形成第二套资源
+模型、第二个控制面、第二套部署编排或长期维护的私有分叉，即使短期效果更快，也不进入主架构。
+
+这里的“无缝衔接”必须满足可验证的工程含义：
+
+1. **仓库原生**：代码始终在 InferNex 仓库结构内开发，遵守其许可证、目录、构建、测试、文档和
+   发布惯例；合入时不需要迁移提交历史或重新实现一次；
+2. **依赖单向**：Agent 依赖 InferNex/openFuyao 的稳定接口，InferNex 核心控制器不依赖 Pi、TUI、
+   模型供应商 SDK 或 Agent Session 格式；
+3. **资源复用**：不新增用于复制 `InferNexService`、Helm release、LeaderWorkerSet 或工作负载状态的
+   私有 CRD；优先读取已有 API、status、Events、metrics 和日志；
+4. **部署可选**：Agent 是 InferNex 的可选管理节点组件，不改变未安装 Agent 时的部署路径，也不要求
+   向已有业务集群侵入一个常驻 Agent Pod；
+5. **升级兼容**：Agent 能通过 discovery 和 capability negotiation 适配 InferNex/openFuyao 版本差异，
+   不以某个 CRD 名称存在作为安装成功的前提；
+6. **故障隔离**：模型、TUI 或 Agent 退出不能影响 InferNex 已有实例；Agent 参与的写操作必须能被
+   InferNex 原生工具观察、审计和恢复；
+7. **上游可替换**：Pi 只是当前验证的交互运行时。移除或替换 Pi 不得丢失领域工具、审批、快照、
+   回退、审计和报告能力。
+
+所有里程碑和 PR 都先回答“这是否让未来合入更容易”，再回答“是否增加了新功能”。
+
 ## 1. 背景和问题
 
 推理集群的故障通常横跨 Kubernetes、Helm、LeaderWorkerSet、vLLM/vLLM-Ascend、Mooncake、
@@ -19,6 +44,11 @@ PD-Orchestrator、NPU 驱动与网络。现有人工流程需要反复切换命�
 2. 长日志和长回答会触发上下文或输出上限，过去缺少可恢复的证据分页和截断续写；
 3. 会话、真实 token 用量、任务事件和记忆尚未持久化，退出后不能恢复；
 4. readline 终端适合兼容模式，但不能承载多面板工作流、审批、会话选择和证据浏览。
+
+这些判断来自真实安装和试用过程，而不是通用 Agent 的功能清单：我们遇到过 openFuyao 业务集群
+没有预期 InferNex CRD、端口已占用、模型端点偶发超时、同一 GLM/Qwen 配置在相邻 RC 中探测结果
+不一致、长日志让工具循环失控、回答输出一半静默停止，以及只想查询 Node IP 却被静态工具边界
+拒绝等问题。v0.5 必须把这些现场教训变成架构约束和自动化回归，而不是继续依赖安装文档或提示词。
 
 ## 2. 产品定位
 
@@ -85,6 +115,18 @@ flowchart LR
     Policy --> Safety["Snapshot / change record / rollback"]
 ```
 
+架构按职责而不是按界面分层：
+
+| 层 | 责任 | 不应承担的责任 |
+| --- | --- | --- |
+| InferNex/openFuyao | 资源模型、控制器、部署编排、实例生命周期 | Agent 会话和模型提示词 |
+| Agent Core（Go） | discovery、领域工具、策略、证据、变更、回退、审计、任务事件 | TUI 布局和供应商专属推理逻辑 |
+| Agent Runtime Adapter | 模型循环、上下文预算、tool-call 兼容、重试和中断恢复 | 绕过 Core 直接修改集群 |
+| Experience | TUI、兼容 chat、Dashboard、未来 API | 保存不可替代的安全状态 |
+
+其中 Agent Core 是未来合入 InferNex 的稳定内核；Runtime Adapter 是防腐层；Pi TUI 是一种 Experience。
+这条边界可以防止通用 Agent 上游的 API、发布节奏或安全假设渗透到 InferNex 核心。
+
 实现建议：
 
 - 保留 Go 静态二进制和 `CGO_ENABLED=0`，作为管理节点常驻服务、安全边界与兼容 `chat` 入口；
@@ -105,6 +147,52 @@ system prompt，而必须用启动参数和扩展形成可测试的硬边界：�
 上游依赖采用 pinned-version 策略，不直接跟随 latest。每次升级须经过许可证/SBOM、双架构构建、
 OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi 验证不满足 openEuler aarch64
 或内部模型兼容性，现有 `infernex-agent chat` 保持可用，不阻断 Agent 后端演进。
+
+### 4.2 与 InferNex 主仓的合入契约
+
+为避免“开发完成后再讨论怎么合入”，从当前分支开始执行以下契约：
+
+- Agent 保持在 `component/InferNex-Agent`，公共 Go package 不反向 import `cmd`、Pi 扩展或界面代码；
+- 与 InferNex Bridge 的集成优先使用公开 API/CRD client 和 capability discovery，不复制 controller 逻辑；
+- openFuyao Helm/BKE 形态作为一等运行模式，Bridge 能力缺失时降级，而不是判定“不是 InferNex 集群”；
+- 新增写能力前先定义稳定、可审计的 typed tool contract；通用 Kubernetes 能力只读，不能演化为
+  任意 shell 或任意 patch 的旁路控制面；
+- Agent 自有持久化只保存 Session、Evidence、Policy decision 和 Change journal，不缓存一份需要持续
+  reconcile 的集群真相；读取结论带采集时间、来源和资源版本，使用前可重新验证；
+- 二进制、Chart 和离线包应复用 InferNex 的版本号、制品命名、SBOM/许可证与发布流水线规范；在正式
+  合入前允许独立 prerelease，但不能长期形成互不兼容的发行线；
+- 安装、升级、卸载不修改现有业务实例；默认宿主机模式只增加一个可停止的 systemd 服务和本地数据目录；
+- 文档同时说明“独立候选验证”和“合入后组件安装”路径，避免把临时分支 URL 固化为产品接口。
+
+建议主仓合入拆成可独立审阅的提交序列：先合目录、Core 与只读 discovery，再合策略/证据/审计，
+然后合兼容 CLI 和 Dashboard，最后把 Pi TUI 作为可选制品接入。每一步均可构建、测试、关闭，并且
+不改变 InferNex 现有默认行为。Pi 的第三方源码不 vendor 进 InferNex；发布时使用固定版本、校验值、
+许可证和 SBOM 组装可选运行时。
+
+### 4.3 从现场经验提炼的产品 taste
+
+本项目与通用 Agent 的差异不在于能调用 `kubectl`，而在于如何对待一个正在提供推理服务的集群：
+
+- **先观察，再解释，再行动**：自然语言目标不应立刻变成命令。Agent 先自动发现控制面/业务面、
+  kubeconfig、命名空间、Helm release、工作负载和已有稳定实例，再形成可核验计划；
+- **不要让用户替 Agent 填环境模板**：`model-a`、固定 namespace、固定 CRD 等占位符不能成为安装参数。
+  除模型接口及真正无法发现的凭据外，环境信息应像 k9s 一样从当前权限范围自动发现；
+- **未知不是失败**：发现结果与预期形态不同，先展示事实并扩大只读探索；不能因为没有某个 InferNex
+  CRD 就退出，也不能把模型推测伪装成集群事实；
+- **读取应广，修改应窄**：Node IP、新 CRD、Events、日志和 Helm 元数据应能通用采集；修改必须进入
+  领域化工具、影响预览、人工审批、前置快照、readiness 验证和回退闭环；
+- **证据留在本地，语义进入上下文**：长日志用 `log + hash` 落盘，渐进读取和关联分析；不要把工具
+  原始输出反复塞回模型，导致 160K 上下文也被快速耗尽；
+- **长任务必须有心跳**：工具调用、重试、压缩、等待、截断和失败原因对用户可见。展示事实与简要
+  阶段说明，但不展示模型私有思维链；遇到歧义应主动询问，而不是耗尽工具轮次后返回一个 error；
+- **模型兼容靠探测，不靠标签**：OpenAI-compatible、GLM、Qwen 或某个 parser 名称都不是能力保证。
+  保存端点 capability profile，并把相邻版本行为差异纳入回归；短暂超时使用有上限的退避重试；
+- **稳定基线一次只加一个变量**：PD 分离、Mooncake、量化、并行策略等组合实验从最近稳定配置克隆，
+  一次改变一个特性，自动 warmup、对照、判退并生成证据报告；
+- **Agent 不能成为新的单点故障**：安装前备份，变更前快照，失败前保留现场；Agent 自身异常时，已有
+  InferNex 服务继续运行，运维人员仍可用原生命令接管。
+
+这些原则应同时进入 system prompt、工具 contract、测试用例和 UI，而不能只存在于提案文字中。
 
 ## 5. 迭代计划
 
@@ -173,11 +261,16 @@ calls 的端点只能用于报告总结，不能作为主 Agent planner。
 
 建议以一个 v0.5 milestone 管理上述四阶段，每一阶段都有独立 RC 和现场验收记录：
 
-1. PR 必须通过 Go race/vet、Kind、离线包重装、管理节点安装和双架构静态构建；
+1. PR 先通过“主仓合入检查”：没有复制 InferNex 控制器/资源模型、没有形成反向依赖、默认行为不变、
+   新增依赖有许可证/SBOM/替换策略；然后通过 Go race/vet、Kind、离线包重装、管理节点安装和双架构构建；
 2. 免费 Kind 验证确定性流程，A2/openEuler aarch64 验证真实集群、NPU 和内部模型；
 3. 每个 RC 提供唯一的 amd64/arm64 Release 包、SHA-256、变更说明和回退方式；
 4. 现场问题以 Session 导出的脱敏事件报告进入 issue，避免只依赖聊天截图；
 5. 新能力优先复用 InferNex、openFuyao、checker、EvalScope 和底层框架接口，不复制其实现。
+
+每个阶段同时维护一份合入差异清单：相对 InferNex `origin/master` 的目录、依赖、构建入口、运行时权限、
+持久化数据和默认行为变化。主仓发生更新时持续 rebase/merge 验证，不能等 v0.5 完成后一次性解决漂移。
+建议至少在每个 RC 前执行一次上游同步演练，并把冲突原因转化为接口或目录边界改进。
 
 最小持续投入建议是一名 Agent runtime/CLI 开发者、一名 InferNex/openFuyao 集成维护者，以及
 可按 RC 提供 A2 集群验收窗口的推理运维人员。若只有单人推进，应严格按 A→B→C→D 顺序，
@@ -192,4 +285,8 @@ v0.5 不是“工具数量更多”，而是满足以下结果：
 - 会话可恢复，token、工具、证据、审批和变更可审计；
 - 任何集群修改都经过预览和批准，并能回退到修改前状态；
 - CLI 与 Dashboard 展示同一个任务事件和报告；
-- 不依赖在线编译环境，可在 openEuler aarch64 管理节点离线安装。
+- 不依赖在线编译环境，可在 openEuler aarch64 管理节点离线安装；
+- 相对 InferNex 主仓的合入差异已审计，Agent 可作为默认关闭的可选组件合入，关闭后不改变现有构建、
+  安装和运行行为；Pi 不可用或被移除时，Core、兼容 CLI、审计和回退能力仍然完整；
+- 至少完成一次从最新 InferNex 主线开始的干净合入演练，并通过主仓 CI、Kind、openEuler aarch64
+  现有集群升级/卸载与故障隔离验收。
