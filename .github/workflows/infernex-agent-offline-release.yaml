@@ -60,6 +60,7 @@ jobs:
         run: |
           bash -n scripts/*.sh scripts/offline/*.sh scripts/host/*.sh test/scripts/*.sh
           bash test/scripts/download-bundle.sh
+          bash test/scripts/bundle-path-safety.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -179,7 +180,8 @@ jobs:
             -C "${RUNNER_TEMP}/verify-host"
           (
             cd "${RUNNER_TEMP}/verify-host/infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
-            sha256sum --check SHA256SUMS
+            source ./bin/bundle-lib.sh
+            bundle_verify_checksums "$PWD"
             test -x ./install.sh
             ./install.sh --help >/dev/null
             if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
@@ -225,7 +227,7 @@ jobs:
           INCLUDE_PI_TUI: ${{ inputs.include_pi_tui }}
         run: |
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
-            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the pinned Pi v0.84.1 runtime, resumable sessions, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. It requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
           else
             release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
           fi

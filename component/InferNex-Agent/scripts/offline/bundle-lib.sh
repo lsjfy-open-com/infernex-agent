@@ -65,9 +65,9 @@ bundle_property() {
 
 bundle_safe_relative_path() {
   local value="$1"
-  [[ "$value" =~ ^[A-Za-z0-9._/+:-]+$ ]] &&
+  [[ "$value" =~ ^[A-Za-z0-9._/@+:-]+$ ]] &&
     [[ "$value" != /* ]] &&
-    [[ "$value" != *".."* ]]
+    [[ "/${value}/" != *"/../"* ]]
 }
 
 bundle_verify_checksums() {
@@ -82,7 +82,8 @@ bundle_verify_checksums() {
     {
       path = $2
       sub(/^\*/, "", path)
-      if (path !~ /^\.\057[A-Za-z0-9._+\/:-]+$/ || path ~ /\.\./) {
+      if (path !~ /^\.\057[A-Za-z0-9._@+\/:-]+$/ ||
+          ("/" substr(path, 3) "/") ~ /\/\.\.\//) {
         exit 1
       }
     }

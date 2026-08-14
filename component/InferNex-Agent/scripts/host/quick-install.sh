@@ -35,6 +35,7 @@ Advanced recovery/automation options:
   --dashboard-listen-address A  Default: 127.0.0.1:8081
   --hardened-identity          Create a dedicated ServiceAccount/RBAC identity
   --generic-kubernetes        Force base Kubernetes/Helm compatibility mode
+  --skip-checksums            Skip package-internal checksums after verifying the outer archive
   --skip-model-setup            Install first; configure the model later
   --non-interactive             Do not read from the terminal
   -h, --help                    Show this help
@@ -48,6 +49,7 @@ skip_model_setup="false"
 non_interactive="false"
 hardened_identity="false"
 force_generic_kubernetes="false"
+skip_checksums="false"
 workspace_namespace="infernex-agent-workspace"
 
 while (($#)); do
@@ -78,6 +80,10 @@ while (($#)); do
       ;;
     --generic-kubernetes)
       force_generic_kubernetes="true"
+      shift
+      ;;
+    --skip-checksums)
+      skip_checksums="true"
       shift
       ;;
     --non-interactive)
@@ -319,6 +325,9 @@ install_args=(
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
 )
+if [[ "$skip_checksums" == "true" ]]; then
+  install_args+=(--skip-checksums)
+fi
 if [[ "$skip_model_setup" != "true" && "$non_interactive" != "true" ]]; then
   if [[ -r /dev/tty && -w /dev/tty ]]; then
     install_args+=(--interactive-model-setup)
