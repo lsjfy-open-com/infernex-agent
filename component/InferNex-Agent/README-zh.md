@@ -74,6 +74,8 @@ sudo infernex-agent chat
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/pi-tui-zh.md)。
 
+首个可安装测试包为 `v0.5.0-alpha.1`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。
+
 ## Agent 如何探索
 
 Agent 的知识库描述 InferNex 组件关系、常见故障模式、稳定变更方法和安全边界；

@@ -2,7 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { mkdir, open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Type } from "typebox";
 
 type MCPTool = {
 	name: string;
@@ -135,23 +134,32 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Read only the artifact ranges needed for the current diagnosis; do not repeatedly read the whole artifact.",
 		],
-		parameters: Type.Object({
-			id: Type.String({ pattern: "^[a-f0-9]{64}$", description: "SHA-256 artifact id" }),
-			offset: Type.Optional(Type.Integer({ minimum: 0, description: "Starting byte offset; default 0" })),
-			limit: Type.Optional(
-				Type.Integer({ minimum: 256, maximum: artifactReadMaxBytes, description: "Maximum bytes to read" }),
-			),
-		}),
+		parameters: {
+			type: "object",
+			properties: {
+				id: { type: "string", pattern: "^[a-f0-9]{64}$", description: "SHA-256 artifact id" },
+				offset: { type: "integer", minimum: 0, description: "Starting byte offset; default 0" },
+				limit: {
+					type: "integer",
+					minimum: 256,
+					maximum: artifactReadMaxBytes,
+					description: "Maximum bytes to read",
+				},
+			},
+			required: ["id"],
+			additionalProperties: false,
+		} as any,
 		async execute(_toolCallId, params) {
-			const offset = params.offset ?? 0;
-			const limit = params.limit ?? 4096;
-			const handle = await open(join(artifactDirectory(), `${params.id}.log`), "r");
+			const input = params as { id: string; offset?: number; limit?: number };
+			const offset = input.offset ?? 0;
+			const limit = input.limit ?? 4096;
+			const handle = await open(join(artifactDirectory(), `${input.id}.log`), "r");
 			try {
 				const file = await handle.stat();
 				if (offset >= file.size) {
 					return {
-						content: [{ type: "text", text: `Artifact ${params.id}: offset ${offset} is at or beyond EOF (${file.size} bytes).` }],
-						details: { id: params.id, offset, bytesRead: 0, nextOffset: offset, totalBytes: file.size, eof: true },
+						content: [{ type: "text", text: `Artifact ${input.id}: offset ${offset} is at or beyond EOF (${file.size} bytes).` }],
+						details: { id: input.id, offset, bytesRead: 0, nextOffset: offset, totalBytes: file.size, eof: true },
 					};
 				}
 				const buffer = Buffer.alloc(Math.min(limit, file.size - offset));
@@ -162,12 +170,12 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 						{
 							type: "text",
 							text:
-								`Artifact ${params.id} bytes ${offset}-${nextOffset - 1} of ${file.size}` +
+								`Artifact ${input.id} bytes ${offset}-${nextOffset - 1} of ${file.size}` +
 								`${nextOffset < file.size ? `; next offset ${nextOffset}` : "; EOF"}\n\n` +
 								buffer.subarray(0, bytesRead).toString("utf8"),
 						},
 					],
-					details: { id: params.id, offset, bytesRead, nextOffset, totalBytes: file.size, eof: nextOffset >= file.size },
+					details: { id: input.id, offset, bytesRead, nextOffset, totalBytes: file.size, eof: nextOffset >= file.size },
 				};
 			} finally {
 				await handle.close();

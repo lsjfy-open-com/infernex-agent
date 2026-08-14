@@ -18,6 +18,11 @@ on:
         required: true
         default: false
         type: boolean
+      include_pi_tui:
+        description: Bundle the pinned Pi runtime and InferNex TUI extension
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -64,6 +69,47 @@ jobs:
         with:
           version: v4.2.0
 
+      - name: Set up Node for Pi extension tests
+        if: ${{ inputs.include_pi_tui && matrix.architecture == 'amd64' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: component/InferNex-Agent/pi/package-lock.json
+
+      - name: Test Pi extension
+        if: ${{ inputs.include_pi_tui && matrix.architecture == 'amd64' }}
+        working-directory: component/InferNex-Agent/pi
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm test
+
+      - name: Download and verify pinned Pi runtime
+        if: ${{ inputs.include_pi_tui }}
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          metadata="component/InferNex-Agent/pi/upstream.json"
+          pi_version="$(jq -r '.version' "${metadata}")"
+          pi_asset="$(jq -r --arg platform "linux-${ARCHITECTURE}" '.assets[$platform].name' "${metadata}")"
+          pi_sha256="$(jq -r --arg platform "linux-${ARCHITECTURE}" '.assets[$platform].sha256' "${metadata}")"
+          test -n "${pi_version}" && test "${pi_asset}" != "null" && test "${pi_sha256}" != "null"
+          mkdir -p "${RUNNER_TEMP}/pi-download" "${RUNNER_TEMP}/pi-runtime"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${RUNNER_TEMP}/pi-download/${pi_asset}" \
+            "https://github.com/earendil-works/pi/releases/download/v${pi_version}/${pi_asset}"
+          echo "${pi_sha256}  ${RUNNER_TEMP}/pi-download/${pi_asset}" | sha256sum --check -
+          tar -xzf "${RUNNER_TEMP}/pi-download/${pi_asset}" -C "${RUNNER_TEMP}/pi-runtime"
+          test -x "${RUNNER_TEMP}/pi-runtime/pi/pi"
+          test -f "${RUNNER_TEMP}/pi-runtime/pi/package.json"
+
+      - name: Smoke test official Pi runtime with InferNex extension
+        if: ${{ inputs.include_pi_tui && matrix.architecture == 'amd64' }}
+        run: |
+          node component/InferNex-Agent/pi/smoke.mjs \
+            "${RUNNER_TEMP}/pi-runtime/pi/pi"
+
       - name: Build architecture-specific image archive
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
@@ -94,6 +140,7 @@ jobs:
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
           VERSION: ${{ env.BUNDLE_VERSION }}
+          INCLUDE_PI_TUI: ${{ inputs.include_pi_tui || false }}
         run: |
           mkdir -p "${RUNNER_TEMP}/offline-dist"
           raw_name="infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
@@ -116,10 +163,15 @@ jobs:
             -C "${RUNNER_TEMP}/verify"
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
+          pi_args=()
+          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+            pi_args+=(--pi-runtime-dir "${RUNNER_TEMP}/pi-runtime/pi")
+          fi
           component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
             --binary "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+            "${pi_args[@]}" \
             --output-dir "${RUNNER_TEMP}/offline-dist"
           mkdir -p "${RUNNER_TEMP}/verify-host"
           tar -xzf \
@@ -130,6 +182,14 @@ jobs:
             sha256sum --check SHA256SUMS
             test -x ./install.sh
             ./install.sh --help >/dev/null
+            if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+              test -x ./payload/pi-runtime/pi
+              test -f ./pi/infernex.ts
+              test -f ./pi/LICENSE.pi.txt
+              if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+                test "$(./payload/pi-runtime/pi --version)" = "0.84.1"
+              fi
+            fi
           )
 
       - name: Upload bundle
@@ -162,7 +222,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
+          INCLUDE_PI_TUI: ${{ inputs.include_pi_tui }}
         run: |
+          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the pinned Pi v0.84.1 runtime, resumable sessions, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. It requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+          else
+            release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
+          fi
           gh release create "infernex-agent-v${VERSION}" \
             release-assets/infernex-agent-${VERSION}-linux-*.tar.gz \
             release-assets/infernex-agent-${VERSION}-linux-*.tar.gz.sha256 \
@@ -170,4 +236,4 @@ jobs:
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
+            --notes "${release_notes}"

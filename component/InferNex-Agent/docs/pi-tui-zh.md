@@ -12,6 +12,28 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
+首个现场测试版本是 `v0.5.0-alpha.1`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+
+```text
+infernex-agent-0.5.0-alpha.1-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.1-linux-arm64.tar.gz  # aarch64/openEuler A2
+```
+
+下载包和同名 `.sha256` 后执行：
+
+```bash
+sha256sum --check infernex-agent-0.5.0-alpha.1-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.1-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.1-linux-*
+sudo ./install.sh
+sudo /opt/infernex-agent/bin/tui.sh
+```
+
+这是独立的 alpha 测试包，不需要 Node、Bun、Go 或 Python。请保留当前稳定版安装包和安装前自动
+生成的恢复点；发现阻断问题时先退出 TUI，后台 Go Agent 和现有推理实例不会因 TUI 退出而停止。
+
+安装并配置模型接口后，日常启动命令是：
+
 ```bash
 sudo /opt/infernex-agent/bin/tui.sh
 ```
