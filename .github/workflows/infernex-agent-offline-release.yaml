@@ -178,11 +178,11 @@ jobs:
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
             mkdir -p "${RUNNER_TEMP}/pi-model-check/state"
             cat >"${RUNNER_TEMP}/pi-model-check/agent.conf" <<'EOF'
---openai-base-url=http://127.0.0.1:8000/v1
---openai-model=infernex-local-test
---context-window-tokens=32768
---max-output-tokens=4096
-EOF
+          --openai-base-url=http://127.0.0.1:8000/v1
+          --openai-model=infernex-local-test
+          --context-window-tokens=32768
+          --max-output-tokens=4096
+          EOF
             "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" tui \
               --config "${RUNNER_TEMP}/pi-model-check/agent.conf" \
               --pi-binary "${RUNNER_TEMP}/pi-runtime/pi" \
