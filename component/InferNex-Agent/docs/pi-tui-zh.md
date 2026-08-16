@@ -13,19 +13,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.3`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.4`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.3-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.3-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.4-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.4-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.3-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.3-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.3-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.4-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.4-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.4-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -67,6 +67,11 @@ sudo infernex-agent tui -- --continue
 model ID、上下文窗口和可选 API key 自动迁移为本地 `infernex` provider。无 API key 的内网接口会
 使用非秘密占位凭据满足 Pi 的本地 provider 可用性检查；启动前还会执行离线 auth preflight，配置
 无法识别时直接报告 InferNex 配置错误，不进入互联网登录流程。
+
+TUI 固定使用 `/var/lib/infernex-agent/pi/workspace` 作为工作目录，并把该目录写入新 Session。
+它不会继承安装包解压目录或运维人员执行 `sudo` 时所在的临时目录，因此升级、删除旧安装目录后
+仍可恢复会话。旧 Session 如果记录的目录已经不存在，Pi 会提示在当前稳定工作目录继续；确认一次
+后，新会话记录将使用稳定目录。
 
 当一个 MCP 工具结果超过 16 KiB 时，TUI 不会把全文反复加入模型上下文。原文以 SHA-256
 作为 Artifact ID 保存到 `/var/lib/infernex-agent/pi/artifacts`，模型先收到头尾预览，再通过

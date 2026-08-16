@@ -48,6 +48,10 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	if err != nil || !artifactInfo.IsDir() {
 		t.Fatalf("artifact directory is unavailable: info=%v err=%v", artifactInfo, err)
 	}
+	workspaceInfo, err := os.Stat(filepath.Join(dir, "workspace"))
+	if err != nil || !workspaceInfo.IsDir() {
+		t.Fatalf("stable workspace directory is unavailable: info=%v err=%v", workspaceInfo, err)
+	}
 }
 
 func TestPreparePiStateUsesPlaceholderForKeylessLocalEndpoint(t *testing.T) {

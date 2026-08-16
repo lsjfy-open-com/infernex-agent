@@ -61,6 +61,7 @@ func runTUI(args []string) error {
 	if err := preparePiState(opts.stateDir, modelOpts, apiKey); err != nil {
 		return err
 	}
+	workspaceDir := filepath.Join(opts.stateDir, "workspace")
 	piEnv := append(os.Environ(),
 		"PI_CODING_AGENT_DIR="+opts.stateDir,
 		"INFERNEX_PI_API_KEY="+apiKey,
@@ -94,6 +95,10 @@ func runTUI(args []string) error {
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	command.Env = piEnv
+	// Pi records its process working directory in every session. Do not inherit
+	// the caller's package/extraction directory: it may disappear after an
+	// upgrade and make an otherwise valid session impossible to resume.
+	command.Dir = workspaceDir
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("Pi TUI stopped: %w", err)
 	}
@@ -105,6 +110,7 @@ func checkPiModelConfiguration(opts tuiOptions, modelOpts modelFileOptions, envi
 		"--provider", "infernex", "--model", modelOpts.model,
 		"--json", "--no-refresh")
 	command.Env = environment
+	command.Dir = filepath.Join(opts.stateDir, "workspace")
 	var output bytes.Buffer
 	command.Stdout = &output
 	command.Stderr = &output
@@ -161,6 +167,9 @@ func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) 
 	}
 	if err := os.MkdirAll(filepath.Join(stateDir, "artifacts"), 0o700); err != nil {
 		return fmt.Errorf("create Pi artifact directory: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Join(stateDir, "workspace"), 0o700); err != nil {
+		return fmt.Errorf("create Pi workspace directory: %w", err)
 	}
 	contextWindow := modelOpts.contextWindowTokens
 	if contextWindow <= 0 {
