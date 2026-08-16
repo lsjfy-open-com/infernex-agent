@@ -663,7 +663,12 @@ if [[ "$show_model" == "true" || "$modify_requested" == "true" ]]; then
 fi
 
 if [[ -n "$candidate_base_url" && -x /opt/infernex-agent/bin/chat.sh ]]; then
-  bundle_info "interactive terminal: sudo /opt/infernex-agent/bin/chat.sh"
+  if [[ -x /opt/infernex-agent/pi-runtime/pi && -x /opt/infernex-agent/bin/tui.sh ]]; then
+    bundle_info "Agentic TUI: sudo infernex-agent chat"
+    bundle_info "legacy line terminal: sudo infernex-agent chat --classic"
+  else
+    bundle_info "interactive terminal: sudo /opt/infernex-agent/bin/chat.sh"
+  fi
 fi
 
 if [[ "$modify_requested" == "false" &&

@@ -714,11 +714,8 @@ install -m 0755 -o root -g root "$binary_source" "$temporary_binary"
 mv -f -- "$temporary_binary" "$installed_binary"
 install -d -m 0755 -o root -g root /usr/local/bin
 temporary_cli="$(mktemp /usr/local/bin/.infernex-agent.XXXXXX)"
-cat >"$temporary_cli" <<EOF
-#!/usr/bin/env bash
-# Managed by InferNex Agent host installer.
-exec ${installed_binary@Q} "\$@"
-EOF
+bundle_write_host_cli "$temporary_cli" "$installed_binary" "$installed_chat" \
+  "$installed_tui" "$installed_pi" "$installed_pi_extension"
 chmod 0755 "$temporary_cli"
 chown root:root "$temporary_cli"
 mv -f -- "$temporary_cli" "$installed_cli"

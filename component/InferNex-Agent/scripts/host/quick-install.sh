@@ -356,5 +356,6 @@ trap - EXIT
 cleanup
 bundle_info "InferNex Agent is ready"
 bundle_info "detected platform mode: ${platform_mode}"
-bundle_info "start the Agentic terminal with: sudo infernex-agent chat"
+bundle_info "start the Agentic TUI with: sudo infernex-agent chat"
+bundle_info "legacy line terminal: sudo infernex-agent chat --classic"
 bundle_info "dashboard: http://${dashboard_listen_address}/ (use an SSH tunnel when bound to 127.0.0.1)"

@@ -111,7 +111,8 @@ systemd、检查 MCP 与 Dashboard。这样启动失败时模型已经可用于�
 sudo infernex-agent chat
 ```
 
-终端支持标准 readline 编辑：退格/Delete、左右/Home/End、Ctrl+W、Ctrl+U 和上下历史。
+完整 Pi 包默认进入可恢复 Session 的 TUI。需要旧版终端时运行 `sudo infernex-agent chat --classic`；
+旧终端支持标准 readline 编辑：退格/Delete、左右/Home/End、Ctrl+W、Ctrl+U 和上下历史。
 如果内容已经发送，可执行 `/undo` 从模型上下文撤回最后一轮，再按 Up 调出、修改并重发；
 它不会撤销已经批准的集群写操作。详见[Linux 终端交互](terminal-interaction-zh.md)。
 

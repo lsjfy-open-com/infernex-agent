@@ -57,7 +57,8 @@ Helm/BKE 基础兼容模式暂不接受该选项，请先复用当前 kubeconfig
 
 ```bash
 sudo infernex-agent setup
-sudo infernex-agent chat
+sudo infernex-agent chat              # 完整 Pi 包默认进入 TUI
+sudo infernex-agent chat --classic    # 旧版逐行兼容终端
 sudo systemctl status infernex-agent
 sudo journalctl -u infernex-agent -f
 ```

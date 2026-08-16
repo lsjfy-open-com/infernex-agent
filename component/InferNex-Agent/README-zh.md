@@ -66,7 +66,13 @@ discovery 与分页 GET/LIST 自动探索当前 kubeconfig/RBAC 可见的对象�
 sudo infernex-agent chat
 ```
 
-终端支持标准 readline 行编辑和本次进程内历史。使用 `/undo` 撤回最后一个错误轮次，
+包含 Pi 的 v0.5 测试包中，上述命令默认进入完整 TUI。旧版 readline 终端保留为兼容入口：
+
+```bash
+sudo infernex-agent chat --classic
+```
+
+旧终端支持本次进程内历史。使用 `/undo` 撤回最后一个错误轮次，
 `/context` 查看当前预算，`/usage` 查看模型调用与 token，`/compact` 主动压缩，`/clear` 清空当前会话。
 如果模型以 `finish_reason=length` 截断回答，Agent 会自动续写并在无法完整恢复时明确提示。
 
@@ -74,7 +80,7 @@ sudo infernex-agent chat
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/pi-tui-zh.md)。
 
-当前 Pi TUI 修正测试包为 `v0.5.0-alpha.2`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。
+当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.3`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。
 
 ## Agent 如何探索
 

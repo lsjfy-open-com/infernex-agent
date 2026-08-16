@@ -95,6 +95,52 @@ bundle_verify_checksums() {
   (cd -- "$root" && sha256sum --check SHA256SUMS)
 }
 
+bundle_write_host_cli() {
+  local target="$1"
+  local agent_binary="$2"
+  local chat_script="$3"
+  local tui_script="$4"
+  local pi_binary="$5"
+  local pi_extension="$6"
+  local agent_q chat_q tui_q pi_q extension_q
+
+  printf -v agent_q '%q' "$agent_binary"
+  printf -v chat_q '%q' "$chat_script"
+  printf -v tui_q '%q' "$tui_script"
+  printf -v pi_q '%q' "$pi_binary"
+  printf -v extension_q '%q' "$pi_extension"
+  cat >"$target" <<EOF
+#!/usr/bin/env bash
+# Managed by InferNex Agent host installer.
+set -euo pipefail
+
+case "\${1:-}" in
+  chat)
+    shift
+    if ((\$# == 0)) && [[ -x ${pi_q} && -f ${extension_q} ]]; then
+      exec ${tui_q}
+    fi
+    if [[ "\${1:-}" == "--classic" ]]; then
+      shift
+    fi
+    exec ${chat_q} "\$@"
+    ;;
+  chat-classic)
+    shift
+    exec ${chat_q} "\$@"
+    ;;
+  tui)
+    shift
+    exec ${tui_q} "\$@"
+    ;;
+  *)
+    exec ${agent_q} "\$@"
+    ;;
+esac
+EOF
+  bash -n "$target"
+}
+
 bundle_host_architecture() {
   case "$(uname -m)" in
     x86_64 | amd64)

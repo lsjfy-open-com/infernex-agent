@@ -1,6 +1,7 @@
 # Pi TUI 使用与边界
 
-`agent/pi-agent-foundation` 分支把 Pi 作为 InferNex Agent 的交互层候选实现。当前 `infernex-agent chat` 仍然保留，Pi TUI 是可并行验证的入口。
+`agent/pi-agent-foundation` 分支把 Pi 作为 InferNex Agent 的交互层候选实现。完整 Pi 测试包中，
+`infernex-agent chat` 默认进入 TUI；旧 Go 终端仍作为显式兼容入口保留。
 
 ## 为什么采用 Pi
 
@@ -12,21 +13,21 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.2`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.3`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.2-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.2-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.3-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.3-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.2-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.2-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.2-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.3-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.3-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.3-linux-*
 sudo ./install.sh
-sudo /opt/infernex-agent/bin/tui.sh
+sudo infernex-agent chat
 ```
 
 完整包已经包含固定版本的 Pi runtime，安装过程不会执行 `npm install`，也不会访问 npm registry。
@@ -43,14 +44,22 @@ sudo ./install.sh --skip-checksums
 安装并配置模型接口后，日常启动命令是：
 
 ```bash
-sudo /opt/infernex-agent/bin/tui.sh
+sudo infernex-agent chat
 ```
+
+需要旧版逐行终端或使用旧参数时：
+
+```bash
+sudo infernex-agent chat --classic
+```
+
+带参数的 `chat --ask ...` 继续自动进入兼容 Go 终端，不改变已有自动化脚本。
 
 恢复或选择已有会话时，把 Pi 参数放在 `--` 后：
 
 ```bash
-sudo /opt/infernex-agent/bin/tui.sh -- --resume
-sudo /opt/infernex-agent/bin/tui.sh -- --continue
+sudo infernex-agent tui -- --resume
+sudo infernex-agent tui -- --continue
 ```
 
 模型地址、模型名、上下文窗口和输出预算继续来自 `/etc/infernex-agent/agent.conf`，API key 只通过子进程环境传递，不写入 Pi 的 `models.json`。Session 保存在 `/var/lib/infernex-agent/pi/sessions`。
@@ -81,4 +90,4 @@ Session 目录隔离，以及大工具结果的 Artifact 化和渐进读取。�
 2. 用 GLM 5.x、Qwen 3.x 验证工具调用、压缩和恢复；
 3. 将 Pi ARM64/AMD64 二进制、SHA-256 与 MIT License 固定进 Release 构建；
 4. 对 Artifact 分页和审批事件做折叠面板等专用渲染；
-5. 保留 `chat` 与 `tui` 的同任务对比报告，确认后再决定默认入口。
+5. 保留 TUI 与 `chat --classic` 的同任务对比报告，持续验证默认入口与兼容回退。

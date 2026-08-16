@@ -1,6 +1,7 @@
 # InferNex Agent Linux 终端交互
 
-`sudo infernex-agent chat` 使用真正的 readline 行编辑器，而不是简单地从标准输入逐行读取。
+`sudo infernex-agent chat --classic` 使用真正的 readline 行编辑器，而不是简单地从标准输入逐行读取。
+完整 Pi 测试包中的 `sudo infernex-agent chat` 默认进入 TUI；本文只描述兼容终端。
 它适用于 XShell、SSH 和 Linux 控制台，并与 kubectl-ai 的普通终端模式采用相同的基础交互
 方案。
 
