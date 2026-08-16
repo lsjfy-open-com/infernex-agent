@@ -63,6 +63,10 @@ sudo infernex-agent tui -- --continue
 ```
 
 模型地址、模型名、上下文窗口和输出预算继续来自 `/etc/infernex-agent/agent.conf`，API key 只通过子进程环境传递，不写入 Pi 的 `models.json`。Session 保存在 `/var/lib/infernex-agent/pi/sessions`。
+用户不需要执行 Pi `/login`：启动器会把 InferNex 安装时配置的 OpenAI-compatible Base URL、真实
+model ID、上下文窗口和可选 API key 自动迁移为本地 `infernex` provider。无 API key 的内网接口会
+使用非秘密占位凭据满足 Pi 的本地 provider 可用性检查；启动前还会执行离线 auth preflight，配置
+无法识别时直接报告 InferNex 配置错误，不进入互联网登录流程。
 
 当一个 MCP 工具结果超过 16 KiB 时，TUI 不会把全文反复加入模型上下文。原文以 SHA-256
 作为 Artifact ID 保存到 `/var/lib/infernex-agent/pi/artifacts`，模型先收到头尾预览，再通过

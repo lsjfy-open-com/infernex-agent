@@ -18,7 +18,7 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	err := preparePiState(dir, modelFileOptions{
 		baseURL: "http://model.internal:8000/v1/", model: "ops-model",
 		contextWindowTokens: 65536, maxOutputTokens: 8192,
-	})
+	}, "secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,5 +47,38 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	artifactInfo, err := os.Stat(filepath.Join(dir, "artifacts"))
 	if err != nil || !artifactInfo.IsDir() {
 		t.Fatalf("artifact directory is unavailable: info=%v err=%v", artifactInfo, err)
+	}
+}
+
+func TestPreparePiStateUsesPlaceholderForKeylessLocalEndpoint(t *testing.T) {
+	dir := t.TempDir()
+	if err := preparePiState(dir, modelFileOptions{
+		baseURL: "http://model.internal:8000/v1", model: "ops-model",
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "models.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var models piModelsFile
+	if err := json.Unmarshal(payload, &models); err != nil {
+		t.Fatal(err)
+	}
+	if got := models.Providers["infernex"].APIKey; got != "infernex-local-no-auth" {
+		t.Fatalf("keyless endpoint credential=%q", got)
+	}
+}
+
+func TestPiOpenAIBaseURLMatchesAgentEndpointRules(t *testing.T) {
+	tests := map[string]string{
+		"http://model.internal:8000":                     "http://model.internal:8000/v1",
+		"http://model.internal:8000/v1/":                 "http://model.internal:8000/v1",
+		"http://model.internal:8000/v1/chat/completions": "http://model.internal:8000/v1",
+	}
+	for input, want := range tests {
+		if got := piOpenAIBaseURL(input); got != want {
+			t.Errorf("piOpenAIBaseURL(%q)=%q want %q", input, got, want)
+		}
 	}
 }

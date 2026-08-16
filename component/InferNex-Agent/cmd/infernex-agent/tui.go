@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -27,6 +28,7 @@ type tuiOptions struct {
 	piBinary   string
 	extension  string
 	stateDir   string
+	checkOnly  bool
 	piArgs     []string
 }
 
@@ -56,13 +58,26 @@ func runTUI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := preparePiState(opts.stateDir, modelOpts); err != nil {
+	if err := preparePiState(opts.stateDir, modelOpts, apiKey); err != nil {
 		return err
+	}
+	piEnv := append(os.Environ(),
+		"PI_CODING_AGENT_DIR="+opts.stateDir,
+		"INFERNEX_PI_API_KEY="+apiKey,
+		"INFERNEX_MCP_URL="+opts.mcpURL,
+		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
+	)
+	if err := checkPiModelConfiguration(opts, modelOpts, piEnv); err != nil {
+		return err
+	}
+	if opts.checkOnly {
+		fmt.Println("InferNex Pi model configuration: ready")
+		return nil
 	}
 
 	piArgs := []string{
 		"--provider", "infernex",
-		"--model", "infernex/" + modelOpts.model,
+		"--model", modelOpts.model,
 		"--no-builtin-tools",
 		"--no-extensions",
 		"--extension", opts.extension,
@@ -78,14 +93,30 @@ func runTUI(args []string) error {
 	command.Stdin = os.Stdin
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
-	command.Env = append(os.Environ(),
-		"PI_CODING_AGENT_DIR="+opts.stateDir,
-		"INFERNEX_PI_API_KEY="+apiKey,
-		"INFERNEX_MCP_URL="+opts.mcpURL,
-		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
-	)
+	command.Env = piEnv
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("Pi TUI stopped: %w", err)
+	}
+	return nil
+}
+
+func checkPiModelConfiguration(opts tuiOptions, modelOpts modelFileOptions, environment []string) error {
+	command := exec.Command(opts.piBinary, "auth", "check",
+		"--provider", "infernex", "--model", modelOpts.model,
+		"--json", "--no-refresh")
+	command.Env = environment
+	var output bytes.Buffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(output.String())
+		if len(message) > 2048 {
+			message = message[:2048] + "..."
+		}
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("Pi could not use the model configured during InferNex setup; no Pi login is required: %s", message)
 	}
 	return nil
 }
@@ -99,6 +130,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	flags.StringVar(&opts.piBinary, "pi-binary", defaultPiBinary, "pinned Pi standalone binary")
 	flags.StringVar(&opts.extension, "extension", defaultPiExtension, "InferNex Pi extension")
 	flags.StringVar(&opts.stateDir, "state-dir", defaultPiStateDir, "Pi configuration and session directory")
+	flags.BoolVar(&opts.checkOnly, "check", false, "validate the migrated InferNex model configuration without opening the TUI")
 	if err := flags.Parse(args); err != nil {
 		return tuiOptions{}, modelFileOptions{}, "", err
 	}
@@ -123,7 +155,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	return opts, modelOpts, apiKey, nil
 }
 
-func preparePiState(stateDir string, modelOpts modelFileOptions) error {
+func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) error {
 	if err := os.MkdirAll(filepath.Join(stateDir, "sessions"), 0o700); err != nil {
 		return fmt.Errorf("create Pi state directory: %w", err)
 	}
@@ -138,11 +170,17 @@ func preparePiState(stateDir string, modelOpts modelFileOptions) error {
 	if maxTokens <= 0 {
 		maxTokens = 4096
 	}
+	piAPIKey := "$INFERNEX_PI_API_KEY"
+	if strings.TrimSpace(apiKey) == "" {
+		// Pi intentionally requires an auth value even for keyless local OpenAI
+		// servers. A non-secret placeholder prevents an irrelevant /login flow.
+		piAPIKey = "infernex-local-no-auth"
+	}
 	payload := piModelsFile{Providers: map[string]piProvider{
 		"infernex": {
-			BaseURL: strings.TrimRight(modelOpts.baseURL, "/"),
+			BaseURL: piOpenAIBaseURL(modelOpts.baseURL),
 			API:     "openai-completions",
-			APIKey:  "$INFERNEX_PI_API_KEY",
+			APIKey:  piAPIKey,
 			Models: []piModel{{
 				ID: modelOpts.model, Name: modelOpts.model, Reasoning: true,
 				ContextWindow: contextWindow, MaxTokens: maxTokens,
@@ -177,4 +215,15 @@ func preparePiState(stateDir string, modelOpts modelFileOptions) error {
 		return fmt.Errorf("activate Pi model configuration: %w", err)
 	}
 	return nil
+}
+
+func piOpenAIBaseURL(value string) string {
+	baseURL := strings.TrimRight(strings.TrimSpace(value), "/")
+	if strings.HasSuffix(baseURL, "/chat/completions") {
+		return strings.TrimSuffix(baseURL, "/chat/completions")
+	}
+	if strings.HasSuffix(baseURL, "/v1") {
+		return baseURL
+	}
+	return baseURL + "/v1"
 }
