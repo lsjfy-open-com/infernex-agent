@@ -54,8 +54,8 @@ Kubernetes API discovery 和分页 GET/LIST 读取当前 kubeconfig/RBAC 可见�
 Node 地址、Pod IP、宿主机 IP、Service 地址等事实可直接采集。Secret payload 始终排除。
 Bridge 专属观察和部署工具都会关闭，不应通过安装 Bridge CRD 来伪装兼容。
 
-> `v0.4.0-rc.8` 是当前公开候选包；本文新增的 Kubernetes 通用只读、Node/Pod/Service 网络字段、
-> 长回答自动续写与 `/usage` 将进入下一个候选版。候选版通过 Kind 和既有 A2 集群验收后再晋级稳定版。
+> 当前 Pi TUI 现场测试包是 `v0.5.0-alpha.5`；v0.4 RC 仍作为稳定测试回退线。alpha.5 已包含
+> Kubernetes 通用只读、Node/Pod/Service 网络字段、长回答自动续写、`/usage` 和 Pi 流式错误可见性。
 
 ## Release 到底下载哪个
 
@@ -93,11 +93,15 @@ sudo ./install.sh
 
 这里的 model ID 是 Agent 背后的对话/规划模型，不是要部署的推理实例名。也可先执行
 `sudo ./install.sh --skip-model-setup`，稍后运行 `sudo infernex-agent setup`。
-安装器还会询问这个模型的上下文窗口；不知道时直接使用 32768。Agent 会限制每次输出与
+安装器还会询问这个模型的上下文窗口和单次最大输出；不知道时分别使用 32768 和 8192。Agent 会限制每次输出与
 工具结果，在到达窗口前自动压缩较早对话。大型日志会先保存为本地 SHA-256 Artifact，模型
 只按受限行范围渐进读取；相同参数的工具调用出现循环时会阻断，工具轮次耗尽时会基于已有证据
 输出阶段性结论。运行中可用 `/context` 查看预算、用 `/compact` 手动压缩；完整说明见
 [上下文管理](context-management-zh.md)。
+
+跨 Session 语义记忆由 Go Core 持久化，Pi、classic chat 或其他 MCP Agent runtime 共用。它只保存
+经确认/验证的结构化事实、决定、偏好、incident 和稳定配置含义，不保存原始日志或模型推测；集群
+事实按 API Server 指纹隔离，使用前仍重新发现实时状态。
 
 正常交互安装的顺序是：发现环境、建立安装恢复点、写入候选文件、配置并测试模型、启动
 systemd、检查 MCP 与 Dashboard。这样启动失败时模型已经可用于分析，而不是失败后才
@@ -146,6 +150,10 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 浏览器打开 `http://127.0.0.1:8081/`。如需绑定管理网地址，重新安装时传入
 `--dashboard-listen-address <IP>:8081`，并自行配置防火墙、ACL 或认证代理。
 
+通过现有 Istio/Gateway 自动创建外部路由属于 v0.5 计划能力。宿主机进程需要 selector-less Service、
+EndpointSlice 和 HTTPRoute/VirtualService 才能成为 Gateway backend；在 Dashboard 补齐认证、TLS、
+Policy 批准、Gateway 到节点连通性和配置回退前，当前版本不会默认匿名发布。
+
 ## 自动发现、工具集与知识库
 
 V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具集”结构：
@@ -159,7 +167,8 @@ V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具�
 - 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
 - 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。
 
-参见[工具集与知识库设计](toolsets-and-knowledge-zh.md)。
+参见[工具集与知识库设计](toolsets-and-knowledge-zh.md)、[MCP 工具目录](mcp-tool-catalog-zh.md)和
+[运行模式、Policy 与配置版本设计](policy-modes-config-versions-zh.md)。
 
 ## 回退和边界
 

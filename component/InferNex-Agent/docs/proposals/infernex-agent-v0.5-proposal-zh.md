@@ -1,10 +1,45 @@
 # InferNex Agent v0.5 产品与工程推进提案
 
-状态：Draft for review（2026-08-14 更新：采用 Pi Agent foundation 分支验证）
+状态：Draft for review（2026-08-16 更新：明确差异化价值、MCP 契约、长期记忆、Policy mode、配置版本与外部路由）
 
 目标读者：InferNex/openFuyao 维护者、推理平台与运维团队、模型服务团队
 
 提案目标：把当前可安装候选版推进为可持续迭代的 AI 运维 Agent，而不是继续堆叠孤立命令。
+
+## 提请审议的核心结论
+
+本提案不是申请在 InferNex 旁边再放一个“会执行 kubectl 的聊天机器人”。OpenCode、Claude Code、
+Pi、kagent 或任何支持 MCP 的通用 Agent 都可以提供模型循环和界面，也可以加载一个介绍 InferNex 的
+Skill；这些通用能力应直接复用，不应由本项目重写。
+
+本项目需要进入 InferNex 的理由，是把 InferNex/openFuyao 的领域 insight 变成长期维护的产品契约：
+
+1. **已经建模的组件关系**：从 BKE 引导/管理/业务集群，到 Helm 主 Chart、可选 Bridge/KServe、
+   LWS、Gateway、PD-Orchestrator、vLLM/vLLM-Ascend、Mooncake、CANN 和 NPU 网络，不必每次让模型
+   重新搜索接口、猜 owner 或试错命令；
+2. **直接可用的领域 MCP**：工具返回稳定的小型结构，而不是任意 shell 文本；已内建 discovery、
+   RBAC、Secret 屏蔽、日志限长、owner graph、时间线、写操作批准和 change ID；
+3. **推理服务的成功定义**：desired replicas 或 Pod Running 不是成功。必须关联控制面 status、实际
+   topology、Event、runtime 日志、Gateway serving path、warmup/eval 和 soak；
+4. **稳定基线演进方法**：一次只增加一个特性，保存基线，自动对比、判退、回退并生成证据报告；
+5. **可执行安全闭环**：Mode 只是 Policy 权限上限；所有修改绑定配置版本、diff、批准、验证和恢复，
+   不能由 prompt 或 Skill 自我约束代替；
+6. **现场经验进入回归**：缺少预期 CRD、相邻 RC endpoint 探测差异、超时、tool-call parser、长日志
+   膨胀、空 SSE、Node IP 查询受限和安装回退等真实问题会变成测试和兼容矩阵。
+
+因此，通用 Agent 可以替换本项目的 Runtime/Experience，甚至可以直接调用本项目 MCP；但若只保留
+Skill + 通用 Kubernetes MCP，就会重新丢失 InferNex 的状态模型、变更事务、配置版本、专项验证和
+故障知识。这正是本项目相对通用 Agent 的持续价值，也是合入主仓而非维护一个提示词仓库的依据。
+
+完整当前/计划工具契约见 [MCP 工具目录与组件映射](../mcp-tool-catalog-zh.md)，可执行里程碑见
+[v0.5 路线图](../v0.5-roadmap-zh.md)。
+
+业界基线也支持这个边界判断：[OpenCode Tools](https://dev.opencode.ai/docs/tools/) 已提供 builtin/custom/MCP
+工具和 allow/ask/deny 权限，说明 TUI、模型循环和基础批准可直接复用；
+[kagent](https://kagent.dev/docs) 提供 Kubernetes-native Agent、UI 和多类云原生 MCP，说明通用集群工具
+生态不应由 InferNex 重造；[Kubernetes MCP Server](https://github.com/containers/kubernetes-mcp-server)
+已经覆盖直接 Kubernetes API、toolsets 和敏感数据脱敏。InferNex Agent 应在这些能力之上贡献推理
+领域状态模型、typed workflow、版本/回退、专项验收和现场知识，而不是用“也能列 Pod”申请合入。
 
 ## 0. 第一优先级：成为 InferNex 的原生能力
 
@@ -127,6 +162,37 @@ flowchart LR
 其中 Agent Core 是未来合入 InferNex 的稳定内核；Runtime Adapter 是防腐层；Pi TUI 是一种 Experience。
 这条边界可以防止通用 Agent 上游的 API、发布节奏或安全假设渗透到 InferNex 核心。
 
+### 4.0.1 一次任务实际怎样穿过各层
+
+以“基于当前稳定 PD 配置打开 Mooncake 并验证”为例：Experience 只负责接收自然语言、显示计划、
+工具事件和批准框；Runtime 把目标交给模型并维护 Session/上下文。模型先调用 Core 的 environment、
+Helm/Bridge inventory、topology、Event、memory 和 configuration-version 工具。Core 用当前 kubeconfig
+访问现有 API，把结果脱敏、限长并写入 Evidence；模型不能拿到 kubeconfig，也不能直接执行 Helm。
+
+形成候选方案后，Policy 检查当前 mode 是否允许 modify、目标 namespace 是否在 scope、配置版本是否
+已捕获、是否只增加一个特性、预算是否足够。通过后 Experience 展示由 Core 生成的 canonical diff 和
+hash，操作者批准的也是这个 hash。Core 调用 InferNex/Helm 的稳定入口应用配置，随后确定性观察
+rollout、runtime、warmup、serving path 和 soak。成功则把候选标记为 stable；失败则保留失败 Evidence，
+恢复修改前 version，再验证服务。模型负责解释和决策建议，事务边界始终在 Core。
+
+### 4.0.2 为什么要保留 Go Core
+
+若把全部能力写成 Skill，权限和回退只存在于提示词；换模型、压缩上下文或发生 prompt injection 后，
+约束可能消失。Go Core 把同一 MCP 契约提供给 Pi、classic chat、OpenCode 和未来 Dashboard/API，
+并独立于模型运行持续扫描、版本存储和恢复。这样可以替换 UI/Agent runtime，而不迁移安全状态或
+重写 InferNex insight。
+
+### 4.0.3 数据平面不是一个“memory”目录
+
+- Session 保存完整交互和 tool event，可恢复但不等于集群事实；
+- Semantic Memory 保存跨 Session 的已验证事实、决定、偏好、incident 和稳定配置含义；
+- Evidence Store 保存原始日志、Event、报告和 hash；
+- Configuration Version 保存可恢复的 desired configuration；
+- Change Journal 保存一次变更的计划、批准、应用、提交/回退事件；
+- Supervisor Snapshot 是当前 Dashboard 观察视图，不能作为回退源。
+
+这些数据通过 ID 关联，但生命周期和可信度不同，不能用一段模型摘要互相替代。
+
 实现建议：
 
 - 保留 Go 静态二进制和 `CGO_ENABLED=0`，作为管理节点常驻服务、安全边界与兼容 `chat` 入口；
@@ -194,6 +260,35 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 
 这些原则应同时进入 system prompt、工具 contract、测试用例和 UI，而不能只存在于提案文字中。
 
+### 4.4 MCP 工具分层与现状
+
+当前 MCP 已覆盖 8 个 openFuyao/Kubernetes/Helm 通用只读工具、5 个 Bridge 服务观察工具、1 个
+跨组件诊断工具、4 个受控部署/变更工具、3 个渐进实验工具，以及 3 个跨 Session semantic memory
+工具。Pi extension 另提供 Artifact 分页工具。每个工具的组件映射、输入、发布条件和边界见
+[MCP 工具目录](../mcp-tool-catalog-zh.md)。
+
+下一阶段不会增加一个可切换 verb 的万能 Kubernetes 工具，而是补齐以下领域 toolset：主 Chart 的
+values/history/render/diff/upgrade/rollback、Configuration Version capture/diff/restore、Gateway
+路由 plan/publish、infernex-checker、serving warmup、EvalScope 和 vLLM/Mooncake/PD 专项观察。
+这既提高模型效率，也使每种写操作有独立 Policy 和恢复语义。
+
+### 4.5 Mode、Policy、Configuration Version 与 Dashboard route
+
+v0.5 定义 `detect`、`diagnose`、`modify`、`install`、`recover` 五个模式。Mode 只是由操作者设置、
+带 scope/TTL 的权限上限；Policy Engine 仍按 tool action、目标、预算、版本、批准和 post-check 对每次
+调用作决定。默认 `detect`，TTL 到期自动降级，模型不能切换模式。
+
+完整回退不能只保存 `InferNexService`。Configuration Version Manager 按 API Server 指纹、
+`helm:<namespace>:<release>` stack 和 `UTC-configHash` version 建索引，保存 Chart digest、用户/effective
+values、Helm revision、rendered manifest、source resources、路由和验证引用。修改前强制 capture，
+失败版本保留 Evidence 后优先 Helm rollback；跨 Chart 版本不能只靠 values 恢复。
+
+Dashboard 后续可复用现有 Istio/Gateway：创建 selector-less Service、指向管理节点内网 IP 的
+EndpointSlice 和 HTTPRoute/VirtualService。但自动发布前必须补齐 token/OIDC/mesh authentication、
+TLS、Gateway 到节点连通性、主机防火墙、Route Accepted 验证和配置版本回退。当前 Dashboard 无内建
+认证，因此不能把匿名暴露包装成“自动化”。详细设计见
+[运行模式、Policy、配置版本与 Dashboard 路由](../policy-modes-config-versions-zh.md)。
+
 ## 5. 迭代计划
 
 ### 阶段 A：可靠性与读取面（下一 RC）
@@ -210,7 +305,9 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 
 ### 阶段 B：可恢复 Session 与记忆
 
-- `chat -c`、`chat -r <id>`、`sessions`、`/rename`、`/memory`；
+- Pi Session 已支持恢复/分叉；继续统一 `chat -c`、`chat -r <id>`、`sessions`、`/rename`；
+- 已实现 cluster fingerprint 隔离的结构化 semantic memory 和 search/remember/forget MCP；继续补
+  `/memory` 浏览、编辑、TTL、导出和 Session ID 关联；
 - SQLite 事件日志与真实 usage 持久化，支持按模型、会话、日期汇总；
 - 上下文压缩保留 evidence ID、变更 ID、未完成任务和用户决定；
 - Artifact 配额、TTL、导出与清理；

@@ -127,7 +127,15 @@ HTTP 408、429、500、502、503、504 等瞬态故障最多重试 3 次，并�
 `--context-window-tokens` 必须填写 Agent 背后的模型接口实际支持的窗口，而不是待部署
 推理模型的 `max_model_len`。默认 32768；Agent 默认在预计使用到 80% 时总结较早对话，
 原样保留最近 4 个用户轮次，并把单个工具结果限制在约 4096 token。每次请求还会通过
-`max_tokens` 显式限制输出，默认最多 2048 token。
+`max_tokens` 显式限制输出，新安装默认最多 8192 token；小上下文窗口按窗口的 1/4 自动降低。
+交互配置会询问该值，后续可按模型 endpoint 的真实能力修改：
+
+```bash
+sudo /opt/infernex-agent/bin/configure-model.sh --max-output-tokens 16384 --test-tools
+```
+
+较大输出上限会减少同一 context window 中可用于输入和工具证据的空间，因此必须与自动压缩阈值
+一起规划。Pi TUI 和 classic chat 读取同一个值。
 
 查看或修改：
 

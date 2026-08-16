@@ -85,6 +85,12 @@ TUI 固定使用 `/var/lib/infernex-agent/pi/workspace` 作为工作目录，并
 仍可恢复会话。旧 Session 如果记录的目录已经不存在，Pi 会提示在当前稳定工作目录继续；确认一次
 后，新会话记录将使用稳定目录。
 
+新安装默认 `max-output-tokens=8192`，小窗口按 context window 的 1/4 降低。该值会转换为 Pi 模型
+配置的 `maxTokens`；可重新运行模型配置脚本调整，不需要重新打包或安装 Pi。Session 负责恢复一次
+对话；跨 Session 的稳定知识由 Go Core 的 `infernex_search_memory`、`infernex_remember` 和
+`infernex_forget_memory` 提供，保存于 `/var/lib/infernex-agent/semantic-memory`。记忆写入和忘记会像
+其他写工具一样要求本机批准，历史集群事实仍需工具重新验证。
+
 当一个 MCP 工具结果超过 16 KiB 时，TUI 不会把全文反复加入模型上下文。原文以 SHA-256
 作为 Artifact ID 保存到 `/var/lib/infernex-agent/pi/artifacts`，模型先收到头尾预览，再通过
 `infernex_read_artifact` 按字节偏移读取最多 16 KiB 的相关片段。状态栏会显示当前 InferNex

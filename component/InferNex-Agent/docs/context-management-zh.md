@@ -10,7 +10,7 @@ InferNex Agent 不会把整个对话和所有日志无限追加后直接发给�
 | 配置 | 默认值 | 作用 |
 | --- | ---: | --- |
 | `context-window-tokens` | 32768 | 模型输入与输出合计的硬上限 |
-| `max-output-tokens` | 2048 | 每次调用预留且通过 `max_tokens` 请求的最大输出；小窗口按窗口的 1/8 派生 |
+| `max-output-tokens` | 8192 | 每次调用预留且通过 `max_tokens` 请求的最大输出；小窗口按窗口的 1/4 派生 |
 | `context-compaction-threshold` | 80 | 预计总量达到窗口的 80% 时开始压缩 |
 | `context-keep-recent-turns` | 4 | 压缩时原样保留最近 4 个用户轮次及其工具链 |
 | `tool-result-max-tokens` | 4096 | 单次送入模型的工具结果近似上限；更大的结果先保存为本机会话 Artifact |
@@ -94,12 +94,16 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 ```bash
 sudo /opt/infernex-agent/bin/configure-model.sh \
   --context-window-tokens 32768 \
-  --max-output-tokens 2048 \
+	--max-output-tokens 8192 \
   --context-compaction-threshold 75 \
   --context-keep-recent-turns 6 \
   --tool-result-max-tokens 3072 \
   --show
 ```
+
+`--max-output-tokens` 是上限而不是要求模型必须生成这么多 token。应填写 endpoint 实际支持的单次
+输出上限；长报告可使用 8192、16384 或更高，但必须小于 context window 和 compaction threshold
+预算。该设置同时写入 classic chat 的 `max_tokens` 和 Pi TUI 的模型 `maxTokens`。
 
 配置工具会验证各值、原子写入 `/etc/infernex-agent/agent.conf` 并重启服务；启动失败时恢复
 原配置。也可以只对一次终端会话使用同名 `infernex-agent chat` 参数覆盖配置文件。

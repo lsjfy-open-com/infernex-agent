@@ -831,8 +831,8 @@ fi
 ((context_window_tokens >= 2048 && context_window_tokens <= 4000000)) ||
   bundle_die "context window tokens must be between 2048 and 4000000"
 if [[ -z "$max_output_tokens" ]]; then
-  max_output_tokens=$((context_window_tokens / 8))
-  ((max_output_tokens <= 2048)) || max_output_tokens=2048
+	max_output_tokens=$((context_window_tokens / 4))
+	((max_output_tokens <= 8192)) || max_output_tokens=8192
 fi
 if [[ -z "$tool_result_max_tokens" ]]; then
   tool_result_max_tokens=$((context_window_tokens * 15 / 100))

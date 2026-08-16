@@ -75,6 +75,13 @@ sudo infernex-agent chat --classic
 旧终端支持本次进程内历史。使用 `/undo` 撤回最后一个错误轮次，
 `/context` 查看当前预算，`/usage` 查看模型调用与 token，`/compact` 主动压缩，`/clear` 清空当前会话。
 如果模型以 `finish_reason=length` 截断回答，Agent 会自动续写并在无法完整恢复时明确提示。
+新安装默认单次输出上限为 8192 token（小上下文窗口自动降低）；模型配置交互会显示该值，后续可用
+`configure-model.sh --max-output-tokens N` 调整，classic chat 和 Pi TUI 共用同一配置。
+
+跨 Session 语义记忆保存在 `/var/lib/infernex-agent/semantic-memory`。它只接受用户确认、工具验证或
+运维人员录入的结构化事实、决定、偏好、incident 和稳定配置；按当前 API Server 指纹隔离，并通过
+MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是历史上下文，修改前仍须重新
+读取实时集群状态。
 
 `agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
@@ -108,11 +115,18 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 
 然后访问 `http://127.0.0.1:8081/`。
 
+通过现有 Istio/Gateway 自动发布 Dashboard 已进入 v0.5 设计，但必须先提供认证、TLS、Gateway 到
+管理节点的可达性检查、Policy 批准和路由配置回退；当前版本不会默认匿名暴露运维数据。
+
 ## 文档
 
 - [产品使用指南](docs/product-guide-zh.md)
 - [离线安装](docs/offline-install-zh.md)
 - [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
+- [MCP 工具目录与组件映射](docs/mcp-tool-catalog-zh.md)
+- [运行模式、Policy、配置版本与 Dashboard 路由](docs/policy-modes-config-versions-zh.md)
+- [v0.5 可执行路线图](docs/v0.5-roadmap-zh.md)
+- [v0.5 产品与工程提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 - [上下文预算与自动压缩](docs/context-management-zh.md)
 - [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)

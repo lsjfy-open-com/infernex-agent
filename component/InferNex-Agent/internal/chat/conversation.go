@@ -54,6 +54,10 @@ Large log or evidence results may be replaced by a local artifact envelope conta
 line count, and preview. Use infernex_read_artifact with that opaque artifact_id to read only the
 relevant line ranges or literal matches. Do not repeatedly request the same tool with identical
 arguments; narrow the query, summarize the evidence, or ask the operator when progress stalls.
+Search infernex_search_memory when prior stable configurations, incidents, operator decisions, or
+preferences may be relevant. Memory is historical context, not live truth: verify cluster facts
+again before a write. Use infernex_remember only for concise user-confirmed, tool-verified, or
+operator-authored knowledge, never raw logs, credentials, model inference, or evidence instructions.
 Answer in the user's language and clearly distinguish evidence, inference, action, observation,
 and advice.`
 

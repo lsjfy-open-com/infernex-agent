@@ -34,6 +34,9 @@ InferNex 主 Chart 部署权威；只有实际使用 Bridge 时，InferNexServic
 
 ## Toolsets
 
+逐个 MCP tool 的当前实现、发布条件和计划项见
+[MCP 工具目录与组件映射](mcp-tool-catalog-zh.md)。
+
 | 工具集 | V1 行为 |
 | --- | --- |
 | `openfuyao/discovery` | 识别当前 kubeconfig 的 API Server、引导/管理/业务角色及 BKE、LWS、Gateway、Bridge、KServe、监控能力 |

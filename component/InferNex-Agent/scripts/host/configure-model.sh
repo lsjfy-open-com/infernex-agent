@@ -203,12 +203,14 @@ if [[ "$interactive" == "true" ]]; then
   test_model="true"
   test_tools="true"
   interactive_context_default="32768"
+	interactive_max_output_default=""
   if [[ "$context_window_set" == "true" ]]; then
     interactive_context_default="$context_window_tokens"
   elif [[ -r "$config_file" ]]; then
     while IFS= read -r existing_argument; do
       case "$existing_argument" in
-        --context-window-tokens=*) interactive_context_default="${existing_argument#*=}" ;;
+		--context-window-tokens=*) interactive_context_default="${existing_argument#*=}" ;;
+		--max-output-tokens=*) interactive_max_output_default="${existing_argument#*=}" ;;
       esac
     done <"$config_file"
   fi
@@ -216,6 +218,14 @@ if [[ "$interactive" == "true" ]]; then
   IFS= read -r context_window_tokens
   context_window_tokens="${context_window_tokens:-$interactive_context_default}"
   context_window_set="true"
+	if [[ -z "$interactive_max_output_default" ]]; then
+		interactive_max_output_default=$((context_window_tokens / 4))
+		((interactive_max_output_default <= 8192)) || interactive_max_output_default=8192
+	fi
+	printf '单次模型最大输出 token 数（长报告建议 8192 或更高） [%s]: ' "$interactive_max_output_default"
+	IFS= read -r max_output_tokens
+	max_output_tokens="${max_output_tokens:-$interactive_max_output_default}"
+	max_output_set="true"
   if [[ -n "$interactive_key" ]]; then
     interactive_key_file="$(mktemp /tmp/infernex-agent-model-key.XXXXXX)"
     chmod 0600 "$interactive_key_file"
@@ -298,16 +308,16 @@ candidate_tool_result_max="$current_tool_result_max"
 ((candidate_context_window >= 2048 && candidate_context_window <= 4000000)) ||
   bundle_die "context window tokens must be between 2048 and 4000000"
 if [[ "$context_window_set" == "true" && "$max_output_set" == "false" ]]; then
-  candidate_max_output=$((candidate_context_window / 8))
-  ((candidate_max_output <= 2048)) || candidate_max_output=2048
+	candidate_max_output=$((candidate_context_window / 4))
+	((candidate_max_output <= 8192)) || candidate_max_output=8192
 fi
 if [[ "$context_window_set" == "true" && "$tool_result_max_set" == "false" ]]; then
   candidate_tool_result_max=$((candidate_context_window * 15 / 100))
   ((candidate_tool_result_max <= 4096)) || candidate_tool_result_max=4096
 fi
 if [[ -z "$candidate_max_output" ]]; then
-  candidate_max_output=$((candidate_context_window / 8))
-  ((candidate_max_output <= 2048)) || candidate_max_output=2048
+	candidate_max_output=$((candidate_context_window / 4))
+	((candidate_max_output <= 8192)) || candidate_max_output=8192
 fi
 if [[ -z "$candidate_tool_result_max" ]]; then
   candidate_tool_result_max=$((candidate_context_window * 15 / 100))

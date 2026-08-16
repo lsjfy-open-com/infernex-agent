@@ -314,6 +314,15 @@ round budget is exhausted. Use `/context` to inspect the estimate and
 the artifact root; an empty value disables artifact storage. See the
 [Chinese context management guide](docs/context-management-zh.md).
 
+New host installs reserve up to 8192 output tokens by default, reduced to one
+quarter of smaller context windows. Interactive model setup asks for the real
+endpoint limit, and the value can be changed later; classic chat and Pi TUI
+reuse the same setting. Durable cross-session semantic memory is stored under
+the protected Agent state directory and exposed through controlled search,
+remember, and forget MCP tools. It accepts only operator-authored,
+user-confirmed, or tool-verified records and isolates cluster-scoped memory by
+a hash of the Kubernetes API server identity.
+
 On a TTY, chat uses a readline editor with cursor movement, Backspace/Delete,
 word/line deletion, in-process history, command completion, and safe Ctrl+C/
 Ctrl+D behavior. `/undo` removes the latest user turn and its assistant/tool

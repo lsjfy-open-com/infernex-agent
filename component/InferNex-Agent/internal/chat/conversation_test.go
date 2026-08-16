@@ -50,6 +50,23 @@ func mustJSON(value any) string {
 	return string(payload)
 }
 
+func TestDefaultContextReservesLongReportOutput(t *testing.T) {
+	config, err := ResolveContextConfig(ContextConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.WindowTokens != 32768 || config.MaxOutputTokens != 8192 {
+		t.Fatalf("default context = %#v", config)
+	}
+	small, err := ResolveContextConfig(ContextConfig{WindowTokens: 16384})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if small.MaxOutputTokens != 4096 {
+		t.Fatalf("small-window output reserve = %d, want 4096", small.MaxOutputTokens)
+	}
+}
+
 func TestConversationRunsReadOnlyToolWithoutApproval(t *testing.T) {
 	model := &fakeModel{responses: []ModelResponse{
 		{ToolCalls: []FunctionCall{{ID: "call-1", Name: "scan", Arguments: `{"namespace":"models"}`}}},

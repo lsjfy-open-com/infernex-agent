@@ -29,6 +29,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 )
 
 type stubObserver struct{}
@@ -522,6 +523,64 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 	}
 	if plan.ID != "experiment-1" || len(plan.FeatureProfiles) != 1 {
 		t.Fatalf("experiment = %#v", plan)
+	}
+}
+
+func TestServerPublishesDurableSemanticMemoryWithWriteAnnotations(t *testing.T) {
+	ctx := context.Background()
+	store, err := semanticmemory.NewFileStore(t.TempDir(), "cluster-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithSemanticMemory(store))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	if tools["infernex_search_memory"] == nil || tools["infernex_remember"] == nil || tools["infernex_forget_memory"] == nil {
+		t.Fatalf("semantic memory tools missing: %#v", tools)
+	}
+	if !tools["infernex_search_memory"].Annotations.ReadOnlyHint || tools["infernex_remember"].Annotations.ReadOnlyHint ||
+		!*tools["infernex_forget_memory"].Annotations.DestructiveHint {
+		t.Fatal("semantic memory tool annotations do not enforce read/write boundaries")
+	}
+
+	remembered, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_remember", Arguments: map[string]any{
+			"scope": "cluster", "type": "decision", "subject": "变更窗口",
+			"summary": "工作日白天只进行只读探测。", "source": "user-confirmed", "confirm": true,
+		},
+	})
+	if err != nil || remembered.IsError {
+		t.Fatalf("remember failed: err=%v result=%#v", err, remembered)
+	}
+	searched, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_search_memory", Arguments: map[string]any{"query": "变更窗口"},
+	})
+	if err != nil || searched.IsError {
+		t.Fatalf("search failed: err=%v result=%#v", err, searched)
+	}
+	payload, _ := json.Marshal(searched.StructuredContent)
+	var result semanticmemory.SearchResult
+	if err := json.Unmarshal(payload, &result); err != nil || len(result.Records) != 1 {
+		t.Fatalf("semantic memory search=%#v err=%v", result, err)
 	}
 }
 

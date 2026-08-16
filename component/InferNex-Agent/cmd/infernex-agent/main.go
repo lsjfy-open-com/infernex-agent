@@ -14,6 +14,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,6 +50,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -361,6 +364,14 @@ func serveAgent(opts options) error {
 	serverOptions := make([]mcpserver.Option, 0, 4)
 	namespaces := parseNamespaces(opts.scanNamespaces)
 	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
+	memoryStore, err := semanticmemory.NewFileStore(
+		filepath.Join(opts.stateDir, "semantic-memory"),
+		clusterIdentity(restConfig.Host),
+	)
+	if err != nil {
+		return fmt.Errorf("configure cross-session semantic memory: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithSemanticMemory(memoryStore))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -522,6 +533,11 @@ func serveAgent(opts options) error {
 	default:
 		return fmt.Errorf("unsupported transport %q", opts.transport)
 	}
+}
+
+func clusterIdentity(apiServer string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(apiServer)))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func buildAnalyzer(opts options) (supervisor.Analyzer, error) {

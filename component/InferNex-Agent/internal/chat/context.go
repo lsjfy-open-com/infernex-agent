@@ -15,7 +15,7 @@ import (
 
 const (
 	DefaultContextWindowTokens        = 32768
-	DefaultMaxOutputTokens            = 2048
+	DefaultMaxOutputTokens            = 8192
 	DefaultCompactionThresholdPercent = 80
 	DefaultKeepRecentTurns            = 4
 	DefaultToolResultMaxTokens        = 4096
@@ -60,7 +60,7 @@ func normalizeContextConfig(config ContextConfig) (ContextConfig, error) {
 		config.WindowTokens = DefaultContextWindowTokens
 	}
 	if config.MaxOutputTokens == 0 {
-		config.MaxOutputTokens = min(DefaultMaxOutputTokens, config.WindowTokens/8)
+		config.MaxOutputTokens = min(DefaultMaxOutputTokens, config.WindowTokens/4)
 	}
 	if config.CompactionThresholdPercent == 0 {
 		config.CompactionThresholdPercent = DefaultCompactionThresholdPercent
