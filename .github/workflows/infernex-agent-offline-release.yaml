@@ -166,7 +166,7 @@ jobs:
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
           pi_args=()
-          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+          if [[ "${INCLUDE_PI_TUI}" == "true" && "${ARCHITECTURE}" == "amd64" ]]; then
             pi_args+=(--pi-runtime-dir "${RUNNER_TEMP}/pi-runtime/pi")
           fi
           component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
@@ -185,7 +185,7 @@ jobs:
           EOF
             "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" tui \
               --config "${RUNNER_TEMP}/pi-model-check/agent.conf" \
-              --pi-binary "${RUNNER_TEMP}/pi-runtime/pi" \
+              --pi-binary "${RUNNER_TEMP}/pi-runtime/pi/pi" \
               --extension component/InferNex-Agent/pi/infernex.ts \
               --state-dir "${RUNNER_TEMP}/pi-model-check/state" \
               --check
