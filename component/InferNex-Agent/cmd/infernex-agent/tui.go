@@ -44,13 +44,27 @@ type piProvider struct {
 }
 
 type piModel struct {
-	ID            string          `json:"id"`
-	Name          string          `json:"name"`
-	Reasoning     bool            `json:"reasoning"`
-	ContextWindow int             `json:"contextWindow"`
-	MaxTokens     int             `json:"maxTokens"`
-	Cost          map[string]int  `json:"cost"`
-	Compat        map[string]bool `json:"compat"`
+	ID            string         `json:"id"`
+	Name          string         `json:"name"`
+	Reasoning     bool           `json:"reasoning"`
+	ContextWindow int            `json:"contextWindow"`
+	MaxTokens     int            `json:"maxTokens"`
+	Cost          map[string]int `json:"cost"`
+	Compat        piModelCompat  `json:"compat"`
+}
+
+// piModelCompat deliberately uses conservative OpenAI Chat Completions
+// parameters. vLLM and vLLM-Ascend expose an OpenAI-compatible endpoint, but
+// optional OpenAI cloud fields are not uniformly implemented across versions.
+// Tool calls and streaming remain enabled; only optional request fields and
+// strict schema mode are disabled.
+type piModelCompat struct {
+	SupportsDeveloperRole   bool   `json:"supportsDeveloperRole"`
+	SupportsReasoningEffort bool   `json:"supportsReasoningEffort"`
+	SupportsStore           bool   `json:"supportsStore"`
+	SupportsUsageStreaming  bool   `json:"supportsUsageInStreaming"`
+	SupportsStrictMode      bool   `json:"supportsStrictMode"`
+	MaxTokensField          string `json:"maxTokensField"`
 }
 
 func runTUI(args []string) error {
@@ -193,8 +207,15 @@ func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) 
 			Models: []piModel{{
 				ID: modelOpts.model, Name: modelOpts.model, Reasoning: true,
 				ContextWindow: contextWindow, MaxTokens: maxTokens,
-				Cost:   map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-				Compat: map[string]bool{"supportsDeveloperRole": false, "supportsReasoningEffort": false},
+				Cost: map[string]int{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+				Compat: piModelCompat{
+					SupportsDeveloperRole:   false,
+					SupportsReasoningEffort: false,
+					SupportsStore:           false,
+					SupportsUsageStreaming:  true,
+					SupportsStrictMode:      false,
+					MaxTokensField:          "max_tokens",
+				},
 			}},
 		},
 	}}

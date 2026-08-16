@@ -37,6 +37,13 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	if len(provider.Models) != 1 || provider.Models[0].ContextWindow != 65536 || provider.Models[0].MaxTokens != 8192 {
 		t.Fatalf("models=%#v", provider.Models)
 	}
+	compat := provider.Models[0].Compat
+	if compat.SupportsStore || compat.SupportsStrictMode || compat.SupportsDeveloperRole || compat.SupportsReasoningEffort {
+		t.Fatalf("unsafe optional OpenAI compatibility fields are enabled: %#v", compat)
+	}
+	if !compat.SupportsUsageStreaming || compat.MaxTokensField != "max_tokens" {
+		t.Fatalf("vLLM streaming compatibility is incomplete: %#v", compat)
+	}
 	info, err := os.Stat(filepath.Join(dir, "models.json"))
 	if err != nil {
 		t.Fatal(err)

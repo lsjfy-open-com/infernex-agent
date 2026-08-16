@@ -17,6 +17,7 @@ function mockAPI() {
 	const tools: RegisteredTool[] = [];
 	const commands: string[] = [];
 	const events: string[] = [];
+	const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
 	return {
 		tools,
 		api: {
@@ -26,12 +27,16 @@ function mockAPI() {
 			registerCommand(name: string) {
 				commands.push(name);
 			},
-			on(name: string) {
+			on(name: string, handler: (...args: any[]) => unknown) {
 				events.push(name);
+				const registered = handlers.get(name) || [];
+				registered.push(handler);
+				handlers.set(name, registered);
 			},
 		} as unknown as ExtensionAPI,
 		commands,
 		events,
+		handlers,
 	};
 }
 
@@ -128,4 +133,47 @@ test("stores large tool results and reads them progressively by hash", async () 
 	});
 	assert.match(page.content[0].text, /bytes 0-511/);
 	assert.match(page.content[0].text, /next offset 512/);
+});
+
+test("surfaces provider errors and empty assistant responses in the TUI", async () => {
+	mockLargeResponse = false;
+	installMockFetch();
+	const mock = mockAPI();
+	await infernexExtension(mock.api);
+	const notifications: Array<{ message: string; level: string }> = [];
+	const statuses: string[] = [];
+	const context = {
+		ui: {
+			notify(message: string, level: string) {
+				notifications.push({ message, level });
+			},
+			setStatus(_key: string, value: string) {
+				statuses.push(value);
+			},
+		},
+	};
+	const start = mock.handlers.get("agent_start")?.[0];
+	const update = mock.handlers.get("message_update")?.[0];
+	const end = mock.handlers.get("message_end")?.[0];
+	assert.ok(start && update && end);
+
+	start({ type: "agent_start" }, context);
+	assert.match(statuses.at(-1) || "", /waiting for first response/);
+	update({ type: "message_update" }, context);
+	assert.match(statuses.at(-1) || "", /response streaming/);
+	end(
+		{
+			type: "message_end",
+			message: { role: "assistant", content: [], stopReason: "error", errorMessage: "invalid SSE payload" },
+		},
+		context,
+	);
+	assert.deepEqual(notifications.at(-1), {
+		message: "Model response failed: invalid SSE payload",
+		level: "error",
+	});
+
+	start({ type: "agent_start" }, context);
+	end({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } }, context);
+	assert.match(notifications.at(-1)?.message || "", /no displayable text or tool call/);
 });

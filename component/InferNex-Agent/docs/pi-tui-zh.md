@@ -13,19 +13,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.4`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.5`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.4-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.4-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.5-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.5-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.4-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.4-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.4-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.5-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.5-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.5-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -67,6 +67,18 @@ sudo infernex-agent tui -- --continue
 model ID、上下文窗口和可选 API key 自动迁移为本地 `infernex` provider。无 API key 的内网接口会
 使用非秘密占位凭据满足 Pi 的本地 provider 可用性检查；启动前还会执行离线 auth preflight，配置
 无法识别时直接报告 InferNex 配置错误，不进入互联网登录流程。
+
+`infernex-agent tui --check` 只检查本地 provider、凭据引用和模型配置能否被 Pi 识别，并不会向模型
+发送推理请求。alpha.5 对 vLLM/vLLM-Ascend 使用保守的 Chat Completions 兼容参数：保留流式输出
+和 tool calls，但不发送 `store`、developer role、reasoning effort 和 strict tool schema 等不同版本
+实现不一致的可选字段，并使用 `max_tokens`。
+
+发出问题后，状态栏会依次显示 `waiting for first response event` 和 `response streaming`。20 秒内没有
+收到 Pi 能解析的流式事件时，TUI 会给出等待告警但不会擅自中断仍在推理的请求；服务端错误或最终
+assistant message 为空时也会直接显示原因。这样可以区分“模型仍在算”“SSE 格式未被解析”和
+“服务端返回空消息”，不再只停留在无输出界面。若同一接口在 `chat --classic` 正常而 TUI 报错，
+请保留告警中的 provider error、vLLM access log 对应请求，以及接口返回的首个 SSE event，作为后续
+适配具体 vLLM-Ascend 版本和 tool-call parser 的证据。
 
 TUI 固定使用 `/var/lib/infernex-agent/pi/workspace` 作为工作目录，并把该目录写入新 Session。
 它不会继承安装包解压目录或运维人员执行 `sudo` 时所在的临时目录，因此升级、删除旧安装目录后

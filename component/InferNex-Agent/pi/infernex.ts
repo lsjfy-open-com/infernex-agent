@@ -89,6 +89,13 @@ async function boundedResultText(text: string): Promise<{ text: string; artifact
 export default async function infernexExtension(pi: ExtensionAPI) {
 	const list = await requestMCP<{ tools: MCPTool[] }>("tools/list", {});
 	let artifactsCreated = 0;
+	let responseStarted = false;
+	let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const clearFirstEventTimer = () => {
+		if (firstEventTimer) clearTimeout(firstEventTimer);
+		firstEventTimer = undefined;
+	};
 	for (const tool of list.tools || []) {
 		pi.registerTool({
 			name: tool.name,
@@ -193,6 +200,54 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		ctx.ui.notify(`InferNex TUI connected: ${list.tools.length} tools`, "info");
 		ctx.ui.setStatus("infernex", `InferNex MCP · ${list.tools.length} tools · ${artifactsCreated} artifacts`);
+	});
+
+	pi.on("agent_start", (_event, ctx) => {
+		responseStarted = false;
+		clearFirstEventTimer();
+		ctx.ui.setStatus("infernex", "InferNex model · waiting for first response event");
+		firstEventTimer = setTimeout(() => {
+			ctx.ui.notify(
+				"The model endpoint has not produced a parseable response event for 20 seconds. The request may still be running; check endpoint latency and vLLM streaming compatibility.",
+				"warning",
+			);
+			ctx.ui.setStatus("infernex", "InferNex model · still waiting for first response event");
+		}, 20_000);
+		firstEventTimer.unref?.();
+	});
+
+	pi.on("message_update", (_event, ctx) => {
+		if (!responseStarted) {
+			responseStarted = true;
+			clearFirstEventTimer();
+			ctx.ui.setStatus("infernex", "InferNex model · response streaming");
+		}
+	});
+
+	pi.on("message_end", (event, ctx) => {
+		const message = event.message as {
+			role?: string;
+			content?: unknown;
+			stopReason?: string;
+			errorMessage?: string;
+		};
+		if (message.role !== "assistant") return;
+		clearFirstEventTimer();
+		const content = Array.isArray(message.content) ? message.content : [];
+		const hasOutput = content.some((part) => {
+			if (!part || typeof part !== "object") return false;
+			const value = part as { type?: string; text?: string; name?: string };
+			return (typeof value.text === "string" && value.text.length > 0) || value.type === "toolCall" || Boolean(value.name);
+		});
+		if (message.stopReason === "error" || message.errorMessage) {
+			ctx.ui.notify(`Model response failed: ${message.errorMessage || "unknown provider error"}`, "error");
+		} else if (!hasOutput && message.stopReason !== "toolUse") {
+			ctx.ui.notify(
+				`Model endpoint returned no displayable text or tool call (stop reason: ${message.stopReason || "missing"}).`,
+				"warning",
+			);
+		}
+		ctx.ui.setStatus("infernex", `InferNex ready · ${artifactsCreated} artifacts`);
 	});
 
 	pi.on("tool_execution_start", (event, ctx) => {
