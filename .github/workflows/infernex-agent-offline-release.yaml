@@ -200,8 +200,12 @@ jobs:
             source ./bin/bundle-lib.sh
             bundle_verify_checksums "$PWD"
             test -x ./install.sh
-            test -x ./bin/configure-evidence.sh
-            test -f ./docs/local-evidence-and-reports-zh.md
+              test -x ./bin/configure-evidence.sh
+              test -x ./bin/configure-skills.sh
+              test -f ./skills/cann-runtime-diagnosis/SKILL.md
+              test -f ./skills/hixl-communication-diagnosis/SKILL.md
+              test -f ./docs/local-evidence-and-reports-zh.md
+              test -f ./docs/skills-and-cann-hixl-zh.md
             ./install.sh --help >/dev/null
             if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
               test -x ./payload/pi-runtime/pi
@@ -246,7 +250,7 @@ jobs:
           INCLUDE_PI_TUI: ${{ inputs.include_pi_tui }}
         run: |
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
-            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, cross-session semantic memory, an 8192-token default output limit, reasoning blocks hidden by default with an operator-controlled display mode, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. Operator-collected historical logs can be registered as read-only evidence roots and analyzed through bounded glob, RE2 grep, line paging, visible metrics/health noise filters, and persistent source-hashed Markdown reports; arbitrary filesystem access remains disabled. Upgrades from the exact alpha.5 default 32768/4096 context tuple migrate the output limit to 8192 while preserving other operator values. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, cross-session semantic memory, an 8192-token default output limit, reasoning blocks hidden by default with an operator-controlled display mode, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. Operator-collected historical logs can be registered as read-only evidence roots and analyzed through bounded glob, RE2 grep, line paging, visible metrics/health noise filters, and persistent source-hashed Markdown reports; arbitrary filesystem access remains disabled. Offline CANN Runtime and HiXL/LLM DataDist diagnostic Skills are progressively loaded through read-only MCP tools. Operators may install additional Markdown-only Skills with validation, backup, and restart rollback; Skills cannot execute scripts or grant permissions. Upgrades from the exact alpha.5 default 32768/4096 context tuple migrate the output limit to 8192 while preserving other operator values. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
           else
             release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
           fi

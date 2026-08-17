@@ -52,6 +52,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
+	infernexskills "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -73,6 +74,7 @@ type options struct {
 	stateDir                     string
 	evidenceRoots                string
 	reportDirectory              string
+	skillDirectories             string
 	deploymentTimeout            time.Duration
 	scanNamespaces               string
 	scanInterval                 time.Duration
@@ -132,6 +134,8 @@ func run() error {
 			return runSetup(os.Args[2:])
 		case "install-diagnose":
 			return runInstallDiagnose(os.Args[2:])
+		case "skills":
+			return runSkills(os.Args[2:])
 		}
 	}
 	return runServer(os.Args[1:])
@@ -201,6 +205,7 @@ func parseServerOptions(args []string) (options, error) {
 	)
 	flags.StringVar(&opts.evidenceRoots, "evidence-roots", "", "Comma-separated operator-approved host directories for read-only historical log analysis; empty uses state-dir/imports")
 	flags.StringVar(&opts.reportDirectory, "report-directory", "", "Protected Markdown report directory; empty uses state-dir/reports")
+	flags.StringVar(&opts.skillDirectories, "skill-directories", "/opt/infernex-agent/skills,/etc/infernex-agent/skills.d", "Comma-separated read-only diagnostic Skill roots")
 	flags.DurationVar(
 		&opts.deploymentTimeout,
 		"deployment-readiness-timeout",
@@ -391,6 +396,11 @@ func serveAgent(opts options) error {
 		return fmt.Errorf("configure local evidence workspace: %w", err)
 	}
 	serverOptions = append(serverOptions, mcpserver.WithLocalFiles(localWorkspace))
+	skillRegistry, err := infernexskills.NewRegistry(parsePathList(opts.skillDirectories))
+	if err != nil {
+		return fmt.Errorf("configure diagnostic Skills: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithSkills(skillRegistry))
 	memoryStore, err := semanticmemory.NewFileStore(
 		filepath.Join(opts.stateDir, "semantic-memory"),
 		clusterIdentity(restConfig.Host),

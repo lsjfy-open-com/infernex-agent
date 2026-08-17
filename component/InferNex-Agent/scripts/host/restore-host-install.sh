@@ -116,6 +116,8 @@ host_targets=(
   /opt/infernex-agent/pi/infernex.ts
   /opt/infernex-agent/pi/LICENSE.pi.txt
   /opt/infernex-agent/bin/configure-evidence.sh
+  /opt/infernex-agent/bin/configure-skills.sh
+  /opt/infernex-agent/skills
 )
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"

@@ -133,6 +133,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [v0.5 产品与工程提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 - [上下文预算与自动压缩](docs/context-management-zh.md)
 - [本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)
+- [CANN/HiXL 诊断 Skill 与用户扩展](docs/skills-and-cann-hixl-zh.md)
 - [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
 - [产品设计与边界](docs/product-design-zh.md)

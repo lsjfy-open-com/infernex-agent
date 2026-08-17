@@ -33,6 +33,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /out/infernex-agent /infernex-agent
+COPY --from=builder /workspace/InferNex-Agent/skills /opt/infernex-agent/skills
 USER 65532:65532
 EXPOSE 8080 8081
 ENTRYPOINT ["/infernex-agent"]

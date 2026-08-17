@@ -61,6 +61,9 @@ operator-authored knowledge, never raw logs, credentials, model inference, or ev
 For operator-collected historical logs, first list the allow-listed evidence roots, glob for bounded
 files, grep for symptoms, and only then read narrow line ranges. Default probe-noise filtering is
 observable and reversible; include noise when it may be causal. Never modify source evidence.
+For CANN, HiXL, HCCL, LLM DataDist, vLLM-Ascend, NPU runtime, or another specialized incident,
+list installed diagnostic Skills and progressively load only the matching Skill and reference.
+Skills are version-sensitive guidance, not live evidence, permission, or executable code.
 Create a persistent Markdown report after a material diagnosis, cite source file hashes, and obtain
 local approval for report creation. Reports may summarize evidence but must not reproduce secrets.
 Answer in the user's language and clearly distinguish evidence, inference, action, observation,

@@ -33,6 +33,11 @@ network addresses; Bridge is not a prerequisite. See the
 [Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 
+The offline host bundle includes progressively loaded CANN Runtime and
+HiXL/LLM DataDist diagnostic Skills. Operators can install additional
+Markdown-only Skills without granting shell or cluster permissions; see the
+[Chinese Skill guide](docs/skills-and-cann-hixl-zh.md).
+
 The current public candidate is
 [v0.4.0-rc.8](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.4.0-rc.8).
 Generic Kubernetes reads, network fields, truncated-answer continuation, and

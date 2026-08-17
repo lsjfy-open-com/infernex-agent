@@ -80,6 +80,9 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | `infernex_read_evidence_file` | Go MCP Core | 分页读取常规文件、脱敏并返回 SHA-256，不修改源日志 |
 | `infernex_create_markdown_report` | Go MCP Core | 经批准在保护目录创建带证据 hash 的持久 Markdown 报告 |
 | `infernex_list_reports` / `infernex_read_report` | Go MCP Core | 跨 Session 枚举和读取既有报告 |
+| `infernex_list_skills` | Go MCP Core | 列出内置和运维人员安装的离线诊断 Skill、来源、摘要 hash 和参考文件 |
+| `infernex_read_skill` | Go MCP Core | 按精确名称渐进读取一个 Skill 的诊断流程，不授予任何额外权限 |
+| `infernex_read_skill_reference` | Go MCP Core | 读取已选 Skill 的一个受限 Markdown 参考文件；拒绝路径穿越、符号链接和超大内容 |
 | `infernex_search_memory` | Go MCP Core | 检索当前集群和 global 的结构化长期记忆；结果使用前需重新验证 |
 | `infernex_remember` | Go MCP Core | 写入 fact/decision/preference/procedure/incident/configuration-baseline；必须批准且来源受限 |
 | `infernex_forget_memory` | Go MCP Core | 软删除并保留审计 tombstone；必须批准 |

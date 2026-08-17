@@ -33,6 +33,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
 )
 
 type stubObserver struct{}
@@ -643,6 +644,60 @@ func TestServerPublishesBoundedLocalEvidenceAndReportTools(t *testing.T) {
 	report, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_create_markdown_report", Arguments: map[string]any{"title": "worker timeout", "markdown": "## Finding\n\nWorker timed out.", "sources": []map[string]any{{"rootId": rootID, "path": "vllm.log"}}, "confirm": true}})
 	if err != nil || report.IsError {
 		t.Fatalf("report failed: err=%v result=%#v", err, report)
+	}
+}
+
+func TestServerPublishesProgressiveDiagnosticSkills(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	directory := filepath.Join(root, "hixl-diagnosis")
+	if err := os.MkdirAll(filepath.Join(directory, "references"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "SKILL.md"), []byte("---\nname: hixl-diagnosis\ndescription: Diagnose HiXL timeouts\n---\nUse evidence first."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "references", "timeouts.md"), []byte("# Timeouts\nCheck both peers."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := skills.NewRegistry([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithSkills(registry))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_list_skills", "infernex_read_skill", "infernex_read_skill_reference"} {
+		if tools[name] == nil || !tools[name].Annotations.ReadOnlyHint {
+			t.Fatalf("missing read-only Skill tool %s", name)
+		}
+	}
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_read_skill_reference", Arguments: map[string]any{"name": "hixl-diagnosis", "reference": "timeouts.md"}})
+	if err != nil || result.IsError {
+		t.Fatalf("read reference failed: %v %#v", err, result)
+	}
+	payload, _ := json.Marshal(result.StructuredContent)
+	var reference skills.ReferenceContent
+	if err := json.Unmarshal(payload, &reference); err != nil || reference.Content == "" {
+		t.Fatalf("decode reference: %#v %v", reference, err)
 	}
 }
 

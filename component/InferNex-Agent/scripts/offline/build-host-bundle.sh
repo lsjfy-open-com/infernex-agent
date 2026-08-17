@@ -124,7 +124,7 @@ cleanup() {
 trap cleanup EXIT
 
 bundle_root="${work_dir}/${bundle_name}"
-mkdir -p "${bundle_root}/bin" "${bundle_root}/docs" "${bundle_root}/payload"
+mkdir -p "${bundle_root}/bin" "${bundle_root}/docs" "${bundle_root}/payload" "${bundle_root}/skills"
 binary_target="${bundle_root}/payload/infernex-agent"
 
 if [[ -n "$binary_source" ]]; then
@@ -147,6 +147,7 @@ install -m 0755 \
   "${script_dir}/bundle-lib.sh" \
   "${agent_dir}/scripts/host/configure-model.sh" \
   "${agent_dir}/scripts/host/configure-evidence.sh" \
+  "${agent_dir}/scripts/host/configure-skills.sh" \
   "${agent_dir}/scripts/host/chat.sh" \
   "${agent_dir}/scripts/host/tui.sh" \
   "${agent_dir}/scripts/host/create-kubeconfig.sh" \
@@ -155,6 +156,7 @@ install -m 0755 \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
+cp -a -- "${agent_dir}/skills/." "${bundle_root}/skills/"
 if [[ -n "$pi_runtime_source" ]]; then
   bundle_info "including pinned Pi TUI runtime"
   install -d -m 0755 "${bundle_root}/payload/pi-runtime"
@@ -179,6 +181,7 @@ install -m 0644 \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/context-management-zh.md" \
   "${agent_dir}/docs/local-evidence-and-reports-zh.md" \
+  "${agent_dir}/docs/skills-and-cann-hixl-zh.md" \
   "${agent_dir}/docs/terminal-interaction-zh.md" \
   "${agent_dir}/docs/pi-tui-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \

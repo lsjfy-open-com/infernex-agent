@@ -525,6 +525,8 @@ installed_api_key="${config_root}/openai-api-key"
 agent_config="${config_root}/agent.conf"
 installed_configurator="${install_root}/bin/configure-model.sh"
 installed_evidence_configurator="${install_root}/bin/configure-evidence.sh"
+installed_skills_configurator="${install_root}/bin/configure-skills.sh"
+installed_builtin_skills="${install_root}/skills"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 installed_chat="${install_root}/bin/chat.sh"
@@ -551,6 +553,7 @@ fi
 service_group="$(id -gn "$service_user")"
 install -d -m 0755 -o root -g root "${install_root}/bin"
 install -d -m 0750 -o "$service_user" -g "$service_group" "$config_root" "$state_root" "${state_root}/imports" "${state_root}/reports"
+install -d -m 0755 -o root -g root "${config_root}/skills.d"
 
 install_backup_root="${state_root}/backups/install-$(
   date -u +%Y%m%dT%H%M%SZ
@@ -604,6 +607,8 @@ host_backup_targets=(
   "$installed_pi_extension"
   "$installed_pi_license"
   "$installed_evidence_configurator"
+  "$installed_skills_configurator"
+  "$installed_builtin_skills"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -704,6 +709,7 @@ if [[ ! -f "$bundle_lib_source" ]]; then
 fi
 [[ -f "${script_dir}/configure-model.sh" &&
   -f "${script_dir}/configure-evidence.sh" &&
+  -f "${script_dir}/configure-skills.sh" &&
   -f "${script_dir}/chat.sh" &&
   -f "${script_dir}/tui.sh" &&
   -f "${script_dir}/restore-host-install.sh" &&
@@ -715,6 +721,9 @@ install -m 0755 -o root -g root \
 install -m 0755 -o root -g root \
   "${script_dir}/configure-evidence.sh" \
   "$installed_evidence_configurator"
+install -m 0755 -o root -g root \
+  "${script_dir}/configure-skills.sh" \
+  "$installed_skills_configurator"
 install -m 0755 -o root -g root \
   "${script_dir}/restore-host-install.sh" \
   "$installed_restorer"
@@ -744,6 +753,18 @@ else
     rm -rf -- "$installed_pi_runtime"
   fi
   rm -f -- "$installed_pi_extension" "$installed_pi_license"
+fi
+
+if [[ -n "$bundle_root" && -d "${bundle_root}/skills" ]]; then
+  [[ ! -L "${bundle_root}/skills" ]] || bundle_die "refusing symlinked bundle Skill directory"
+  if [[ -d "$installed_builtin_skills" ]]; then
+    rm -rf -- "$installed_builtin_skills"
+  fi
+  install -d -m 0755 -o root -g root "$installed_builtin_skills"
+  cp -a -- "${bundle_root}/skills/." "$installed_builtin_skills/"
+  chown -R root:root "$installed_builtin_skills"
+  while IFS= read -r skill_file; do chmod 0644 "$skill_file"; done < <(find "$installed_builtin_skills" -type f -name '*.md' -print)
+  while IFS= read -r skill_dir; do chmod 0755 "$skill_dir"; done < <(find "$installed_builtin_skills" -type d -print)
 fi
 
 if [[ -f "$installed_binary" ]]; then
@@ -819,6 +840,7 @@ agent_args=(
   "--kubeconfig=${installed_kubeconfig}"
   "--scan-namespaces=${scan_namespaces_csv}"
   "--max-diagnostics-per-scan=${max_diagnostics_per_scan}"
+  "--skill-directories=${installed_builtin_skills},${config_root}/skills.d"
 )
 if [[ -n "$openai_base_url" ]]; then
   agent_args+=(
