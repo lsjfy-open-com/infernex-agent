@@ -26,6 +26,9 @@
 {{- if and .Values.experiments.enabled (ne (int .Values.replicaCount) 1) }}
 {{- fail "experiments.enabled requires replicaCount=1 because experiment coordination is single-writer" }}
 {{- end }}
+{{- if and .Values.tools.activeDiagnostics.enabled (not (has .Values.tools.activeDiagnostics.mode (list "diagnose" "modify" "install" "recover"))) }}
+{{- fail "tools.activeDiagnostics.mode must be diagnose, modify, install, or recover" }}
+{{- end }}
 {{- if lt (int .Values.supervisor.maxDiagnosticsPerScan) 1 }}
 {{- fail "supervisor.maxDiagnosticsPerScan must be at least 1" }}
 {{- end }}
@@ -122,6 +125,9 @@ spec:
             - --experiment-soak-duration={{ .Values.experiments.soakDuration }}
             - --experiment-diagnostic-interval={{ .Values.experiments.diagnosticInterval }}
             {{- end }}
+            {{- end }}
+            {{- if .Values.tools.activeDiagnostics.enabled }}
+            - --execution-mode={{ .Values.tools.activeDiagnostics.mode }}
             {{- end }}
             {{- if .Values.tools.deployment.enabled }}
             - --enable-deployment

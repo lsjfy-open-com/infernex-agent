@@ -32,6 +32,9 @@ Options:
   --context-window-tokens N        Model context window (default: 32768)
   --max-output-tokens N            Output reservation and per-call maximum
   --reasoning-display MODE         TUI reasoning blocks: hidden (default) or visible
+  --execution-mode MODE            detect, diagnose, modify, install, or recover
+  --diagnostic-ssh-config FILE     OpenSSH config readable by the service user
+  --diagnostic-ssh-target ALIAS    Allowed SSH alias for fixed probes (repeatable)
   --context-compaction-threshold P Compact at this usage percent (default: 80)
   --context-keep-recent-turns N    Recent user turns kept verbatim (default: 4)
   --tool-result-max-tokens N       Approximate cap for one tool result
@@ -77,6 +80,12 @@ context_compaction_threshold="80"
 context_keep_recent_turns="4"
 tool_result_max_tokens=""
 reasoning_display="hidden"
+execution_mode="detect"
+execution_mode_set="false"
+diagnostic_ssh_config=""
+diagnostic_ssh_config_set="false"
+declare -a diagnostic_ssh_targets=()
+diagnostic_ssh_targets_set="false"
 context_window_set="false"
 max_output_set="false"
 context_threshold_set="false"
@@ -179,6 +188,24 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--reasoning-display requires a value"
       reasoning_display="$2"
       reasoning_display_set="true"
+      shift 2
+      ;;
+    --execution-mode)
+      [[ $# -ge 2 ]] || bundle_die "--execution-mode requires a value"
+      execution_mode="$2"
+      execution_mode_set="true"
+      shift 2
+      ;;
+    --diagnostic-ssh-config)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-config requires a value"
+      diagnostic_ssh_config="$2"
+      diagnostic_ssh_config_set="true"
+      shift 2
+      ;;
+    --diagnostic-ssh-target)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-target requires a value"
+      diagnostic_ssh_targets+=("$2")
+      diagnostic_ssh_targets_set="true"
       shift 2
       ;;
     --context-compaction-threshold)
@@ -897,6 +924,17 @@ if [[ "$preserve_model_config" == "true" ]]; then
       --reasoning-display=*)
         [[ "$reasoning_display_set" == "true" ]] || reasoning_display="${argument#*=}"
         ;;
+      --execution-mode=*)
+        [[ "$execution_mode_set" == "true" ]] || execution_mode="${argument#*=}"
+        ;;
+      --diagnostic-ssh-config=*)
+        [[ "$diagnostic_ssh_config_set" == "true" ]] || diagnostic_ssh_config="${argument#*=}"
+        ;;
+      --diagnostic-ssh-targets=*)
+        if [[ "$diagnostic_ssh_targets_set" == "false" ]]; then
+          IFS=',' read -r -a diagnostic_ssh_targets <<<"${argument#*=}"
+        fi
+        ;;
       --evidence-roots=*)
         if [[ "$evidence_roots_set" == "false" ]]; then
           IFS=',' read -r -a evidence_roots <<<"${argument#*=}"
@@ -954,6 +992,21 @@ done
   bundle_die "max output tokens must be smaller than the compaction threshold budget"
 [[ "$reasoning_display" == "hidden" || "$reasoning_display" == "visible" ]] ||
   bundle_die "reasoning display must be hidden or visible"
+case "$execution_mode" in
+  detect | diagnose | modify | install | recover) ;;
+  *) bundle_die "execution mode must be detect, diagnose, modify, install, or recover" ;;
+esac
+if ((${#diagnostic_ssh_targets[@]} > 0)); then
+  [[ -n "$diagnostic_ssh_config" ]] || bundle_die "diagnostic SSH targets require an OpenSSH config"
+  [[ "$diagnostic_ssh_config" == /* && -r "$diagnostic_ssh_config" ]] ||
+    bundle_die "diagnostic SSH config must be an absolute readable file"
+  runuser -u "$service_user" -- test -r "$diagnostic_ssh_config" ||
+    bundle_die "diagnostic SSH config is not readable by ${service_user}"
+  for target in "${diagnostic_ssh_targets[@]}"; do
+    [[ "$target" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+      bundle_die "invalid diagnostic SSH target alias: ${target}"
+  done
+fi
 declare -a canonical_evidence_roots=()
 for evidence_root in "${evidence_roots[@]}"; do
   [[ "$evidence_root" == /* && "$evidence_root" != *','* ]] ||
@@ -982,7 +1035,15 @@ agent_args+=(
   "--context-keep-recent-turns=${context_keep_recent_turns}"
   "--tool-result-max-tokens=${tool_result_max_tokens}"
   "--reasoning-display=${reasoning_display}"
+  "--execution-mode=${execution_mode}"
 )
+if ((${#diagnostic_ssh_targets[@]} > 0)); then
+  diagnostic_ssh_targets_csv="$(IFS=,; printf '%s' "${diagnostic_ssh_targets[*]}")"
+  agent_args+=(
+    "--diagnostic-ssh-config=${diagnostic_ssh_config}"
+    "--diagnostic-ssh-targets=${diagnostic_ssh_targets_csv}"
+  )
+fi
 if ((${#canonical_evidence_roots[@]} > 0)); then
   evidence_roots_csv="$(IFS=,; printf '%s' "${canonical_evidence_roots[*]}")"
   agent_args+=("--evidence-roots=${evidence_roots_csv}")

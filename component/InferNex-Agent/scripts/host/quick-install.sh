@@ -38,6 +38,9 @@ Advanced recovery/automation options:
   --skip-checksums            Skip package-internal checksums after verifying the outer archive
   --skip-model-setup            Install first; configure the model later
   --evidence-root DIR           Allow read-only historical log analysis (repeatable)
+  --execution-mode MODE         detect, diagnose (default), modify, install, or recover
+  --diagnostic-ssh-config FILE  OpenSSH config for operator-managed node aliases
+  --diagnostic-ssh-target ALIAS Allow fixed probes on one SSH alias (repeatable)
   --non-interactive             Do not read from the terminal
   -h, --help                    Show this help
 EOF
@@ -52,7 +55,10 @@ hardened_identity="false"
 force_generic_kubernetes="false"
 skip_checksums="false"
 workspace_namespace="infernex-agent-workspace"
+execution_mode="diagnose"
+diagnostic_ssh_config=""
 declare -a evidence_roots=()
+declare -a diagnostic_ssh_targets=()
 
 while (($#)); do
   case "$1" in
@@ -79,6 +85,21 @@ while (($#)); do
     --evidence-root)
       [[ $# -ge 2 ]] || bundle_die "--evidence-root requires a value"
       evidence_roots+=("$2")
+      shift 2
+      ;;
+    --execution-mode)
+      [[ $# -ge 2 ]] || bundle_die "--execution-mode requires a value"
+      execution_mode="$2"
+      shift 2
+      ;;
+    --diagnostic-ssh-config)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-config requires a value"
+      diagnostic_ssh_config="$2"
+      shift 2
+      ;;
+    --diagnostic-ssh-target)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-target requires a value"
+      diagnostic_ssh_targets+=("$2")
       shift 2
       ;;
     --hardened-identity)
@@ -308,6 +329,9 @@ if [[ "$platform_mode" == "bridge" && "$hardened_identity" == "true" ]]; then
     --deployment-template-namespace "$template_namespace"
     --enable-log-diagnostics
   )
+  if [[ "$execution_mode" != "detect" ]]; then
+    create_args+=(--enable-pod-exec)
+  fi
   for namespace in "${discovered_namespaces[@]}"; do
     create_args+=(--target-namespace "$namespace")
   done
@@ -331,9 +355,16 @@ install_args=(
   --bundle-dir "$bundle_root"
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
+  --execution-mode "$execution_mode"
 )
 for evidence_root in "${evidence_roots[@]}"; do
   install_args+=(--evidence-root "$evidence_root")
+done
+if [[ -n "$diagnostic_ssh_config" ]]; then
+  install_args+=(--diagnostic-ssh-config "$diagnostic_ssh_config")
+fi
+for diagnostic_ssh_target in "${diagnostic_ssh_targets[@]}"; do
+  install_args+=(--diagnostic-ssh-target "$diagnostic_ssh_target")
 done
 if [[ "$skip_checksums" == "true" ]]; then
   install_args+=(--skip-checksums)

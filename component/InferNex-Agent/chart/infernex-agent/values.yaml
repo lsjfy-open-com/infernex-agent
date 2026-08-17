@@ -80,6 +80,11 @@ rbac:
   targetNamespaces: []
 
 tools:
+  activeDiagnostics:
+    # Enables fixed active-read probes, including bounded pods/exec. This does
+    # not expose arbitrary shell or grant workload mutation permissions.
+    enabled: false
+    mode: diagnose
   deployment:
     # Catalog deployment is deliberately opt-in. When enabled, the Agent can
     # only create/delete InferNexService resources in targetNamespaces; it

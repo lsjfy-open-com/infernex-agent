@@ -29,6 +29,7 @@ Options:
   --deployment-namespace N         Fixed Agent workspace namespace
   --deployment-template-namespace N Existing deployment profile namespace
   --enable-log-diagnostics         Enable Bridge cross-component log diagnosis
+  --enable-pod-exec                Permit bounded typed probes through pods/exec
   --enable-experiments             Permit candidates and approved profiles
   --experiment-template-namespace N Profile namespace (default: infernex-bridge-system)
   --enable-recovery                Permit recovery-service create and profile get
@@ -51,6 +52,7 @@ enable_deployment="false"
 deployment_namespace="infernex-agent-workspace"
 deployment_template_namespace="infernex-bridge-system"
 enable_log_diagnostics="false"
+enable_pod_exec="false"
 enable_experiments="false"
 experiment_template_namespace="infernex-bridge-system"
 enable_recovery="false"
@@ -102,6 +104,10 @@ while (($#)); do
       ;;
     --enable-log-diagnostics)
       enable_log_diagnostics="true"
+      shift
+      ;;
+    --enable-pod-exec)
+      enable_pod_exec="true"
       shift
       ;;
     --enable-experiments)
@@ -265,6 +271,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+$(if [[ "$enable_pod_exec" == "true" ]]; then cat <<'RULE'
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+RULE
+fi)
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["list"]

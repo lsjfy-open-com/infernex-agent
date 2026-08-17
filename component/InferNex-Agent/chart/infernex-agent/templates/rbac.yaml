@@ -25,6 +25,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  {{- if .Values.tools.activeDiagnostics.enabled }}
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["nodes", "namespaces"]
     verbs: ["list"]
@@ -93,6 +98,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  {{- if $root.Values.tools.activeDiagnostics.enabled }}
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  {{- end }}
   - apiGroups: [""]
     resources: ["secrets", "configmaps"]
     verbs: ["list"]

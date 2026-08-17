@@ -23,6 +23,7 @@ import (
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
@@ -46,9 +47,18 @@ k8s_cluster_overview, k8s_list_workloads, k8s_get_events, and k8s_get_pod_logs f
 resources. For other installed APIs, call k8s_discover_api_resources and then k8s_read_resources
 with the exact groupVersion and plural resource name. Generic reads follow kubeconfig RBAC,
 paginate large lists, omit managedFields, redact credential-like values, and return Secret metadata
-without Secret payloads. Use helm_list_releases for the main-chart application lifecycle. No read
-tool provides exec or host-file access. InferNex Bridge is optional; use InferNexService tools only
+without Secret payloads. Use helm_list_releases for the main-chart application lifecycle. Generic
+API reads do not implicitly execute commands. Host evidence and active diagnostic execution are
+separate policy-controlled channels when configured. InferNex Bridge is optional; use InferNexService tools only
 when the environment evidence shows that Bridge is installed.`
+
+const activeDiagnosticInstructions = `
+Active diagnostic probes are enabled by an operator-selected diagnose-or-higher execution mode.
+Use infernex_run_diagnostic_probe only for the fixed probe names it exposes. Pod exec is bounded to
+an explicit Pod/container, local execution runs on the management node, and SSH accepts only aliases
+preconfigured by the operator. This channel never accepts arbitrary shell, addresses, credentials,
+paths, environment reads, or command arguments. Probe execution is active-read evidence, not an
+authorization to modify configuration, restart processes, install packages, or delete resources.`
 
 const deploymentInstructions = `
 Conversational deployment is explicitly enabled. First call
@@ -285,6 +295,23 @@ type skillListOutput struct {
 	Skills []skills.Skill `json:"skills"`
 }
 
+type activeDiagnosticInput struct {
+	Channel   string `json:"channel" jsonschema:"Execution channel: local, pod, or ssh"`
+	Probe     string `json:"probe" jsonschema:"Fixed probe: system-summary, filesystem-usage, network-links, npu-inventory, cann-version, or hccn-device"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"Required for pod channel; Kubernetes namespace"`
+	Pod       string `json:"pod,omitempty" jsonschema:"Required for pod channel; exact Pod name returned by discovery"`
+	Container string `json:"container,omitempty" jsonschema:"Container name; required for multi-container Pods"`
+	SSHTarget string `json:"sshTarget,omitempty" jsonschema:"Required for ssh channel; exact operator-configured alias"`
+	DeviceID  int    `json:"deviceId,omitempty" jsonschema:"NPU device index 0-63 for hccn-device"`
+}
+
+type activeDiagnosticCatalog struct {
+	ActionClass string   `json:"actionClass"`
+	Channels    []string `json:"channels"`
+	Probes      []string `json:"probes"`
+	SSHTargets  []string `json:"sshTargets,omitempty"`
+}
+
 type allServicesOutput struct {
 	Namespaces []observer.ServiceList `json:"namespaces"`
 }
@@ -294,22 +321,27 @@ type experimentListOutput struct {
 }
 
 type serverOptions struct {
-	deployer    deployer.Deployer
-	diagnoser   diagnostics.Diagnoser
-	experiments experiment.Manager
-	kubernetes  kubeops.Reader
-	namespaces  []string
-	testCatalog bool
-	bridge      bool
-	memory      semanticmemory.Store
-	localFiles  *localfiles.Workspace
-	skills      *skills.Registry
+	deployer       deployer.Deployer
+	diagnoser      diagnostics.Diagnoser
+	experiments    experiment.Manager
+	kubernetes     kubeops.Reader
+	namespaces     []string
+	testCatalog    bool
+	bridge         bool
+	memory         semanticmemory.Store
+	localFiles     *localfiles.Workspace
+	skills         *skills.Registry
+	diagnosticExec *diagnosticexec.Runner
 }
 
 func WithSkills(registry *skills.Registry) Option {
 	return func(options *serverOptions) {
 		options.skills = registry
 	}
+}
+
+func WithDiagnosticExec(runner *diagnosticexec.Runner) Option {
+	return func(options *serverOptions) { options.diagnosticExec = runner }
 }
 
 func WithLocalFiles(workspace *localfiles.Workspace) Option {
@@ -400,6 +432,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}
 	if options.skills != nil {
 		serverInstructions += skillInstructions
+	}
+	if options.diagnosticExec != nil {
+		serverInstructions += activeDiagnosticInstructions
 	}
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "infernex-agent", Version: version},
@@ -503,6 +538,24 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			output, err := options.kubernetes.ListHelmReleases(ctx, kubeops.HelmReleaseRequest{
 				Namespace: input.Namespace, Limit: input.Limit,
 			})
+			return nil, output, err
+		})
+	}
+
+	if options.diagnosticExec != nil {
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_list_diagnostic_probes",
+			Description: "List fixed active-read probes, supported execution channels, and operator-approved SSH aliases available in the current execution mode.",
+			Annotations: readOnly("List active diagnostic probes"),
+		}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, activeDiagnosticCatalog, error) {
+			return nil, activeDiagnosticCatalog{ActionClass: "active-read", Channels: []string{"local", "pod", "ssh"}, Probes: options.diagnosticExec.Probes(), SSHTargets: options.diagnosticExec.SSHTargets()}, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "infernex_run_diagnostic_probe",
+			Description: "Run one compiled-in active-read probe through local, Pod exec, or an operator-approved SSH alias. Arbitrary commands, paths, addresses, credentials, and writes are not accepted.",
+			Annotations: readOnly("Run bounded active diagnostic probe"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input activeDiagnosticInput) (*mcp.CallToolResult, diagnosticexec.Result, error) {
+			output, err := options.diagnosticExec.Run(ctx, diagnosticexec.Request{Channel: input.Channel, Probe: input.Probe, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, SSHTarget: input.SSHTarget, DeviceID: input.DeviceID})
 			return nil, output, err
 		})
 	}

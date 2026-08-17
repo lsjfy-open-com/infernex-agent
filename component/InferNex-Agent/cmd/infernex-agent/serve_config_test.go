@@ -40,3 +40,19 @@ func TestReadAgentArgumentFileRejectsPositionalContent(t *testing.T) {
 		t.Fatal("readAgentArgumentFile() unexpectedly accepted positional content")
 	}
 }
+
+func TestParseServerOptionsValidatesExecutionModeAndSSHPair(t *testing.T) {
+	if _, err := parseServerOptions([]string{"--execution-mode=god-mode"}); err == nil {
+		t.Fatal("invalid execution mode was accepted")
+	}
+	if _, err := parseServerOptions([]string{"--execution-mode=diagnose", "--diagnostic-ssh-targets=node-01"}); err == nil {
+		t.Fatal("SSH targets without operator config were accepted")
+	}
+	opts, err := parseServerOptions([]string{"--execution-mode=diagnose", "--diagnostic-ssh-config=/etc/infernex-agent/ssh.conf", "--diagnostic-ssh-targets=node-01"})
+	if err != nil {
+		t.Fatalf("valid diagnostic options: %v", err)
+	}
+	if opts.executionMode != "diagnose" || opts.sshTargets != "node-01" {
+		t.Fatalf("unexpected options: %#v", opts)
+	}
+}

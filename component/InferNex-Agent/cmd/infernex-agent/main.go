@@ -43,6 +43,7 @@ import (
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
@@ -92,6 +93,9 @@ type options struct {
 	contextKeepRecentTurns       int
 	toolResultMaxTokens          int
 	reasoningDisplay             string
+	executionMode                string
+	sshConfig                    string
+	sshTargets                   string
 	enableAutoRecovery           bool
 	recoveryTemplateNS           string
 	recoveryMinScans             int
@@ -218,6 +222,9 @@ func parseServerOptions(args []string) (options, error) {
 	flags.IntVar(&opts.contextKeepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "Recent interactive turns retained during compaction")
 	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "Approximate token cap for one interactive tool result; zero derives a safe default")
 	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "hidden", "Reasoning block display in interactive clients: hidden or visible")
+	flags.StringVar(&opts.executionMode, "execution-mode", "detect", "Policy ceiling: detect, diagnose, modify, install, or recover")
+	flags.StringVar(&opts.sshConfig, "diagnostic-ssh-config", "", "OpenSSH config containing operator-managed aliases and credentials for diagnostic probes")
+	flags.StringVar(&opts.sshTargets, "diagnostic-ssh-targets", "", "Comma-separated OpenSSH aliases allowed for fixed diagnostic probes")
 	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
@@ -325,6 +332,12 @@ func parseServerOptions(args []string) (options, error) {
 	if _, err := normalizeReasoningDisplay(opts.reasoningDisplay); err != nil {
 		return options{}, err
 	}
+	if !validExecutionMode(opts.executionMode) {
+		return options{}, fmt.Errorf("--execution-mode must be detect, diagnose, modify, install, or recover")
+	}
+	if strings.TrimSpace(opts.sshTargets) != "" && strings.TrimSpace(opts.sshConfig) == "" {
+		return options{}, fmt.Errorf("--diagnostic-ssh-targets requires --diagnostic-ssh-config")
+	}
 	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
 		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
 		CompactionThresholdPercent: opts.contextCompactionThreshold,
@@ -417,6 +430,13 @@ func serveAgent(opts options) error {
 		return fmt.Errorf("detect openFuyao environment: %w", err)
 	}
 	serverOptions = append(serverOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
+	if strings.ToLower(strings.TrimSpace(opts.executionMode)) != "detect" {
+		diagnosticRunner, err := diagnosticexec.New(clientset, restConfig, opts.sshConfig, parsePathList(opts.sshTargets))
+		if err != nil {
+			return fmt.Errorf("configure active diagnostic execution: %w", err)
+		}
+		serverOptions = append(serverOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+	}
 
 	var changeStore changesafety.Store
 	if opts.enableDeployment || opts.enableAutoRecovery || opts.enableExperiments {
@@ -649,6 +669,15 @@ func parsePathList(value string) []string {
 		result = append(result, item)
 	}
 	return result
+}
+
+func validExecutionMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "detect", "diagnose", "modify", "install", "recover":
+		return true
+	default:
+		return false
+	}
 }
 
 func serveHTTP(
