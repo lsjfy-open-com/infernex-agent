@@ -64,6 +64,7 @@ type modelFileOptions struct {
 	contextThreshold    int
 	keepRecentTurns     int
 	toolResultMaxTokens int
+	reasoningDisplay    string
 }
 
 func runChat(args []string) error {
@@ -270,6 +271,8 @@ func readModelFileOptions(path string) (modelFileOptions, error) {
 			result.keepRecentTurns, err = parsePositiveConfigInt(line, "--context-keep-recent-turns=")
 		case strings.HasPrefix(line, "--tool-result-max-tokens="):
 			result.toolResultMaxTokens, err = parsePositiveConfigInt(line, "--tool-result-max-tokens=")
+		case strings.HasPrefix(line, "--reasoning-display="):
+			result.reasoningDisplay = strings.TrimPrefix(line, "--reasoning-display=")
 		}
 		if err != nil {
 			return modelFileOptions{}, err

@@ -54,7 +54,7 @@ Kubernetes API discovery 和分页 GET/LIST 读取当前 kubeconfig/RBAC 可见�
 Node 地址、Pod IP、宿主机 IP、Service 地址等事实可直接采集。Secret payload 始终排除。
 Bridge 专属观察和部署工具都会关闭，不应通过安装 Bridge CRD 来伪装兼容。
 
-> 当前 Pi TUI 现场测试包是 `v0.5.0-alpha.5`；v0.4 RC 仍作为稳定测试回退线。alpha.5 已包含
+> 当前 Pi TUI 现场测试包是 `v0.5.0-alpha.6`；v0.4 RC 仍作为稳定测试回退线。alpha.6 已包含
 > Kubernetes 通用只读、Node/Pod/Service 网络字段、长回答自动续写、`/usage` 和 Pi 流式错误可见性。
 
 ## Release 到底下载哪个
@@ -98,6 +98,8 @@ sudo ./install.sh
 只按受限行范围渐进读取；相同参数的工具调用出现循环时会阻断，工具轮次耗尽时会基于已有证据
 输出阶段性结论。运行中可用 `/context` 查看预算、用 `/compact` 手动压缩；完整说明见
 [上下文管理](context-management-zh.md)。
+
+TUI 默认折叠 reasoning block，但不会关闭模型推理或影响 tool parser。可用 `configure-model.sh --reasoning-display visible` 持久显示，或在 TUI 中按 `Ctrl+T` 临时切换。
 
 跨 Session 语义记忆由 Go Core 持久化，Pi、classic chat 或其他 MCP Agent runtime 共用。它只保存
 经确认/验证的结构化事实、决定、偏好、incident 和稳定配置含义，不保存原始日志或模型推测；集群

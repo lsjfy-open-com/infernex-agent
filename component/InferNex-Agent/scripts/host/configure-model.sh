@@ -27,6 +27,8 @@ Actions:
   --context-window-tokens N
                          Model context window (default: 32768)
   --max-output-tokens N  Output reservation and per-call maximum
+  --reasoning-display MODE
+                         TUI reasoning blocks: hidden (default) or visible
   --context-compaction-threshold PERCENT
                          Compact at this context usage (default: 80)
   --context-keep-recent-turns N
@@ -63,6 +65,7 @@ max_output_tokens=""
 context_compaction_threshold=""
 context_keep_recent_turns=""
 tool_result_max_tokens=""
+reasoning_display=""
 api_key_source=""
 base_url_set="false"
 model_set="false"
@@ -72,6 +75,7 @@ max_output_set="false"
 context_threshold_set="false"
 keep_recent_set="false"
 tool_result_max_set="false"
+reasoning_display_set="false"
 api_key_set="false"
 clear_api_key="false"
 disable_model="false"
@@ -126,6 +130,12 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--max-output-tokens requires a value"
       max_output_tokens="$2"
       max_output_set="true"
+      shift 2
+      ;;
+    --reasoning-display)
+      [[ $# -ge 2 ]] || bundle_die "--reasoning-display requires a value"
+      reasoning_display="$2"
+      reasoning_display_set="true"
       shift 2
       ;;
     --context-compaction-threshold)
@@ -267,6 +277,7 @@ current_max_output=""
 current_context_threshold="80"
 current_keep_recent="4"
 current_tool_result_max=""
+current_reasoning_display="hidden"
 for argument in "${current_args[@]}"; do
   [[ -n "$argument" && "$argument" == --* ]] ||
     bundle_die "${config_file} contains an invalid argument"
@@ -279,6 +290,7 @@ for argument in "${current_args[@]}"; do
     --context-compaction-threshold=*) current_context_threshold="${argument#*=}" ;;
     --context-keep-recent-turns=*) current_keep_recent="${argument#*=}" ;;
     --tool-result-max-tokens=*) current_tool_result_max="${argument#*=}" ;;
+    --reasoning-display=*) current_reasoning_display="${argument#*=}" ;;
   esac
 done
 [[ -z "$current_base_url" && -z "$current_model" ||
@@ -293,6 +305,7 @@ candidate_max_output="$current_max_output"
 candidate_context_threshold="$current_context_threshold"
 candidate_keep_recent="$current_keep_recent"
 candidate_tool_result_max="$current_tool_result_max"
+candidate_reasoning_display="$current_reasoning_display"
 [[ "$base_url_set" == "false" ]] || candidate_base_url="$base_url"
 [[ "$model_set" == "false" ]] || candidate_model="$model"
 [[ "$timeout_set" == "false" ]] || candidate_timeout="$request_timeout"
@@ -301,6 +314,7 @@ candidate_tool_result_max="$current_tool_result_max"
 [[ "$context_threshold_set" == "false" ]] || candidate_context_threshold="$context_compaction_threshold"
 [[ "$keep_recent_set" == "false" ]] || candidate_keep_recent="$context_keep_recent_turns"
 [[ "$tool_result_max_set" == "false" ]] || candidate_tool_result_max="$tool_result_max_tokens"
+[[ "$reasoning_display_set" == "false" ]] || candidate_reasoning_display="$reasoning_display"
 
 # Recalculate safe derived defaults when an operator changes only the window.
 [[ "$candidate_context_window" =~ ^[0-9]+$ ]] ||
@@ -333,6 +347,7 @@ if [[ "$base_url_set" == "true" ||
   "$context_threshold_set" == "true" ||
   "$keep_recent_set" == "true" ||
   "$tool_result_max_set" == "true" ||
+  "$reasoning_display_set" == "true" ||
   "$api_key_set" == "true" ||
   "$clear_api_key" == "true" ||
   "$disable_model" == "true" ]]; then
@@ -393,6 +408,8 @@ validate_context_config \
   "$candidate_context_window" "$candidate_max_output" \
   "$candidate_context_threshold" "$candidate_keep_recent" \
   "$candidate_tool_result_max"
+[[ "$candidate_reasoning_display" == "hidden" || "$candidate_reasoning_display" == "visible" ]] ||
+  bundle_die "reasoning display must be hidden or visible"
 
 validate_api_key_file() {
   local source_file="$1"
@@ -576,6 +593,7 @@ show_configuration() {
   printf 'context_compaction_threshold_percent=%s\n' "$candidate_context_threshold"
   printf 'context_keep_recent_turns=%s\n' "$candidate_keep_recent"
   printf 'tool_result_max_tokens=%s\n' "$candidate_tool_result_max"
+  printf 'reasoning_display=%s\n' "$candidate_reasoning_display"
   printf 'api_key=%s\n' "$credential"
 }
 
@@ -587,7 +605,7 @@ if [[ "$modify_requested" == "true" ]]; then
       --openai-base-url=* | --openai-model=* | --openai-api-key-file=* | --openai-timeout=* | \
         --context-window-tokens=* | --max-output-tokens=* | \
         --context-compaction-threshold=* | --context-keep-recent-turns=* | \
-        --tool-result-max-tokens=*)
+        --tool-result-max-tokens=* | --reasoning-display=*)
         ;;
       *) updated_args+=("$argument") ;;
     esac
@@ -609,6 +627,7 @@ if [[ "$modify_requested" == "true" ]]; then
     "--context-compaction-threshold=${candidate_context_threshold}"
     "--context-keep-recent-turns=${candidate_keep_recent}"
     "--tool-result-max-tokens=${candidate_tool_result_max}"
+    "--reasoning-display=${candidate_reasoning_display}"
   )
 
   config_backup="$(mktemp /etc/infernex-agent/.agent.conf.backup.XXXXXX)"

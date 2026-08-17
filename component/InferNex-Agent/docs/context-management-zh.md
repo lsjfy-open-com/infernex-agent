@@ -14,6 +14,7 @@ InferNex Agent 不会把整个对话和所有日志无限追加后直接发给�
 | `context-compaction-threshold` | 80 | 预计总量达到窗口的 80% 时开始压缩 |
 | `context-keep-recent-turns` | 4 | 压缩时原样保留最近 4 个用户轮次及其工具链 |
 | `tool-result-max-tokens` | 4096 | 单次送入模型的工具结果近似上限；更大的结果先保存为本机会话 Artifact |
+| `reasoning-display` | hidden | 仅控制 TUI 是否展开 reasoning block；不关闭模型推理能力 |
 
 处理顺序如下：
 
@@ -104,6 +105,8 @@ sudo /opt/infernex-agent/bin/configure-model.sh \
 `--max-output-tokens` 是上限而不是要求模型必须生成这么多 token。应填写 endpoint 实际支持的单次
 输出上限；长报告可使用 8192、16384 或更高，但必须小于 context window 和 compaction threshold
 预算。该设置同时写入 classic chat 的 `max_tokens` 和 Pi TUI 的模型 `maxTokens`。
+
+reasoning 展示与 token 生成预算是两个概念。默认 `hidden` 可以减少终端噪声，但 reasoning token 仍可能由模型生成并计入 completion usage。需要查看时可执行 `configure-model.sh --reasoning-display visible`，或在 TUI 中按 `Ctrl+T` 临时切换。
 
 配置工具会验证各值、原子写入 `/etc/infernex-agent/agent.conf` 并重启服务；启动失败时恢复
 原配置。也可以只对一次终端会话使用同名 `infernex-agent chat` 参数覆盖配置文件。

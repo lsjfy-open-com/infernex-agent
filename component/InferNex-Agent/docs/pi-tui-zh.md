@@ -13,19 +13,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.5`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.6`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.5-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.5-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.6-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.6-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.5-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.5-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.5-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.6-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.6-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.6-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -69,7 +69,7 @@ model ID、上下文窗口和可选 API key 自动迁移为本地 `infernex` pro
 无法识别时直接报告 InferNex 配置错误，不进入互联网登录流程。
 
 `infernex-agent tui --check` 只检查本地 provider、凭据引用和模型配置能否被 Pi 识别，并不会向模型
-发送推理请求。alpha.5 对 vLLM/vLLM-Ascend 使用保守的 Chat Completions 兼容参数：保留流式输出
+发送推理请求。alpha.6 对 vLLM/vLLM-Ascend 使用保守的 Chat Completions 兼容参数：保留流式输出
 和 tool calls，但不发送 `store`、developer role、reasoning effort 和 strict tool schema 等不同版本
 实现不一致的可选字段，并使用 `max_tokens`。
 
@@ -90,6 +90,21 @@ TUI 固定使用 `/var/lib/infernex-agent/pi/workspace` 作为工作目录，并
 对话；跨 Session 的稳定知识由 Go Core 的 `infernex_search_memory`、`infernex_remember` 和
 `infernex_forget_memory` 提供，保存于 `/var/lib/infernex-agent/semantic-memory`。记忆写入和忘记会像
 其他写工具一样要求本机批准，历史集群事实仍需工具重新验证。
+
+### Reasoning 展示
+
+alpha.6 保持模型的 reasoning 和 tool parser 能力，但默认折叠 TUI 中的思维块，只显示简短状态和最终回答。这只是显示策略，不会通过 `--thinking off` 关闭模型推理。
+
+```bash
+# 持久显示或隐藏
+sudo /opt/infernex-agent/bin/configure-model.sh --reasoning-display visible
+sudo /opt/infernex-agent/bin/configure-model.sh --reasoning-display hidden
+
+# 仅覆盖本次启动
+infernex-agent tui --reasoning-display visible
+```
+
+运行中可按 `Ctrl+T` 临时切换。classic chat 只输出最终 `message.content`，不会打印服务端扩展字段 `reasoning_content`。
 
 当一个 MCP 工具结果超过 16 KiB 时，TUI 不会把全文反复加入模型上下文。原文以 SHA-256
 作为 Artifact ID 保存到 `/var/lib/infernex-agent/pi/artifacts`，模型先收到头尾预览，再通过

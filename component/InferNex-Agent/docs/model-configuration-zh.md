@@ -134,6 +134,8 @@ HTTP 408、429、500、502、503、504 等瞬态故障最多重试 3 次，并�
 sudo /opt/infernex-agent/bin/configure-model.sh --max-output-tokens 16384 --test-tools
 ```
 
+TUI 默认隐藏 reasoning block，避免长分析覆盖最终诊断结论；这不会关闭模型 reasoning 或 tool-call parser。可用 `configure-model.sh --reasoning-display visible` 持久显示，或在 TUI 中按 `Ctrl+T` 临时切换。
+
 较大输出上限会减少同一 context window 中可用于输入和工具证据的空间，因此必须与自动压缩阈值
 一起规划。Pi TUI 和 classic chat 读取同一个值。
 

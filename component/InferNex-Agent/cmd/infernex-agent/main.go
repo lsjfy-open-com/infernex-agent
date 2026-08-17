@@ -86,6 +86,7 @@ type options struct {
 	contextCompactionThreshold   int
 	contextKeepRecentTurns       int
 	toolResultMaxTokens          int
+	reasoningDisplay             string
 	enableAutoRecovery           bool
 	recoveryTemplateNS           string
 	recoveryMinScans             int
@@ -206,6 +207,7 @@ func parseServerOptions(args []string) (options, error) {
 	flags.IntVar(&opts.contextCompactionThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "Context usage percent that triggers compaction")
 	flags.IntVar(&opts.contextKeepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "Recent interactive turns retained during compaction")
 	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "Approximate token cap for one interactive tool result; zero derives a safe default")
+	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "hidden", "Reasoning block display in interactive clients: hidden or visible")
 	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
@@ -309,6 +311,9 @@ func parseServerOptions(args []string) (options, error) {
 	}
 	if opts.enableTestCatalog && !opts.enableDeployment {
 		return options{}, fmt.Errorf("--enable-test-catalog requires --enable-deployment")
+	}
+	if _, err := normalizeReasoningDisplay(opts.reasoningDisplay); err != nil {
+		return options{}, err
 	}
 	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
 		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,

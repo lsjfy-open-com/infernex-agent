@@ -18,7 +18,7 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	err := preparePiState(dir, modelFileOptions{
 		baseURL: "http://model.internal:8000/v1/", model: "ops-model",
 		contextWindowTokens: 65536, maxOutputTokens: 8192,
-	}, "secret")
+	}, "secret", "hidden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,17 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("models.json mode=%v", info.Mode().Perm())
 	}
+	settingsPayload, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(settingsPayload, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if hidden, ok := settings["hideThinkingBlock"].(bool); !ok || !hidden {
+		t.Fatalf("hideThinkingBlock=%#v, want true", settings["hideThinkingBlock"])
+	}
 	artifactInfo, err := os.Stat(filepath.Join(dir, "artifacts"))
 	if err != nil || !artifactInfo.IsDir() {
 		t.Fatalf("artifact directory is unavailable: info=%v err=%v", artifactInfo, err)
@@ -65,7 +76,7 @@ func TestPreparePiStateUsesPlaceholderForKeylessLocalEndpoint(t *testing.T) {
 	dir := t.TempDir()
 	if err := preparePiState(dir, modelFileOptions{
 		baseURL: "http://model.internal:8000/v1", model: "ops-model",
-	}, ""); err != nil {
+	}, "", "visible"); err != nil {
 		t.Fatal(err)
 	}
 	payload, err := os.ReadFile(filepath.Join(dir, "models.json"))
@@ -79,6 +90,41 @@ func TestPreparePiStateUsesPlaceholderForKeylessLocalEndpoint(t *testing.T) {
 	if got := models.Providers["infernex"].APIKey; got != "infernex-local-no-auth" {
 		t.Fatalf("keyless endpoint credential=%q", got)
 	}
+	if got := models.Providers["infernex"].Models[0].MaxTokens; got != 8192 {
+		t.Fatalf("default Pi maxTokens=%d, want 8192", got)
+	}
+	settingsPayload, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(settingsPayload, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["hideThinkingBlock"] != false {
+		t.Fatalf("visible display settings=%#v", settings)
+	}
+}
+
+func TestPreparePiStatePreservesUnrelatedSettings(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("{\"theme\":\"light\",\"hideThinkingBlock\":false}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := preparePiState(dir, modelFileOptions{baseURL: "http://model.internal:8000/v1", model: "ops-model"}, "", "hidden"); err != nil {
+		t.Fatal(err)
+	}
+	payload, err := os.ReadFile(filepath.Join(dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(payload, &settings); err != nil {
+		t.Fatal(err)
+	}
+	if settings["theme"] != "light" || settings["hideThinkingBlock"] != true {
+		t.Fatalf("settings=%#v", settings)
+	}
 }
 
 func TestPiOpenAIBaseURLMatchesAgentEndpointRules(t *testing.T) {
@@ -91,5 +137,17 @@ func TestPiOpenAIBaseURLMatchesAgentEndpointRules(t *testing.T) {
 		if got := piOpenAIBaseURL(input); got != want {
 			t.Errorf("piOpenAIBaseURL(%q)=%q want %q", input, got, want)
 		}
+	}
+}
+
+func TestNormalizeReasoningDisplay(t *testing.T) {
+	if got, err := normalizeReasoningDisplay(""); err != nil || got != "hidden" {
+		t.Fatalf("default=%q err=%v", got, err)
+	}
+	if got, err := normalizeReasoningDisplay(" Visible "); err != nil || got != "visible" {
+		t.Fatalf("visible=%q err=%v", got, err)
+	}
+	if _, err := normalizeReasoningDisplay("full-chain"); err == nil {
+		t.Fatal("invalid reasoning display accepted")
 	}
 }

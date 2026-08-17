@@ -323,6 +323,12 @@ remember, and forget MCP tools. It accepts only operator-authored,
 user-confirmed, or tool-verified records and isolates cluster-scoped memory by
 a hash of the Kubernetes API server identity.
 
+Pi reasoning blocks are hidden by default without disabling model reasoning or
+tool-call parsing. Use `configure-model.sh --reasoning-display visible`, pass
+`infernex-agent tui --reasoning-display visible`, or press `Ctrl+T` in the TUI
+to display them. Classic chat emits final `message.content`, not provider
+`reasoning_content`.
+
 On a TTY, chat uses a readline editor with cursor movement, Backspace/Delete,
 word/line deletion, in-process history, command completion, and safe Ctrl+C/
 Ctrl+D behavior. `/undo` removes the latest user turn and its assistant/tool

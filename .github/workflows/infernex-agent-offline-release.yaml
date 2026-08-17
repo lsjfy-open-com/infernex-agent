@@ -181,7 +181,8 @@ jobs:
           --openai-base-url=http://127.0.0.1:8000/v1
           --openai-model=infernex-local-test
           --context-window-tokens=32768
-          --max-output-tokens=4096
+          --max-output-tokens=8192
+          --reasoning-display=hidden
           EOF
             "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" tui \
               --config "${RUNNER_TEMP}/pi-model-check/agent.conf" \
@@ -243,7 +244,7 @@ jobs:
           INCLUDE_PI_TUI: ${{ inputs.include_pi_tui }}
         run: |
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
-            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, cross-session semantic memory, an 8192-token default output limit, reasoning blocks hidden by default with an operator-controlled display mode, context/token display, controlled InferNex MCP tools, local approval for write-capable tools, and SHA-256 artifact paging for large logs. Upgrades from the exact alpha.5 default 32768/4096 context tuple migrate the output limit to 8192 while preserving other operator values. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
           else
             release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
           fi

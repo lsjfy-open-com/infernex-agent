@@ -31,6 +31,7 @@ Options:
   --openai-timeout DURATION        Per-attempt model timeout (default: 3m)
   --context-window-tokens N        Model context window (default: 32768)
   --max-output-tokens N            Output reservation and per-call maximum
+  --reasoning-display MODE         TUI reasoning blocks: hidden (default) or visible
   --context-compaction-threshold P Compact at this usage percent (default: 80)
   --context-keep-recent-turns N    Recent user turns kept verbatim (default: 4)
   --tool-result-max-tokens N       Approximate cap for one tool result
@@ -73,11 +74,13 @@ max_output_tokens=""
 context_compaction_threshold="80"
 context_keep_recent_turns="4"
 tool_result_max_tokens=""
+reasoning_display="hidden"
 context_window_set="false"
 max_output_set="false"
 context_threshold_set="false"
 keep_recent_set="false"
 tool_result_max_set="false"
+reasoning_display_set="false"
 enable_log_diagnostics="false"
 max_diagnostics_per_scan="10"
 enable_experiments="false"
@@ -164,6 +167,12 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--max-output-tokens requires a value"
       max_output_tokens="$2"
       max_output_set="true"
+      shift 2
+      ;;
+    --reasoning-display)
+      [[ $# -ge 2 ]] || bundle_die "--reasoning-display requires a value"
+      reasoning_display="$2"
+      reasoning_display_set="true"
       shift 2
       ;;
     --context-compaction-threshold)
@@ -505,6 +514,12 @@ installed_pi="${installed_pi_runtime}/pi"
 installed_pi_extension="${install_root}/pi/infernex.ts"
 installed_pi_license="${install_root}/pi/LICENSE.pi.txt"
 installed_cli="/usr/local/bin/infernex-agent"
+installed_version=""
+if [[ -x "$installed_binary" ]]; then
+  installed_version="$(
+    "$installed_binary" version 2>/dev/null | awk 'NR == 1 { print $3 }' || true
+  )"
+fi
 [[ ! -e "$installed_pi_runtime" || ( -d "$installed_pi_runtime" && ! -L "$installed_pi_runtime" ) ]] ||
   bundle_die "refusing unsafe Pi runtime path: ${installed_pi_runtime}"
 
@@ -818,12 +833,28 @@ if [[ "$preserve_model_config" == "true" ]]; then
           tool_result_max_tokens="${argument#*=}"
         fi
         ;;
+      --reasoning-display=*)
+        [[ "$reasoning_display_set" == "true" ]] || reasoning_display="${argument#*=}"
+        ;;
     esac
   done <"$agent_config"
   [[ "$preserved_base_url" == "$preserved_model" ]] ||
     bundle_die "${agent_config} contains incomplete model configuration"
   [[ "$preserved_api_key" != "true" || -f "$installed_api_key" ]] ||
     bundle_die "${agent_config} references a missing OpenAI API key"
+fi
+
+# alpha.5 wrote 4096 as its implicit default. Upgrade only that exact known
+# default tuple; all explicit or otherwise customized operator values remain
+# untouched. Later releases can use the installed version to make equally
+# narrow migrations without guessing user intent.
+if [[ "$installed_version" == "0.5.0-alpha.5" &&
+  "$context_window_set" == "false" &&
+  "$max_output_set" == "false" &&
+  "$context_window_tokens" == "32768" &&
+  "$max_output_tokens" == "4096" ]]; then
+  bundle_info "migrating alpha.5 default max output tokens from 4096 to 8192"
+  max_output_tokens="8192"
 fi
 
 [[ "$context_window_tokens" =~ ^[0-9]+$ ]] ||
@@ -852,12 +883,15 @@ done
   bundle_die "tool result token limit must be at least 128 and smaller than the context window"
 ((max_output_tokens < context_window_tokens * context_compaction_threshold / 100)) ||
   bundle_die "max output tokens must be smaller than the compaction threshold budget"
+[[ "$reasoning_display" == "hidden" || "$reasoning_display" == "visible" ]] ||
+  bundle_die "reasoning display must be hidden or visible"
 agent_args+=(
   "--context-window-tokens=${context_window_tokens}"
   "--max-output-tokens=${max_output_tokens}"
   "--context-compaction-threshold=${context_compaction_threshold}"
   "--context-keep-recent-turns=${context_keep_recent_turns}"
   "--tool-result-max-tokens=${tool_result_max_tokens}"
+  "--reasoning-display=${reasoning_display}"
 )
 if [[ "$enable_deployment" == "true" ]]; then
   scan_namespaces_csv="$(IFS=,; printf '%s' "${scan_namespaces[*]}")"

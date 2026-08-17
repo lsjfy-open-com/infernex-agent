@@ -17,19 +17,21 @@ import (
 )
 
 const (
-	defaultPiBinary    = "/opt/infernex-agent/pi-runtime/pi"
-	defaultPiExtension = "/opt/infernex-agent/pi/infernex.ts"
-	defaultPiStateDir  = "/var/lib/infernex-agent/pi"
+	defaultPiBinary         = "/opt/infernex-agent/pi-runtime/pi"
+	defaultPiExtension      = "/opt/infernex-agent/pi/infernex.ts"
+	defaultPiStateDir       = "/var/lib/infernex-agent/pi"
+	defaultReasoningDisplay = "hidden"
 )
 
 type tuiOptions struct {
-	configPath string
-	mcpURL     string
-	piBinary   string
-	extension  string
-	stateDir   string
-	checkOnly  bool
-	piArgs     []string
+	configPath       string
+	mcpURL           string
+	piBinary         string
+	extension        string
+	stateDir         string
+	checkOnly        bool
+	reasoningDisplay string
+	piArgs           []string
 }
 
 type piModelsFile struct {
@@ -72,7 +74,7 @@ func runTUI(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := preparePiState(opts.stateDir, modelOpts, apiKey); err != nil {
+	if err := preparePiState(opts.stateDir, modelOpts, apiKey, opts.reasoningDisplay); err != nil {
 		return err
 	}
 	workspaceDir := filepath.Join(opts.stateDir, "workspace")
@@ -151,6 +153,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	flags.StringVar(&opts.extension, "extension", defaultPiExtension, "InferNex Pi extension")
 	flags.StringVar(&opts.stateDir, "state-dir", defaultPiStateDir, "Pi configuration and session directory")
 	flags.BoolVar(&opts.checkOnly, "check", false, "validate the migrated InferNex model configuration without opening the TUI")
+	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "", "reasoning block display: hidden (default) or visible")
 	if err := flags.Parse(args); err != nil {
 		return tuiOptions{}, modelFileOptions{}, "", err
 	}
@@ -161,6 +164,13 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	}
 	if strings.TrimSpace(modelOpts.baseURL) == "" || strings.TrimSpace(modelOpts.model) == "" {
 		return tuiOptions{}, modelFileOptions{}, "", fmt.Errorf("interactive model is not configured; run configure-model.sh first")
+	}
+	if opts.reasoningDisplay == "" {
+		opts.reasoningDisplay = modelOpts.reasoningDisplay
+	}
+	opts.reasoningDisplay, err = normalizeReasoningDisplay(opts.reasoningDisplay)
+	if err != nil {
+		return tuiOptions{}, modelFileOptions{}, "", err
 	}
 	if _, err := os.Stat(opts.piBinary); err != nil {
 		return tuiOptions{}, modelFileOptions{}, "", fmt.Errorf("Pi binary is unavailable at %s: %w", opts.piBinary, err)
@@ -175,7 +185,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	return opts, modelOpts, apiKey, nil
 }
 
-func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) error {
+func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey, reasoningDisplay string) error {
 	if err := os.MkdirAll(filepath.Join(stateDir, "sessions"), 0o700); err != nil {
 		return fmt.Errorf("create Pi state directory: %w", err)
 	}
@@ -185,13 +195,17 @@ func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) 
 	if err := os.MkdirAll(filepath.Join(stateDir, "workspace"), 0o700); err != nil {
 		return fmt.Errorf("create Pi workspace directory: %w", err)
 	}
+	reasoningDisplay, err := normalizeReasoningDisplay(reasoningDisplay)
+	if err != nil {
+		return err
+	}
 	contextWindow := modelOpts.contextWindowTokens
 	if contextWindow <= 0 {
 		contextWindow = 32768
 	}
 	maxTokens := modelOpts.maxOutputTokens
 	if maxTokens <= 0 {
-		maxTokens = 4096
+		maxTokens = 8192
 	}
 	piAPIKey := "$INFERNEX_PI_API_KEY"
 	if strings.TrimSpace(apiKey) == "" {
@@ -243,6 +257,57 @@ func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey string) 
 	}
 	if err := os.Rename(temporaryPath, filepath.Join(stateDir, "models.json")); err != nil {
 		return fmt.Errorf("activate Pi model configuration: %w", err)
+	}
+	return writePiDisplaySettings(stateDir, reasoningDisplay)
+}
+
+func normalizeReasoningDisplay(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return defaultReasoningDisplay, nil
+	}
+	if value != "hidden" && value != "visible" {
+		return "", fmt.Errorf("reasoning display must be hidden or visible")
+	}
+	return value, nil
+}
+
+func writePiDisplaySettings(stateDir, reasoningDisplay string) error {
+	path := filepath.Join(stateDir, "settings.json")
+	settings := map[string]any{}
+	payload, err := os.ReadFile(path)
+	if err == nil {
+		if err := json.Unmarshal(payload, &settings); err != nil {
+			return fmt.Errorf("decode existing Pi settings: %w", err)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("read existing Pi settings: %w", err)
+	}
+	settings["hideThinkingBlock"] = reasoningDisplay == "hidden"
+	encoded, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode Pi settings: %w", err)
+	}
+	encoded = append(encoded, '\n')
+	temporary, err := os.CreateTemp(stateDir, ".settings.json.*")
+	if err != nil {
+		return fmt.Errorf("create temporary Pi settings: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(encoded); err != nil {
+		_ = temporary.Close()
+		return fmt.Errorf("write Pi settings: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close Pi settings: %w", err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("activate Pi settings: %w", err)
 	}
 	return nil
 }
