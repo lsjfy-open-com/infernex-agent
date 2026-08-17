@@ -88,3 +88,4 @@ DaemonSet/Job；业务 Pod 仍不注入 sidecar。
 - 停止任务不删除 Evidence；
 - 不 patch 业务工作负载、不注入 sidecar、不在容器内写文件。
 - root helper 不接受任意命令、脚本、路径、镜像、环境变量、网络目标或凭据。
+- root helper 最多同时执行 2 个固定探针；超出预算立即拒绝，不无限堆积 root 子进程。

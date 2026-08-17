@@ -27,6 +27,8 @@ var rootHelperProbes = map[string]bool{
 	"hccn-pfc-stats": true, "hccl-root-info": true, "hccl-test-layout": true,
 }
 
+var rootHelperSlots = make(chan struct{}, 2)
+
 type rootHelperRequest struct {
 	Probe    string `json:"probe"`
 	DeviceID int    `json:"deviceId"`
@@ -100,6 +102,13 @@ func ServeRootHelper(ctx context.Context, socketPath, groupName string) error {
 
 func handleRootHelperConnection(ctx context.Context, connection net.Conn) {
 	defer connection.Close()
+	select {
+	case rootHelperSlots <- struct{}{}:
+		defer func() { <-rootHelperSlots }()
+	default:
+		_ = json.NewEncoder(connection).Encode(rootHelperResponse{Error: "root collector concurrency budget is exhausted"})
+		return
+	}
 	_ = connection.SetDeadline(time.Now().Add(45 * time.Second))
 	decoder := json.NewDecoder(io.LimitReader(connection, maxRootHelperRequestBytes))
 	decoder.DisallowUnknownFields()
