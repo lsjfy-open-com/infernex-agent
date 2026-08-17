@@ -57,6 +57,22 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 修改配置、重启、安装和删除仍需各自的 typed write tool 与 Policy。宿主机历史文件继续通过 Evidence Root
 读取，不通过命令执行旁路访问。
 
+### 故障诊断 Subagent 专用端点
+
+`diagnose` 及以上模式可在独立 listener 发布 `infernex-agent-diagnostic-delegate` MCP。该端点使用独立
+bearer token、安装发现 namespace allow-list 和并发预算，不是主 `/mcp` 的别名。
+
+| 能力 | 当前契约 |
+| --- | --- |
+| `infernex_get_diagnostic_delegate_contract` | 返回 schema、namespace、执行通道、action class、Evidence 协议、默认 burst 和明确排除能力 |
+| Kubernetes/Bridge 观察 | 发布环境、overview、workload、Event、Pod logs 和专项拓扑；不发布 `k8s_read_resources` |
+| 主动诊断 | 复用固定 probe、PlogCapture 和 CollectorRun；默认 15 分钟/256 MiB，硬上限 60 分钟/2 GiB |
+| Evidence/Skill/report | 可渐进读取证据和知识并写 Agent 自有 Markdown 报告 |
+| 明确不发布 | deploy、configuration mutation、recover、experiment、semantic-memory write、任意 shell |
+
+它服务于模型部署失败和性能回归诊断。诊断结论返回主部署 Agent 后，修改、下一阶段实验和回退仍走
+主 Agent Policy。接口与联调规则见[故障诊断 Subagent 开发指南](diagnostic-subagent-development-guide-zh.md)。
+
 ### InferNex Bridge、服务拓扑和专项诊断
 
 | MCP tool | 面向组件 | 作用 | 发布条件 |

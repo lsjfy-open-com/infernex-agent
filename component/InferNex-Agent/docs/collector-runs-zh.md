@@ -1,5 +1,10 @@
 # 节点与容器持续诊断 CollectorRun
 
+CollectorRun 是可选的持续/周期采集能力，不是安装后的默认采集策略。部署 Agent 和故障诊断
+Subagent 应优先在部署失败、性能回归或非计划 Pod replacement 时启动短时 burst；诊断 Subagent
+端点的默认窗口为 15 分钟、256 MiB，硬上限为 60 分钟、2 GiB。更长任务只能由主 Agent/操作者在
+明确集群需求和容量预算后创建。
+
 `CollectorRun` 用于把 PFC、HCCN、NPU、CANN 和 HCCL 前置检查从“人工逐节点执行并搬运日志”改为
 Agent 管理的可恢复任务。它在 `diagnose` 及以上模式可用，按 namespace 和 label selector 自动重新
 发现 Running Pod；Pod 重建后使用新的 Pod UID 记录后续样本，旧样本仍保留在管理节点。

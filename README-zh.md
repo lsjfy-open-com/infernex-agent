@@ -19,6 +19,8 @@
 
 InferNex Agent 是运行在 master、引导节点或独立管理节点上的 AI Agent，不是要求用户手工拼接 Kubernetes 参数的工具。它自动发现既有 InferNex 环境，用户只配置 Agent 背后的 OpenAI 兼容模型接口，然后直接通过自然语言完成扫描、诊断、基于稳定配置的部署、观察和失败回退。
 
+项目主线是将新模型和逐步增加的加速特性部署成经过 warmup、评测和 soak 的稳定推理服务。vLLM-Ascend/NPU 专项故障 Subagent 通过受限 MCP 参与部署失败与性能回归分析，不拥有部署控制面；接口见 [故障诊断 Subagent 开发指南](component/InferNex-Agent/docs/diagnostic-subagent-development-guide-zh.md)。
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
 sudo infernex-agent chat

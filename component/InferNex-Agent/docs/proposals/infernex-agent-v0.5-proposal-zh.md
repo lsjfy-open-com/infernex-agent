@@ -6,6 +6,11 @@
 
 提案目标：把当前可安装候选版推进为可持续迭代的 AI 运维 Agent，而不是继续堆叠孤立命令。
 
+产品主线是部署：把模型从“能够拉起”推进到经过 warmup、serving-path、EvalScope、性能对照和 soak
+验证的稳定高 TPS、低 TTFT 推理服务。vLLM-Ascend 与 NPU 故障诊断当前投入较大，是因为它是新模型
+部署和加速特性迭代的主要阻塞点；接入专项诊断 Subagent 后，主 Agent仍拥有部署目标、实验和回退
+事务，诊断 Subagent只提供证据化结论，项目不会转型为独立日志诊断平台。
+
 ## 提请审议的核心结论
 
 本提案不是申请在 InferNex 旁边再放一个“会执行 kubectl 的聊天机器人”。OpenCode、Claude Code、
@@ -101,6 +106,21 @@ InferNex/openFuyao API 工作。它不要求在业务集群增加 Agent Pod，�
 模型负责意图理解、规划、工具选择和解释；确定性代码负责权限、数据采集、脱敏、预算、审批、
 快照、回退和审计。
 
+### 2.1 专项 Subagent 是部署闭环中的可替换角色
+
+vLLM-Ascend/NPU 故障团队通过独立受限 MCP 接入。主 Agent在部署、单特性实验、warmup、eval 或 soak
+失败时创建诊断委派；Subagent在 namespace、时间、容量和并发预算内读取跨 Node/Pod/container 证据、
+调用固定探针和领域 Skill，并返回报告。它不获得 deploy/change/recover/experiment、任意 shell 或
+kubeconfig。详细需求、架构和接口分别见
+[故障诊断 Subagent 接入需求](../diagnostic-subagent-requirements-zh.md)、
+[架构设计](../diagnostic-subagent-architecture-zh.md)和
+[开发联调指南](../diagnostic-subagent-development-guide-zh.md)。
+
+默认采集策略是事件触发的短时 burst，而不是安装后持续全量抓日志。计划 rollout 只收集验收必需
+证据；非计划 Pod replacement、异常重启和性能回归才触发 plog/底层 profile。持续 CollectorRun 是
+显式 opt-in。旧 Pod 已删除后未外置的 plog 无法恢复，因此事件观察必须尽早在异常或 terminating
+阶段留证，并优先复用既有 hostPath/Loki/日志平台。
+
 ## 3. 核心设计原则
 
 ### 3.1 读宽写严
@@ -149,6 +169,10 @@ flowchart LR
     Tools --> Evidence["Evidence Store: log + hash + reports"]
     Pi --> Session["Pi Session + compaction + usage"]
     Policy --> Safety["Snapshot / change record / rollback"]
+    Pi --> Handoff["Diagnostic handoff"]
+    Handoff --> Subagent["vLLM-Ascend / NPU Subagent"]
+    Subagent --> Restricted["Token-scoped diagnostic MCP"]
+    Restricted --> Policy
 ```
 
 架构按职责而不是按界面分层：

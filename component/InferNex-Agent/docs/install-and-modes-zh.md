@@ -74,6 +74,9 @@ namespace 后需要重新执行安装器以扩充 allowlist。
 ```text
 --admin-kubeconfig FILE       指定发现用 kubeconfig
 --dashboard-listen-address A  Dashboard 地址，默认 127.0.0.1:8081
+--diagnostic-subagent-listen-address A 受限诊断 MCP，默认 127.0.0.1:18082
+--diagnostic-subagent-max-concurrency N 委派并发，默认 4
+--disable-diagnostic-subagent 关闭诊断 Subagent 接口
 --skip-model-setup            暂不配置模型接口
 --non-interactive             CI/自动化安装
 --execution-mode MODE         detect/diagnose/modify/install/recover；默认 diagnose
@@ -90,6 +93,11 @@ SSH 参数不接受 IP、用户名或密钥；这些只存在于 OpenSSH config 
 一键安装在 `diagnose` 及以上默认启动独立的 `infernex-agent-collector.service`。它以 root 运行但不
 连接模型，只接受固定 NPU/CANN/HCCN/HCCL-preflight profile；主 Agent 仍是非 root。可用
 `systemctl status infernex-agent-collector` 检查，或用 `--no-root-collector` 禁用。
+
+当发现至少一个业务 namespace 时，`diagnose` 及以上还会默认启用本机受限诊断 Subagent MCP：
+`127.0.0.1:18082/mcp`。独立 bearer token 位于
+`/etc/infernex-agent/diagnostic-subagent-token`，不与主 Agent 模型 API key 共用；完整对接方式见
+[故障诊断 Subagent 开发与联调指南](diagnostic-subagent-development-guide-zh.md)。
 
 `create-kubeconfig.sh`、`install-host.sh` 等底层脚本仅用于审计、CI、恢复或精细定制，
 普通用户无需逐项填写其中参数。

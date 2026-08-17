@@ -349,6 +349,8 @@ tools. See the [Chinese local evidence guide](docs/local-evidence-and-reports-zh
 
 Durable CollectorRuns can automatically expand a Pod label selector, sample fixed PFC/HCCN/NPU/CANN/HCCL-preflight profiles, and retain JSONL evidence without asking operators to copy per-node command output. See the [Chinese CollectorRun guide](docs/collector-runs-zh.md).
 
+The deployment Agent can delegate vLLM-Ascend/NPU fault analysis to an independently developed specialist through a separate bearer-protected, namespace-scoped MCP endpoint. That endpoint exposes observation, bounded active-read, Evidence, Skill, and report tools but no deployment, configuration mutation, recovery, experiment, memory-write, arbitrary-resource, or shell capability. Collection defaults to a short event-triggered burst rather than continuous logging. See the Chinese [requirements](docs/diagnostic-subagent-requirements-zh.md), [architecture](docs/diagnostic-subagent-architecture-zh.md), and [integration guide](docs/diagnostic-subagent-development-guide-zh.md).
+
 Pi reasoning blocks are hidden by default without disabling model reasoning or
 tool-call parsing. Use `configure-model.sh --reasoning-display visible`, pass
 `infernex-agent tui --reasoning-display visible`, or press `Ctrl+T` in the TUI

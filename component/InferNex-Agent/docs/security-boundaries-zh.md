@@ -83,6 +83,7 @@ namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便
 | --- | --- | --- | --- |
 | 8080 MCP | `127.0.0.1` | 否 | 通常只供本机 Runtime |
 | 8081 Dashboard/API | `127.0.0.1` | 否 | 远程开放需 ACL/防火墙/认证代理 |
+| 18082 Diagnostic Subagent MCP | `127.0.0.1` | bearer token | namespace-scoped 诊断工具；跨主机仍需 mTLS、SSH tunnel 或认证代理 |
 | Kubernetes API | 出站 | Kubernetes 身份 | 仅到批准 apiserver |
 | 模型 API | 可选出站 | 可选 Bearer Key | 仅到批准模型端点 |
 
@@ -95,6 +96,7 @@ namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便
 
 - kubeconfig：`/etc/infernex-agent/kubeconfig`，`0600`；
 - 模型密钥：`/etc/infernex-agent/openai-api-key`，`0600`；
+- 诊断 Subagent token：`/etc/infernex-agent/diagnostic-subagent-token`，`0640`，只供本机受限 MCP；
 - 非敏感参数：`/etc/infernex-agent/agent.conf`，`0640`；
 - systemd unit 和进程参数只出现凭据文件路径；
 - 模型配置查看命令不打印密钥；
