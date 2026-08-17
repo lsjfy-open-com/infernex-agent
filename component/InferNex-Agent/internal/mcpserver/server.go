@@ -313,7 +313,7 @@ type skillListOutput struct {
 }
 
 type activeDiagnosticInput struct {
-	Channel   string `json:"channel" jsonschema:"Execution channel: local, pod, or ssh"`
+	Channel   string `json:"channel" jsonschema:"Execution channel: local, pod, ssh, or host-root when configured"`
 	Probe     string `json:"probe" jsonschema:"Fixed probe: system-summary, filesystem-usage, network-links, npu-inventory, cann-version, or hccn-device"`
 	Namespace string `json:"namespace,omitempty" jsonschema:"Required for pod channel; Kubernetes namespace"`
 	Pod       string `json:"pod,omitempty" jsonschema:"Required for pod channel; exact Pod name returned by discovery"`
@@ -633,7 +633,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "List fixed active-read probes, supported execution channels, and operator-approved SSH aliases available in the current execution mode.",
 			Annotations: readOnly("List active diagnostic probes"),
 		}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, activeDiagnosticCatalog, error) {
-			return nil, activeDiagnosticCatalog{ActionClass: "active-read", Channels: []string{"local", "pod", "ssh"}, Probes: options.diagnosticExec.Probes(), SSHTargets: options.diagnosticExec.SSHTargets()}, nil
+			return nil, activeDiagnosticCatalog{ActionClass: "active-read", Channels: options.diagnosticExec.Channels(), Probes: options.diagnosticExec.Probes(), SSHTargets: options.diagnosticExec.SSHTargets()}, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "infernex_run_diagnostic_probe",

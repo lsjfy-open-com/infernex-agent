@@ -45,7 +45,7 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 | MCP tool | 动作等级 | 通道与边界 | 发布条件 |
 | --- | --- | --- | --- |
 | `infernex_list_diagnostic_probes` | passive-read | 列出固定 probe、local/pod/ssh channel 和运维预配置 SSH alias | execution mode 不是 `detect` |
-| `infernex_run_diagnostic_probe` | active-read | 固定 system/磁盘/网络/NPU/CANN/HCCN/PFC/HCCL-preflight 探针；Pod exec 需精确 Pod/container；SSH 只接受 alias allow-list | `diagnose`/`modify`/`install`/`recover` |
+| `infernex_run_diagnostic_probe` | active-read | 固定 system/磁盘/网络/NPU/CANN/HCCN/PFC/HCCL-preflight 探针；支持 local、Pod exec、SSH alias 和已配置 `host-root` helper | `diagnose`/`modify`/`install`/`recover` |
 | `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 持续增量读取固定 CANN plog 根目录；需要时限、容量和本地批准 | execution mode 不是 `detect` |
 | `infernex_list_plog_captures` / `infernex_get_plog_capture` | passive-read | 只返回任务、Pod UID segment 数、进度和 Evidence 路径，不把原始 plog 塞入上下文 | execution mode 不是 `detect` |
 | `infernex_stop_plog_capture` | diagnose-local-write | 停止采集但不删除已保留证据；需要批准 | execution mode 不是 `detect` |
@@ -121,7 +121,7 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | `infernex/evaluation` | EvalScope single/multi-turn、基线比较、报告 | EvalScope | 数据集许可、并发和 token 预算 |
 | `infernex/runtime` | vLLM/vLLM-Ascend、Mooncake、PD timeline/metrics | metrics、日志、管理接口 | 版本 capability discovery，不根据模型名猜 |
 | `infernex/plog-capture` 扩展 | hostPath/Loki adapter、segment hash finalize/report、retention cleanup | 已实现的只读 Pod exec capture 与 Evidence Store | 清理单独批准；优先复用既有日志平台 |
-| `infernex/node-collector` 扩展 | PFC counter delta/parser、节点 SSH、root helper、官方 checker、短命 DaemonSet/Job | 已实现 Pod selector CollectorRun、固定 profile、持久状态和 Evidence | profile hash 固定；自动发现目标；只写 Evidence；时限/容量/频率预算；停止需批准 |
+| `infernex/node-collector` 扩展 | PFC counter delta/parser、节点 SSH、官方 checker、短命 DaemonSet/Job | 已实现 Pod selector CollectorRun、隔离 root helper、固定 profile、持久状态和 Evidence | profile hash 固定；自动发现目标；只写 Evidence；时限/容量/频率预算；停止需批准 |
 | `infernex/hccl-benchmark` | preflight/plan/start/status/stop/report | 官方 HCCL Test、现有 CANN/toolkit、维护窗口 | 不与普通 active-read 混用；设备/节点/数据量/并发预算和明确批准；在线实例冲突时拒绝 |
 
 ## 工具选择原则

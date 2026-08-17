@@ -60,8 +60,13 @@ kubectl --kubeconfig /etc/infernex-agent/kubeconfig \
 ```
 
 若容器没有 `hccn_tool` 或未映射驱动设备，当前样本会记录失败原因，不会要求用户手工搬运输出。
-下一通道是 root-only Collector Helper 和经批准的短命节点 DaemonSet/Job：模型服务仍保持非 root，
-只有固定 profile 在隔离执行面获得所需权限。
+默认一键安装还会启动 `infernex-agent-collector.service`：它是独立 root 进程，只监听
+`/run/infernex-agent/collector.sock`，不连接模型、不读取会话、不持有 Kubernetes 客户端，只接受固定
+profile 和 device ID。主 Agent 可通过 `host-root` 通道在安装节点运行 root-only 探针；不希望安装该
+helper 时使用 `sudo ./install.sh --no-root-collector`。
+
+对于安装节点以外、又没有可用业务 Pod 工具的计算节点，下一通道是经批准的短命节点
+DaemonSet/Job；业务 Pod 仍不注入 sidecar。
 
 ## 预算和边界
 
@@ -73,4 +78,4 @@ kubectl --kubeconfig /etc/infernex-agent/kubeconfig \
 - Agent 重启后恢复仍在 deadline 内的任务；
 - 停止任务不删除 Evidence；
 - 不 patch 业务工作负载、不注入 sidecar、不在容器内写文件。
-
+- root helper 不接受任意命令、脚本、路径、镜像、环境变量、网络目标或凭据。

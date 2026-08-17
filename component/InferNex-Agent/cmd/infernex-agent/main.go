@@ -98,6 +98,7 @@ type options struct {
 	executionMode                string
 	sshConfig                    string
 	sshTargets                   string
+	rootCollectorSocket          string
 	enableAutoRecovery           bool
 	recoveryTemplateNS           string
 	recoveryMinScans             int
@@ -142,6 +143,8 @@ func run() error {
 			return runInstallDiagnose(os.Args[2:])
 		case "skills":
 			return runSkills(os.Args[2:])
+		case "collector-helper":
+			return runCollectorHelper(os.Args[2:])
 		}
 	}
 	return runServer(os.Args[1:])
@@ -227,6 +230,7 @@ func parseServerOptions(args []string) (options, error) {
 	flags.StringVar(&opts.executionMode, "execution-mode", "detect", "Policy ceiling: detect, diagnose, modify, install, or recover")
 	flags.StringVar(&opts.sshConfig, "diagnostic-ssh-config", "", "OpenSSH config containing operator-managed aliases and credentials for diagnostic probes")
 	flags.StringVar(&opts.sshTargets, "diagnostic-ssh-targets", "", "Comma-separated OpenSSH aliases allowed for fixed diagnostic probes")
+	flags.StringVar(&opts.rootCollectorSocket, "root-collector-socket", "", "Unix socket for the isolated fixed-profile root collector helper")
 	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
@@ -433,7 +437,11 @@ func serveAgent(opts options) error {
 	}
 	serverOptions = append(serverOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
 	if strings.ToLower(strings.TrimSpace(opts.executionMode)) != "detect" {
-		diagnosticRunner, err := diagnosticexec.New(clientset, restConfig, opts.sshConfig, parsePathList(opts.sshTargets))
+		diagnosticOptions := []diagnosticexec.RunnerOption{}
+		if strings.TrimSpace(opts.rootCollectorSocket) != "" {
+			diagnosticOptions = append(diagnosticOptions, diagnosticexec.WithRootHelper(opts.rootCollectorSocket))
+		}
+		diagnosticRunner, err := diagnosticexec.New(clientset, restConfig, opts.sshConfig, parsePathList(opts.sshTargets), diagnosticOptions...)
 		if err != nil {
 			return fmt.Errorf("configure active diagnostic execution: %w", err)
 		}

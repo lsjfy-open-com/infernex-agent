@@ -39,6 +39,7 @@ Advanced recovery/automation options:
   --skip-model-setup            Install first; configure the model later
   --evidence-root DIR           Allow read-only historical log analysis (repeatable)
   --execution-mode MODE         detect, diagnose (default), modify, install, or recover
+  --no-root-collector           Disable the isolated fixed-profile root helper
   --diagnostic-ssh-config FILE  OpenSSH config for operator-managed node aliases
   --diagnostic-ssh-target ALIAS Allow fixed probes on one SSH alias (repeatable)
   --non-interactive             Do not read from the terminal
@@ -58,6 +59,7 @@ workspace_namespace="infernex-agent-workspace"
 execution_mode=""
 pass_execution_mode="false"
 diagnostic_ssh_config=""
+enable_root_collector="true"
 declare -a evidence_roots=()
 declare -a diagnostic_ssh_targets=()
 
@@ -102,6 +104,10 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-target requires a value"
       diagnostic_ssh_targets+=("$2")
       shift 2
+      ;;
+    --no-root-collector)
+      enable_root_collector="false"
+      shift
       ;;
     --hardened-identity)
       hardened_identity="true"
@@ -376,6 +382,9 @@ install_args=(
 )
 if [[ "$pass_execution_mode" == "true" ]]; then
   install_args+=(--execution-mode "$effective_execution_mode")
+fi
+if [[ "$enable_root_collector" == "true" && "$effective_execution_mode" != "detect" ]]; then
+  install_args+=(--enable-root-collector)
 fi
 for evidence_root in "${evidence_roots[@]}"; do
   install_args+=(--evidence-root "$evidence_root")

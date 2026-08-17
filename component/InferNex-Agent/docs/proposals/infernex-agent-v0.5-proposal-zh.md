@@ -263,8 +263,8 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
   再选择现有业务 Pod exec、管理节点、预授权 SSH 或经批准的短命 DaemonSet/Job 通道；原始输出直接写入
   Evidence Store，记录 profile hash、目标 UID、开始/结束时间、退出码和采集预算。业务容器不写入、不
   注入 sidecar，Pod 重建前后的证据按 UID 分段关联；当前已完成 Pod selector、固定 profile、周期/时限/
-  容量预算、重启恢复、start/list/get/stop 和 JSONL Evidence 纵向切片，节点 root helper 与短命
-  DaemonSet/Job 是下一通道；
+  容量预算、重启恢复、start/list/get/stop 和 JSONL Evidence 纵向切片；安装节点的隔离 root helper
+  已实现，其他节点的短命 DaemonSet/Job 是下一通道；
 - **诊断读取与压力测试分级**：`hccn_tool -stat -g` 的 PFC counter 快照属于 active-read，可周期采样并
   计算 delta；HCCL Test、带流量互 ping、profiling 等会占用 NPU/网络，属于 benchmark。Agent 可以自动
   编排它们，但必须检查在线实例冲突，展示节点/设备/流量/时限计划并取得批准，不能用“采集脚本”名义

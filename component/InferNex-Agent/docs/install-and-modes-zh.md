@@ -77,6 +77,7 @@ namespace 后需要重新执行安装器以扩充 allowlist。
 --skip-model-setup            暂不配置模型接口
 --non-interactive             CI/自动化安装
 --execution-mode MODE         detect/diagnose/modify/install/recover；默认 diagnose
+--no-root-collector           不安装固定 Profile 的隔离 root helper
 --evidence-root DIR           允许读取一个宿主机历史证据目录，可重复
 --diagnostic-ssh-config FILE  运维人员维护的 OpenSSH config
 --diagnostic-ssh-target ALIAS 允许固定探针访问的 SSH alias，可重复
@@ -85,6 +86,10 @@ namespace 后需要重新执行安装器以扩充 allowlist。
 SSH 参数不接受 IP、用户名或密钥；这些只存在于 OpenSSH config 中并需由 `infernex-agent` 服务用户读取。
 未配置 SSH 时不影响本机和 Pod 探针。`modify/install/recover` 当前只是权限上限，尚未完成的写工具不会
 因为选择高模式而凭空出现。
+
+一键安装在 `diagnose` 及以上默认启动独立的 `infernex-agent-collector.service`。它以 root 运行但不
+连接模型，只接受固定 NPU/CANN/HCCN/HCCL-preflight profile；主 Agent 仍是非 root。可用
+`systemctl status infernex-agent-collector` 检查，或用 `--no-root-collector` 禁用。
 
 `create-kubeconfig.sh`、`install-host.sh` 等底层脚本仅用于审计、CI、恢复或精细定制，
 普通用户无需逐项填写其中参数。

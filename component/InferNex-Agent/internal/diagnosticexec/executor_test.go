@@ -1,6 +1,8 @@
 package diagnosticexec
 
 import (
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,6 +19,22 @@ func TestProbeCommandsRejectsArbitraryProbeAndDevice(t *testing.T) {
 	}
 	if _, err := probeCommands("hccn-pfc-stats", -1); err == nil {
 		t.Fatal("negative PFC device was accepted")
+	}
+}
+
+func TestRootHelperChannelIsOptIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket path validation is Linux-specific")
+	}
+	runner, err := New(fake.NewSimpleClientset(), &rest.Config{Host: "https://example.invalid"}, "", nil, WithRootHelper("/run/infernex-agent/collector.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(runner.Channels(), "host-root") {
+		t.Fatalf("channels=%v", runner.Channels())
+	}
+	if _, err := New(fake.NewSimpleClientset(), &rest.Config{Host: "https://example.invalid"}, "", nil, WithRootHelper("/tmp/arbitrary.sock")); err == nil {
+		t.Fatal("unsafe root helper socket was accepted")
 	}
 }
 

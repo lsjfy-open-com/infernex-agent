@@ -62,8 +62,8 @@ if [[ "$purge_user" == "true" && "$purge_state" != "true" ]]; then
   bundle_die "--purge-user requires --purge-state so retained files do not have an orphaned owner"
 fi
 
-systemctl disable --now infernex-agent.service >/dev/null 2>&1 || true
-rm -f -- /etc/systemd/system/infernex-agent.service
+systemctl disable --now infernex-agent.service infernex-agent-collector.service >/dev/null 2>&1 || true
+rm -f -- /etc/systemd/system/infernex-agent.service /etc/systemd/system/infernex-agent-collector.service
 systemctl daemon-reload
 if [[ -f /usr/local/bin/infernex-agent ]] &&
   grep -q '^# Managed by InferNex Agent host installer\.$' \

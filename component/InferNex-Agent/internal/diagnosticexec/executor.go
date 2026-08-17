@@ -66,10 +66,19 @@ type Runner struct {
 	restConfig    *rest.Config
 	sshConfigPath string
 	sshTargets    []string
+	rootSocket    string
 	timeout       time.Duration
 }
 
-func New(client kubernetes.Interface, config *rest.Config, sshConfigPath string, sshTargets []string) (*Runner, error) {
+type RunnerOption func(*Runner)
+
+// WithRootHelper enables the isolated root-only host collector channel. The
+// socket server still accepts only compiled-in profiles and device ids.
+func WithRootHelper(socketPath string) RunnerOption {
+	return func(runner *Runner) { runner.rootSocket = strings.TrimSpace(socketPath) }
+}
+
+func New(client kubernetes.Interface, config *rest.Config, sshConfigPath string, sshTargets []string, options ...RunnerOption) (*Runner, error) {
 	if client == nil || config == nil {
 		return nil, fmt.Errorf("Kubernetes client and REST config are required")
 	}
@@ -86,7 +95,14 @@ func New(client kubernetes.Interface, config *rest.Config, sshConfigPath string,
 			cleanTargets = append(cleanTargets, target)
 		}
 	}
-	return &Runner{client: client, restConfig: rest.CopyConfig(config), sshConfigPath: strings.TrimSpace(sshConfigPath), sshTargets: cleanTargets, timeout: defaultTimeout}, nil
+	runner := &Runner{client: client, restConfig: rest.CopyConfig(config), sshConfigPath: strings.TrimSpace(sshConfigPath), sshTargets: cleanTargets, timeout: defaultTimeout}
+	for _, option := range options {
+		option(runner)
+	}
+	if runner.rootSocket != "" && !validRootHelperSocket(runner.rootSocket) {
+		return nil, fmt.Errorf("root collector socket must be an absolute .sock path below /run/infernex-agent")
+	}
+	return runner, nil
 }
 
 func (r *Runner) Probes() []string {
@@ -97,6 +113,14 @@ func (r *Runner) Probes() []string {
 }
 
 func (r *Runner) SSHTargets() []string { return append([]string(nil), r.sshTargets...) }
+
+func (r *Runner) Channels() []string {
+	channels := []string{"local", "pod", "ssh"}
+	if r.rootSocket != "" {
+		channels = append(channels, "host-root")
+	}
+	return channels
+}
 
 func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 	channel := strings.ToLower(strings.TrimSpace(request.Channel))
@@ -113,6 +137,9 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 			return Result{}, fmt.Errorf("SSH target %q is not in the operator allow-list", request.SSHTarget)
 		}
 	}
+	if channel == "host-root" && r.rootSocket == "" {
+		return Result{}, fmt.Errorf("root host diagnostics are not configured")
+	}
 	var last Result
 	var lastErr error
 	for _, command := range commands {
@@ -123,8 +150,10 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 			last, lastErr = r.runPod(ctx, probe, request, command)
 		case "ssh":
 			last, lastErr = r.runSSH(ctx, probe, request.SSHTarget, command)
+		case "host-root":
+			last, lastErr = callRootHelper(ctx, r.rootSocket, probe, request.DeviceID)
 		default:
-			return Result{}, fmt.Errorf("channel must be one of local, pod, or ssh")
+			return Result{}, fmt.Errorf("channel must be one of local, pod, ssh, or host-root")
 		}
 		if lastErr == nil {
 			return last, nil

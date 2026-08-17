@@ -50,6 +50,7 @@ PFC 计数以及 HCCL root-info/测试工具布局预检）：
 | --- | --- | --- | --- |
 | Pod exec | 已发现的 namespace/Pod/container，受 kubeconfig RBAC | 固定只读诊断探针 | shell 字符串、写文件、kill/restart、包安装 |
 | 宿主机探针 | Agent 所在管理节点 | 固定程序和固定参数 | 模型提供命令、路径或环境变量读取 |
+| root helper | 仅安装节点；受保护 Unix socket | root 身份执行固定 NPU/CANN/HCCN/HCCL-preflight profile | 模型进程成为 root、任意 shell/脚本/路径/参数、远程地址 |
 | SSH 探针 | 运维人员预先写入 OpenSSH config 的 alias allow-list | 在该 alias 上运行相同固定探针 | 模型提供 IP、用户名、密钥、跳板参数或命令 |
 | 宿主机文件 | 运维人员登记的 Evidence Root | glob、grep、有界行读取 | 越界路径、符号链接逃逸、特殊文件和改写源文件 |
 
@@ -60,6 +61,11 @@ state。PFC 计数快照只读取完整 `hccn_tool -stat -g` 输出，不在目�
 
 高负载互 ping、带流量的 serving/eval 和长时间采集还需要独立预算及启动/停止批准。写配置、
 重启、扩缩容、部署和删除始终属于更高动作等级，不能因为已有 exec/SSH 通道而越权。
+
+一键安装在非 `detect` 模式默认启用 `infernex-agent-collector.service`。主 Agent 继续以
+`infernex-agent` 用户运行；helper 是没有模型、MCP、HTTP、Kubernetes 客户端和通用文件接口的独立
+root 进程，只监听 group `infernex-agent` 可访问的 `/run/infernex-agent/collector.sock`。禁用方法为
+`sudo ./install.sh --no-root-collector`。安装器由 root 启动本身不意味着长期服务继承 root。
 
 通用日志工具要求当前身份已有目标命名空间 `get pods/log`，且调用者必须给出明确 Pod；
 它限制容器数、时间窗、尾部行数和字节数并做常见凭据脱敏。Bridge 专属诊断还通过

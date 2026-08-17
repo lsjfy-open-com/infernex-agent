@@ -33,6 +33,7 @@ Options:
   --max-output-tokens N            Output reservation and per-call maximum
   --reasoning-display MODE         TUI reasoning blocks: hidden (default) or visible
   --execution-mode MODE            detect, diagnose, modify, install, or recover
+  --enable-root-collector          Install isolated fixed-profile root helper
   --diagnostic-ssh-config FILE     OpenSSH config readable by the service user
   --diagnostic-ssh-target ALIAS    Allowed SSH alias for fixed probes (repeatable)
   --context-compaction-threshold P Compact at this usage percent (default: 80)
@@ -82,6 +83,7 @@ tool_result_max_tokens=""
 reasoning_display="hidden"
 execution_mode="detect"
 execution_mode_set="false"
+enable_root_collector="false"
 diagnostic_ssh_config=""
 diagnostic_ssh_config_set="false"
 declare -a diagnostic_ssh_targets=()
@@ -195,6 +197,10 @@ while (($#)); do
       execution_mode="$2"
       execution_mode_set="true"
       shift 2
+      ;;
+    --enable-root-collector)
+      enable_root_collector="true"
+      shift
       ;;
     --diagnostic-ssh-config)
       [[ $# -ge 2 ]] || bundle_die "--diagnostic-ssh-config requires a value"
@@ -545,6 +551,7 @@ install_root="/opt/infernex-agent"
 config_root="/etc/infernex-agent"
 state_root="/var/lib/infernex-agent"
 unit_path="/etc/systemd/system/infernex-agent.service"
+collector_unit_path="/etc/systemd/system/infernex-agent-collector.service"
 installed_binary="${install_root}/bin/infernex-agent"
 runner_path="${install_root}/bin/run-agent.sh"
 installed_kubeconfig="${config_root}/kubeconfig"
@@ -627,6 +634,7 @@ host_backup_targets=(
   "$installed_restorer"
   "$installed_bundle_lib"
   "$unit_path"
+  "$collector_unit_path"
   "$installed_chat"
   "$installed_cli"
   "$installed_tui"
@@ -1037,6 +1045,9 @@ agent_args+=(
   "--reasoning-display=${reasoning_display}"
   "--execution-mode=${execution_mode}"
 )
+if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
+  agent_args+=("--root-collector-socket=/run/infernex-agent/collector.sock")
+fi
 if ((${#diagnostic_ssh_targets[@]} > 0)); then
   diagnostic_ssh_targets_csv="$(IFS=,; printf '%s' "${diagnostic_ssh_targets[*]}")"
   agent_args+=(
@@ -1113,6 +1124,55 @@ chmod 0640 "$temporary_config"
 chown root:"$service_group" "$temporary_config"
 mv -f -- "$temporary_config" "$agent_config"
 
+collector_unit_dependency=""
+if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
+  temporary_collector_unit="$(mktemp /etc/systemd/system/.infernex-agent-collector.service.XXXXXX)"
+  cat >"$temporary_collector_unit" <<EOF
+[Unit]
+Description=InferNex fixed-profile root collector helper
+Documentation=https://github.com/lsjfy-open-com/infernex-agent
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=${installed_binary} collector-helper --socket /run/infernex-agent/collector.sock --group ${service_group}
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=15s
+UMask=0077
+RuntimeDirectory=infernex-agent
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=/run/infernex-agent
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  chmod 0644 "$temporary_collector_unit"
+  chown root:root "$temporary_collector_unit"
+  mv -f -- "$temporary_collector_unit" "$collector_unit_path"
+  collector_unit_dependency=$'Wants=infernex-agent-collector.service\nAfter=infernex-agent-collector.service'
+else
+  systemctl disable --now infernex-agent-collector.service >/dev/null 2>&1 || true
+  rm -f -- "$collector_unit_path"
+fi
+
 temporary_unit="$(mktemp /etc/systemd/system/.infernex-agent.service.XXXXXX)"
 cat >"$temporary_unit" <<EOF
 [Unit]
@@ -1120,6 +1180,7 @@ Description=InferNex management-plane Agent
 Documentation=https://github.com/lsjfy-open-com/infernex-agent
 Wants=network-online.target
 After=network-online.target
+${collector_unit_dependency}
 
 [Service]
 Type=simple
@@ -1161,7 +1222,7 @@ chown root:root "$temporary_unit"
 mv -f -- "$temporary_unit" "$unit_path"
 
 if command -v restorecon >/dev/null 2>&1; then
-  restorecon -RF "$install_root" "$config_root" "$state_root" "$unit_path" || true
+  restorecon -RF "$install_root" "$config_root" "$state_root" "$unit_path" "$collector_unit_path" || true
 fi
 
 if [[ "$interactive_model_setup" == "true" ]]; then
@@ -1206,6 +1267,17 @@ offer_ai_install_diagnosis() {
 }
 
 if [[ "$start_service" == "true" ]]; then
+  if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
+    bundle_info "enabling and starting isolated root collector helper"
+    systemctl enable infernex-agent-collector.service >/dev/null
+    systemctl restart infernex-agent-collector.service
+    for _ in $(seq 1 20); do
+      [[ -S /run/infernex-agent/collector.sock ]] && break
+      sleep 0.1
+    done
+    [[ -S /run/infernex-agent/collector.sock ]] ||
+      bundle_die "root collector helper did not create its protected socket"
+  fi
   bundle_info "enabling and starting infernex-agent.service"
   if ! systemctl enable infernex-agent.service; then
     bundle_die "failed to enable infernex-agent.service"
@@ -1234,7 +1306,7 @@ if [[ "$start_service" == "true" ]]; then
     bundle_die "infernex-agent.service did not become ready"
   fi
 else
-  bundle_info "files installed; run systemctl enable --now infernex-agent.service when ready"
+  bundle_info "files installed; enable the collector helper (when configured) and infernex-agent.service when ready"
 fi
 
 installation_committed="true"
@@ -1243,6 +1315,9 @@ bundle_info "host installation completed"
 bundle_info "pre-install recovery point: ${install_backup_root}"
 bundle_info "dashboard listener: ${dashboard_listen_address}"
 bundle_info "MCP listener: ${listen_address}"
+if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
+  bundle_info "root collector: isolated fixed-profile helper enabled"
+fi
 if [[ -n "$openai_base_url" || "$preserve_model_config" == "true" ]]; then
   bundle_info "model configuration: ${agent_config}"
 else
