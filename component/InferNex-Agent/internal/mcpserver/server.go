@@ -22,6 +22,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
@@ -67,6 +68,14 @@ the exact namespace, label selector, container filter, duration, and byte budget
 approval. Capture follows Pod UID changes, reads only fixed CANN plog roots, and writes segmented
 evidence under the Agent-owned Evidence Store. It does not patch workloads, inject a sidecar, or
 write into a container. Use list/get to show progress and stop when enough evidence has been kept.`
+
+const collectorRunInstructions = `
+Durable diagnostic CollectorRuns are enabled in diagnose-or-higher mode. They automatically expand
+a namespace and label selector into current Running Pod/container targets, execute only a compiled-in
+profile at a bounded interval, and append raw samples to the Agent-owned Evidence Store. Starting or
+stopping a run requires local approval. A CollectorRun cannot accept shell, scripts, paths, images, or
+environment variables and does not patch the workload. Use it for PFC/HCCN/NPU/CANN observations;
+HCCL load tests are not active-read collectors and require a future benchmark policy.`
 
 const deploymentInstructions = `
 Conversational deployment is explicitly enabled. First call
@@ -355,6 +364,23 @@ type plogTaskListOutput struct {
 	Tasks []plogTaskOutput `json:"tasks"`
 }
 
+type collectorStartInput struct {
+	Profile         string `json:"profile" jsonschema:"Fixed profile: hccn-pfc-stats, hccn-device, npu-inventory, cann-version, hccl-root-info, or hccl-test-layout"`
+	Namespace       string `json:"namespace" jsonschema:"Namespace containing target Pods"`
+	LabelSelector   string `json:"labelSelector" jsonschema:"Non-empty Kubernetes label selector expanded on every sample"`
+	Container       string `json:"container,omitempty" jsonschema:"Optional exact container name; empty tries regular containers in matching Pods"`
+	DeviceIDs       []int  `json:"deviceIds,omitempty" jsonschema:"Required by HCCN/PFC profiles; unique NPU device indexes 0-63"`
+	IntervalSeconds int    `json:"intervalSeconds,omitempty" jsonschema:"Sampling interval; defaults to 60 seconds, range 10-3600"`
+	DurationMinutes int    `json:"durationMinutes,omitempty" jsonschema:"Run duration; defaults to 60 minutes, maximum 10080"`
+	MaxBytes        int64  `json:"maxBytes,omitempty" jsonschema:"Maximum evidence bytes; defaults to 1 GiB, range 1 MiB to 100 GiB"`
+	Confirm         bool   `json:"confirm" jsonschema:"Must be true after approving profile, targets, interval, duration, and storage budget"`
+}
+
+type collectorTaskInput struct {
+	TaskID  string `json:"taskId" jsonschema:"Opaque CollectorRun task id"`
+	Confirm bool   `json:"confirm,omitempty" jsonschema:"Required when stopping a CollectorRun"`
+}
+
 type allServicesOutput struct {
 	Namespaces []observer.ServiceList `json:"namespaces"`
 }
@@ -376,6 +402,7 @@ type serverOptions struct {
 	skills         *skills.Registry
 	diagnosticExec *diagnosticexec.Runner
 	plogCapture    *plogcapture.Manager
+	collectorRuns  *collectorrun.Manager
 }
 
 func WithSkills(registry *skills.Registry) Option {
@@ -390,6 +417,10 @@ func WithDiagnosticExec(runner *diagnosticexec.Runner) Option {
 
 func WithPlogCapture(manager *plogcapture.Manager) Option {
 	return func(options *serverOptions) { options.plogCapture = manager }
+}
+
+func WithCollectorRuns(manager *collectorrun.Manager) Option {
+	return func(options *serverOptions) { options.collectorRuns = manager }
 }
 
 func WithLocalFiles(workspace *localfiles.Workspace) Option {
@@ -486,6 +517,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}
 	if options.plogCapture != nil {
 		serverInstructions += plogCaptureInstructions
+	}
+	if options.collectorRuns != nil {
+		serverInstructions += collectorRunInstructions
 	}
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "infernex-agent", Version: version},
@@ -635,6 +669,28 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_stop_plog_capture", Description: "Stop an approved CANN plog capture task without deleting retained evidence.", Annotations: localMutation("Stop CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogTaskInput) (*mcp.CallToolResult, plogTaskOutput, error) {
 			task, err := options.plogCapture.Stop(input.TaskID, input.Confirm)
 			return nil, toPlogTaskOutput(task), err
+		})
+	}
+
+	if options.collectorRuns != nil {
+		localMutation := func(title string) *mcp.ToolAnnotations {
+			destructive, openWorld := false, false
+			return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld}
+		}
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_collector_run", Description: "Start an approved durable fixed-profile collector against Pods automatically expanded from a namespace and label selector. Samples are written only to Agent-owned Evidence Store files.", Annotations: localMutation("Start diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorStartInput) (*mcp.CallToolResult, collectorrun.Task, error) {
+			output, err := options.collectorRuns.Create(collectorrun.StartRequest{Profile: input.Profile, Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, DeviceIDs: input.DeviceIDs, IntervalSeconds: input.IntervalSeconds, DurationMinutes: input.DurationMinutes, MaxBytes: input.MaxBytes, Confirm: input.Confirm})
+			return nil, output, err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_collector_runs", Description: "List durable diagnostic CollectorRuns without loading raw samples into model context.", Annotations: readOnly("List diagnostic CollectorRuns")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, collectorrun.TaskList, error) {
+			return nil, options.collectorRuns.List(), nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_get_collector_run", Description: "Get one CollectorRun status, target count, sample count, limits, evidence location, and last error.", Annotations: readOnly("Get diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorTaskInput) (*mcp.CallToolResult, collectorrun.Task, error) {
+			output, err := options.collectorRuns.Get(input.TaskID)
+			return nil, output, err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_stop_collector_run", Description: "Stop an approved CollectorRun without deleting retained evidence.", Annotations: localMutation("Stop diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorTaskInput) (*mcp.CallToolResult, collectorrun.Task, error) {
+			output, err := options.collectorRuns.Stop(input.TaskID, input.Confirm)
+			return nil, output, err
 		})
 	}
 

@@ -49,6 +49,9 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 | `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 持续增量读取固定 CANN plog 根目录；需要时限、容量和本地批准 | execution mode 不是 `detect` |
 | `infernex_list_plog_captures` / `infernex_get_plog_capture` | passive-read | 只返回任务、Pod UID segment 数、进度和 Evidence 路径，不把原始 plog 塞入上下文 | execution mode 不是 `detect` |
 | `infernex_stop_plog_capture` | diagnose-local-write | 停止采集但不删除已保留证据；需要批准 | execution mode 不是 `detect` |
+| `infernex_start_collector_run` | diagnose-local-write | selector 自动展开 Pod/container，周期运行固定 PFC/HCCN/NPU/CANN/HCCL-preflight profile，结果直接落 Evidence；需要批准 | execution mode 不是 `detect` |
+| `infernex_list_collector_runs` / `infernex_get_collector_run` | passive-read | 返回状态、目标数、样本数、预算、Evidence 路径和错误，不加载原始 JSONL | execution mode 不是 `detect` |
+| `infernex_stop_collector_run` | diagnose-local-write | 停止持续采集但保留全部样本；需要批准 | execution mode 不是 `detect` |
 
 主动读取不等于写授权。工具 schema 不接受 shell、任意命令、任意路径、IP、用户名、密钥或环境读取；
 修改配置、重启、安装和删除仍需各自的 typed write tool 与 Policy。宿主机历史文件继续通过 Evidence Root
@@ -118,7 +121,7 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | `infernex/evaluation` | EvalScope single/multi-turn、基线比较、报告 | EvalScope | 数据集许可、并发和 token 预算 |
 | `infernex/runtime` | vLLM/vLLM-Ascend、Mooncake、PD timeline/metrics | metrics、日志、管理接口 | 版本 capability discovery，不根据模型名猜 |
 | `infernex/plog-capture` 扩展 | hostPath/Loki adapter、segment hash finalize/report、retention cleanup | 已实现的只读 Pod exec capture 与 Evidence Store | 清理单独批准；优先复用既有日志平台 |
-| `infernex/node-collector` | apply/list/get/stop collector run；PFC counter delta、HCCN/NPU/CANN 快照、官方 checker 输出 | Pod exec、节点 SSH、可选短命 DaemonSet/Job | profile hash 固定；自动发现目标；只写 Evidence；时限/容量/频率预算；停止需批准 |
+| `infernex/node-collector` 扩展 | PFC counter delta/parser、节点 SSH、root helper、官方 checker、短命 DaemonSet/Job | 已实现 Pod selector CollectorRun、固定 profile、持久状态和 Evidence | profile hash 固定；自动发现目标；只写 Evidence；时限/容量/频率预算；停止需批准 |
 | `infernex/hccl-benchmark` | preflight/plan/start/status/stop/report | 官方 HCCL Test、现有 CANN/toolkit、维护窗口 | 不与普通 active-read 混用；设备/节点/数据量/并发预算和明确批准；在线实例冲突时拒绝 |
 
 ## 工具选择原则

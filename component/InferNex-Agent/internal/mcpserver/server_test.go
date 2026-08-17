@@ -26,7 +26,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
@@ -43,6 +45,16 @@ type stubDeployer struct{}
 type stubDiagnoser struct{}
 
 type stubExperiments struct{}
+
+type stubCollectorSource struct{}
+
+func (stubCollectorSource) ListTargets(context.Context, string, string, string) ([]collectorrun.Target, error) {
+	return nil, nil
+}
+
+func (stubCollectorSource) Collect(context.Context, collectorrun.Target, string, int) (diagnosticexec.Result, error) {
+	return diagnosticexec.Result{}, nil
+}
 
 type stubKubernetes struct{}
 
@@ -585,6 +597,46 @@ func TestServerPublishesDurableSemanticMemoryWithWriteAnnotations(t *testing.T) 
 	var result semanticmemory.SearchResult
 	if err := json.Unmarshal(payload, &result); err != nil || len(result.Records) != 1 {
 		t.Fatalf("semantic memory search=%#v err=%v", result, err)
+	}
+}
+
+func TestServerPublishesCollectorRunsWithApprovalAnnotations(t *testing.T) {
+	manager, err := collectorrun.NewManager(stubCollectorSource{}, filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithCollectorRuns(manager))
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_start_collector_run", "infernex_list_collector_runs", "infernex_get_collector_run", "infernex_stop_collector_run"} {
+		if tools[name] == nil {
+			t.Fatalf("collector tool missing: %s", name)
+		}
+	}
+	if tools["infernex_start_collector_run"].Annotations.ReadOnlyHint || tools["infernex_stop_collector_run"].Annotations.ReadOnlyHint {
+		t.Fatal("collector lifecycle tools must require local approval")
+	}
+	if !tools["infernex_list_collector_runs"].Annotations.ReadOnlyHint || !tools["infernex_get_collector_run"].Annotations.ReadOnlyHint {
+		t.Fatal("collector query tools must be read-only")
 	}
 }
 

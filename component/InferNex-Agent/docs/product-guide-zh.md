@@ -101,6 +101,8 @@ sudo ./install.sh
 
 对于重启后无法重新采集的人工保存日志，先用 `configure-evidence.sh --add-root /绝对/日志目录` 登记只读根目录。Agent 可以 glob、grep、过滤海量 metrics/health 探针噪声、分页读取并创建带源文件 hash 的 Markdown 报告；不会获得全盘文件访问。完整用法见[本地历史日志分析与 Markdown 报告](local-evidence-and-reports-zh.md)。
 
+对于仍在运行的业务 Pod，`CollectorRun` 可以按 namespace + label selector 自动展开当前 Pod/container，周期采集 PFC、HCCN、NPU、CANN 和 HCCL 前置检查，并把样本直接写入 Evidence Store。完整用法见[节点与容器持续诊断 CollectorRun](collector-runs-zh.md)。
+
 针对昇腾推理故障，离线包内置 CANN Runtime 和 HiXL/LLM DataDist 两个诊断 Skill，能够按症状渐进读取 plog、异步错误、HCCL、LocalCommRes、HCCS/RoCE/UB、建链和 KV 传输知识。运维人员也可以安装只包含 Markdown 的内部 Skill；详见[CANN/HiXL 诊断 Skill 与用户扩展](skills-and-cann-hixl-zh.md)。Skill 不增加 shell、文件或集群权限，所有结论仍须由当前环境证据验证。
 
 TUI 默认折叠 reasoning block，但不会关闭模型推理或影响 tool parser。可用 `configure-model.sh --reasoning-display visible` 持久显示，或在 TUI 中按 `Ctrl+T` 临时切换。

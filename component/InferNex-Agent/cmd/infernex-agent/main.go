@@ -41,6 +41,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/analyzer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
@@ -447,6 +448,20 @@ func serveAgent(opts options) error {
 		}
 		plogManager.StartBackground(ctx)
 		serverOptions = append(serverOptions, mcpserver.WithPlogCapture(plogManager))
+		collectorSource, err := collectorrun.NewKubernetesSource(clientset, diagnosticRunner)
+		if err != nil {
+			return fmt.Errorf("configure diagnostic collector source: %w", err)
+		}
+		collectorManager, err := collectorrun.NewManager(
+			collectorSource,
+			filepath.Join(opts.stateDir, "collector-runs"),
+			filepath.Join(defaultEvidenceRoot, "collectors"),
+		)
+		if err != nil {
+			return fmt.Errorf("configure diagnostic CollectorRuns: %w", err)
+		}
+		collectorManager.StartBackground(ctx)
+		serverOptions = append(serverOptions, mcpserver.WithCollectorRuns(collectorManager))
 	}
 
 	var changeStore changesafety.Store

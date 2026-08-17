@@ -89,6 +89,8 @@ MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是�
 
 用户自行保存、重启后无法重新采集的日志可登记为本地历史证据。Agent 提供受控的 glob、grep、分页读取和 Markdown 报告工具，默认过滤正常的 `/metrics`、`/health*`、`/readyz`、`/livez` 噪声并报告过滤计数；不会开放整个宿主机文件系统。详见[本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)。
 
+PFC、HCCN、NPU、CANN 和 HCCL 前置检查可由持久 `CollectorRun` 自动按 label selector 展开 Pod/container，周期执行固定 Profile，并把 JSONL 样本直接保存到 Agent Evidence Store，不需要运维人员逐节点执行和搬运文件。详见[节点与容器持续诊断 CollectorRun](docs/collector-runs-zh.md)。
+
 `diagnose` 模式还可经用户批准启动外部 `PlogCapture`：按 workload label selector 监听 Pod，通过只读
 exec 增量采集固定 CANN plog 目录，按 Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 采集任务有持续时间和最大字节上限，停止任务不会删除证据，也不会 patch 或注入业务 Pod。
@@ -144,6 +146,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [上下文预算与自动压缩](docs/context-management-zh.md)
 - [本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)
 - [CANN plog 外部持续采集](docs/plog-capture-zh.md)
+- [节点与容器持续诊断 CollectorRun](docs/collector-runs-zh.md)
 - [CANN/HiXL 诊断 Skill 与用户扩展](docs/skills-and-cann-hixl-zh.md)
 - [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
