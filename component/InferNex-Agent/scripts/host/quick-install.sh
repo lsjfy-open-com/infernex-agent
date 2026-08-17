@@ -55,7 +55,8 @@ hardened_identity="false"
 force_generic_kubernetes="false"
 skip_checksums="false"
 workspace_namespace="infernex-agent-workspace"
-execution_mode="diagnose"
+execution_mode=""
+pass_execution_mode="false"
 diagnostic_ssh_config=""
 declare -a evidence_roots=()
 declare -a diagnostic_ssh_targets=()
@@ -134,6 +135,23 @@ bundle_require_command mktemp
 bundle_require_command readlink
 bundle_require_command awk
 bundle_require_command grep
+bundle_require_command tail
+
+if [[ -n "$execution_mode" ]]; then
+  effective_execution_mode="$execution_mode"
+  pass_execution_mode="true"
+elif [[ -f /etc/infernex-agent/agent.conf ]] &&
+  grep -Eq '^--execution-mode=' /etc/infernex-agent/agent.conf; then
+  effective_execution_mode="$(grep -E '^--execution-mode=' /etc/infernex-agent/agent.conf | tail -n 1)"
+  effective_execution_mode="${effective_execution_mode#*=}"
+else
+  effective_execution_mode="diagnose"
+  pass_execution_mode="true"
+fi
+case "$effective_execution_mode" in
+  detect | diagnose | modify | install | recover) ;;
+  *) bundle_die "execution mode must be detect, diagnose, modify, install, or recover" ;;
+esac
 
 address_port() {
   printf '%s' "${1##*:}"
@@ -329,7 +347,7 @@ if [[ "$platform_mode" == "bridge" && "$hardened_identity" == "true" ]]; then
     --deployment-template-namespace "$template_namespace"
     --enable-log-diagnostics
   )
-  if [[ "$execution_mode" != "detect" ]]; then
+  if [[ "$effective_execution_mode" != "detect" ]]; then
     create_args+=(--enable-pod-exec)
   fi
   for namespace in "${discovered_namespaces[@]}"; do
@@ -355,8 +373,10 @@ install_args=(
   --bundle-dir "$bundle_root"
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
-  --execution-mode "$execution_mode"
 )
+if [[ "$pass_execution_mode" == "true" ]]; then
+  install_args+=(--execution-mode "$effective_execution_mode")
+fi
 for evidence_root in "${evidence_roots[@]}"; do
   install_args+=(--evidence-root "$evidence_root")
 done

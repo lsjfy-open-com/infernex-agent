@@ -89,6 +89,10 @@ MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是�
 
 用户自行保存、重启后无法重新采集的日志可登记为本地历史证据。Agent 提供受控的 glob、grep、分页读取和 Markdown 报告工具，默认过滤正常的 `/metrics`、`/health*`、`/readyz`、`/livez` 噪声并报告过滤计数；不会开放整个宿主机文件系统。详见[本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)。
 
+`diagnose` 模式还可经用户批准启动外部 `PlogCapture`：按 workload label selector 监听 Pod，通过只读
+exec 增量采集固定 CANN plog 目录，按 Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
+采集任务有持续时间和最大字节上限，停止任务不会删除证据，也不会 patch 或注入业务 Pod。
+
 `agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/pi-tui-zh.md)。
@@ -139,6 +143,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [v0.5 产品与工程提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 - [上下文预算与自动压缩](docs/context-management-zh.md)
 - [本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)
+- [CANN plog 外部持续采集](docs/plog-capture-zh.md)
 - [CANN/HiXL 诊断 Skill 与用户扩展](docs/skills-and-cann-hixl-zh.md)
 - [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)

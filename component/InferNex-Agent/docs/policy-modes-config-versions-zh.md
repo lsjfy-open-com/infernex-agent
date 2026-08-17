@@ -38,7 +38,7 @@ Policy 不使用“用了 SSH/exec，所以一定是写操作”这种粗粒度�
 
 ### CANN plog 外部持续采集
 
-plog 不能只在故障发生后临时读取，因为 Pod 重建会丢失容器内日志。默认方案是管理节点 Agent 创建
+plog 不能只在故障发生后临时读取，因为 Pod 重建会丢失容器内日志。当前纵向切片由管理节点 Agent 创建
 一个经批准的 `PlogCapture` 诊断任务，监听目标 Pod UID/容器变化，通过只读 exec 或已有日志接口增量
 抓取 plog，并写入自己的 Evidence Store：
 
@@ -49,7 +49,9 @@ cluster fingerprint / namespace / workload / pod UID / container / segment time 
 采集任务不 patch workload、不注入 sidecar、不向容器写文件；Pod UID 改变时关闭旧 segment、保留索引，
 并为新 Pod 开始新 segment。启动/停止任务、保留期、最大字节、最大并发需要用户批准和预算，因为它会
 持续写 Agent 自有存储。若现场已有 hostPath、Loki 或日志平台，优先通过适配器登记原始证据，避免重复
-采集。只有部署 DaemonSet/sidecar 的可选方案才进入 `install/modify` 模式并要求配置版本与回退。
+采集。当前实现已有 start/list/get/stop、Pod UID 分段、进程重启恢复、时限和最大字节门槛；现场仍需
+验证不同 CANN 镜像中的 plog 根路径以及 `find/stat/dd` 可用性。只有部署 DaemonSet/sidecar 的可选
+方案才进入 `install/modify` 模式并要求配置版本与回退。
 
 ## Policy Engine 判定什么
 

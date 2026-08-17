@@ -29,6 +29,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/plogcapture"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
 )
@@ -59,6 +60,13 @@ an explicit Pod/container, local execution runs on the management node, and SSH 
 preconfigured by the operator. This channel never accepts arbitrary shell, addresses, credentials,
 paths, environment reads, or command arguments. Probe execution is active-read evidence, not an
 authorization to modify configuration, restart processes, install packages, or delete resources.`
+
+const plogCaptureInstructions = `
+External CANN plog capture is enabled in diagnose-or-higher mode. Start a capture only after showing
+the exact namespace, label selector, container filter, duration, and byte budget and obtaining local
+approval. Capture follows Pod UID changes, reads only fixed CANN plog roots, and writes segmented
+evidence under the Agent-owned Evidence Store. It does not patch workloads, inject a sidecar, or
+write into a container. Use list/get to show progress and stop when enough evidence has been kept.`
 
 const deploymentInstructions = `
 Conversational deployment is explicitly enabled. First call
@@ -312,6 +320,41 @@ type activeDiagnosticCatalog struct {
 	SSHTargets  []string `json:"sshTargets,omitempty"`
 }
 
+type plogStartInput struct {
+	Namespace       string `json:"namespace" jsonschema:"Namespace containing the inference Pods"`
+	LabelSelector   string `json:"labelSelector" jsonschema:"Non-empty Kubernetes label selector identifying the workload Pods"`
+	Container       string `json:"container,omitempty" jsonschema:"Optional exact container name; empty captures matching regular containers"`
+	MaxBytes        int64  `json:"maxBytes,omitempty" jsonschema:"Maximum raw evidence bytes; defaults to 1 GiB, range 1 MiB to 100 GiB"`
+	DurationMinutes int    `json:"durationMinutes,omitempty" jsonschema:"Capture duration; defaults to 60 minutes, maximum 10080"`
+	Confirm         bool   `json:"confirm" jsonschema:"Must be true after approving target, duration, and storage budget"`
+}
+
+type plogTaskInput struct {
+	TaskID  string `json:"taskId" jsonschema:"Opaque capture task id"`
+	Confirm bool   `json:"confirm,omitempty" jsonschema:"Required when stopping a capture task"`
+}
+
+type plogTaskOutput struct {
+	ID            string     `json:"id"`
+	Namespace     string     `json:"namespace"`
+	LabelSelector string     `json:"labelSelector"`
+	Container     string     `json:"container,omitempty"`
+	Status        string     `json:"status"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	Deadline      time.Time  `json:"deadline"`
+	StoppedAt     *time.Time `json:"stoppedAt,omitempty"`
+	MaxBytes      int64      `json:"maxBytes"`
+	CapturedBytes int64      `json:"capturedBytes"`
+	Segments      int        `json:"segments"`
+	LastError     string     `json:"lastError,omitempty"`
+	EvidenceRoot  string     `json:"evidenceRoot"`
+}
+
+type plogTaskListOutput struct {
+	Tasks []plogTaskOutput `json:"tasks"`
+}
+
 type allServicesOutput struct {
 	Namespaces []observer.ServiceList `json:"namespaces"`
 }
@@ -332,6 +375,7 @@ type serverOptions struct {
 	localFiles     *localfiles.Workspace
 	skills         *skills.Registry
 	diagnosticExec *diagnosticexec.Runner
+	plogCapture    *plogcapture.Manager
 }
 
 func WithSkills(registry *skills.Registry) Option {
@@ -342,6 +386,10 @@ func WithSkills(registry *skills.Registry) Option {
 
 func WithDiagnosticExec(runner *diagnosticexec.Runner) Option {
 	return func(options *serverOptions) { options.diagnosticExec = runner }
+}
+
+func WithPlogCapture(manager *plogcapture.Manager) Option {
+	return func(options *serverOptions) { options.plogCapture = manager }
 }
 
 func WithLocalFiles(workspace *localfiles.Workspace) Option {
@@ -435,6 +483,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}
 	if options.diagnosticExec != nil {
 		serverInstructions += activeDiagnosticInstructions
+	}
+	if options.plogCapture != nil {
+		serverInstructions += plogCaptureInstructions
 	}
 	server := mcp.NewServer(
 		&mcp.Implementation{Name: "infernex-agent", Version: version},
@@ -557,6 +608,33 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input activeDiagnosticInput) (*mcp.CallToolResult, diagnosticexec.Result, error) {
 			output, err := options.diagnosticExec.Run(ctx, diagnosticexec.Request{Channel: input.Channel, Probe: input.Probe, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, SSHTarget: input.SSHTarget, DeviceID: input.DeviceID})
 			return nil, output, err
+		})
+	}
+
+	if options.plogCapture != nil {
+		localMutation := func(title string) *mcp.ToolAnnotations {
+			destructive, openWorld := false, false
+			return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld}
+		}
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_plog_capture", Description: "Start an approved external incremental CANN plog capture with explicit Pod selector, duration, and byte budget. Writes only Agent-owned Evidence Store files and does not mutate the workload.", Annotations: localMutation("Start external CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogStartInput) (*mcp.CallToolResult, plogTaskOutput, error) {
+			task, err := options.plogCapture.Create(plogcapture.StartRequest{Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, MaxBytes: input.MaxBytes, DurationMinutes: input.DurationMinutes, Confirm: input.Confirm})
+			return nil, toPlogTaskOutput(task), err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_plog_captures", Description: "List durable CANN plog capture tasks, progress, evidence location, limits, and errors.", Annotations: readOnly("List CANN plog captures")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, plogTaskListOutput, error) {
+			list := options.plogCapture.List()
+			output := plogTaskListOutput{Tasks: make([]plogTaskOutput, 0, len(list.Tasks))}
+			for _, task := range list.Tasks {
+				output.Tasks = append(output.Tasks, toPlogTaskOutput(task))
+			}
+			return nil, output, nil
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_get_plog_capture", Description: "Read one durable CANN plog capture task without loading raw plog into model context.", Annotations: readOnly("Get CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogTaskInput) (*mcp.CallToolResult, plogTaskOutput, error) {
+			task, err := options.plogCapture.Get(input.TaskID)
+			return nil, toPlogTaskOutput(task), err
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_stop_plog_capture", Description: "Stop an approved CANN plog capture task without deleting retained evidence.", Annotations: localMutation("Stop CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogTaskInput) (*mcp.CallToolResult, plogTaskOutput, error) {
+			task, err := options.plogCapture.Stop(input.TaskID, input.Confirm)
+			return nil, toPlogTaskOutput(task), err
 		})
 	}
 
@@ -924,4 +1002,14 @@ func StreamableHTTPHandler(server *mcp.Server) http.Handler {
 		func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true},
 	)
+}
+
+func toPlogTaskOutput(task plogcapture.Task) plogTaskOutput {
+	return plogTaskOutput{
+		ID: task.ID, Namespace: task.Namespace, LabelSelector: task.LabelSelector,
+		Container: task.Container, Status: task.Status, CreatedAt: task.CreatedAt,
+		UpdatedAt: task.UpdatedAt, Deadline: task.Deadline, StoppedAt: task.StoppedAt,
+		MaxBytes: task.MaxBytes, CapturedBytes: task.CapturedBytes, Segments: task.Segments,
+		LastError: task.LastError, EvidenceRoot: task.EvidenceRoot,
+	}
 }

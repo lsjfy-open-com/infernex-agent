@@ -51,6 +51,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/plogcapture"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	infernexskills "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
@@ -393,12 +394,12 @@ func serveAgent(opts options) error {
 	namespaces := parseNamespaces(opts.scanNamespaces)
 	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
 	evidenceRoots := parsePathList(opts.evidenceRoots)
-	if len(evidenceRoots) == 0 {
-		defaultEvidenceRoot := filepath.Join(opts.stateDir, "imports")
-		if err := os.MkdirAll(defaultEvidenceRoot, 0o700); err != nil {
-			return fmt.Errorf("create default evidence root: %w", err)
-		}
-		evidenceRoots = []string{defaultEvidenceRoot}
+	defaultEvidenceRoot := filepath.Join(opts.stateDir, "imports")
+	if err := os.MkdirAll(defaultEvidenceRoot, 0o700); err != nil {
+		return fmt.Errorf("create default evidence root: %w", err)
+	}
+	if !containsString(evidenceRoots, defaultEvidenceRoot) {
+		evidenceRoots = append([]string{defaultEvidenceRoot}, evidenceRoots...)
 	}
 	reportDirectory := strings.TrimSpace(opts.reportDirectory)
 	if reportDirectory == "" {
@@ -436,6 +437,16 @@ func serveAgent(opts options) error {
 			return fmt.Errorf("configure active diagnostic execution: %w", err)
 		}
 		serverOptions = append(serverOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+		plogSource, err := plogcapture.NewKubernetesSource(clientset, restConfig)
+		if err != nil {
+			return fmt.Errorf("configure CANN plog source: %w", err)
+		}
+		plogManager, err := plogcapture.NewManager(plogSource, filepath.Join(opts.stateDir, "plog-captures"), filepath.Join(defaultEvidenceRoot, "plog"))
+		if err != nil {
+			return fmt.Errorf("configure CANN plog capture: %w", err)
+		}
+		plogManager.StartBackground(ctx)
+		serverOptions = append(serverOptions, mcpserver.WithPlogCapture(plogManager))
 	}
 
 	var changeStore changesafety.Store
@@ -678,6 +689,15 @@ func validExecutionMode(value string) bool {
 	default:
 		return false
 	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func serveHTTP(

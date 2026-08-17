@@ -46,6 +46,9 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 | --- | --- | --- | --- |
 | `infernex_list_diagnostic_probes` | passive-read | 列出固定 probe、local/pod/ssh channel 和运维预配置 SSH alias | execution mode 不是 `detect` |
 | `infernex_run_diagnostic_probe` | active-read | 固定 system/磁盘/网络/NPU/CANN/HCCN 探针；Pod exec 需精确 Pod/container；SSH 只接受 alias allow-list | `diagnose`/`modify`/`install`/`recover` |
+| `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 持续增量读取固定 CANN plog 根目录；需要时限、容量和本地批准 | execution mode 不是 `detect` |
+| `infernex_list_plog_captures` / `infernex_get_plog_capture` | passive-read | 只返回任务、Pod UID segment 数、进度和 Evidence 路径，不把原始 plog 塞入上下文 | execution mode 不是 `detect` |
+| `infernex_stop_plog_capture` | diagnose-local-write | 停止采集但不删除已保留证据；需要批准 | execution mode 不是 `detect` |
 
 主动读取不等于写授权。工具 schema 不接受 shell、任意命令、任意路径、IP、用户名、密钥或环境读取；
 修改配置、重启、安装和删除仍需各自的 typed write tool 与 Policy。宿主机历史文件继续通过 Evidence Root
@@ -114,7 +117,7 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | `infernex/serving` | warmup、readiness、serving-path、OpenAI endpoint probe | Gateway、HTTPRoute、推理 endpoint | 请求预算、模型数据边界、结果留 Evidence |
 | `infernex/evaluation` | EvalScope single/multi-turn、基线比较、报告 | EvalScope | 数据集许可、并发和 token 预算 |
 | `infernex/runtime` | vLLM/vLLM-Ascend、Mooncake、PD timeline/metrics | metrics、日志、管理接口 | 版本 capability discovery，不根据模型名猜 |
-| `infernex/plog-capture` | start/list/stop plog capture、segment/report | 只读 Pod exec、hostPath 或既有日志平台 | diagnose 批准；按 Pod UID 分段、容量/保留期预算；不 patch 业务 Pod |
+| `infernex/plog-capture` 扩展 | hostPath/Loki adapter、segment hash finalize/report、retention cleanup | 已实现的只读 Pod exec capture 与 Evidence Store | 清理单独批准；优先复用既有日志平台 |
 
 ## 工具选择原则
 

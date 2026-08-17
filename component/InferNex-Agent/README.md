@@ -55,7 +55,7 @@ The model must support OpenAI-compatible function/tool calling. Read-only MCP
 tools run automatically; every mutating tool requires an exact local `yes`.
 One-shot `--ask` mode always denies writes.
 
-The default installation publishes eight read-only tools on any
+The base Kubernetes layer publishes eight passive read tools on any
 authorized Kubernetes/openFuyao cluster:
 
 - `openfuyao_detect_environment`
@@ -66,6 +66,19 @@ authorized Kubernetes/openFuyao cluster:
 - `helm_list_releases`
 - `k8s_discover_api_resources`
 - `k8s_read_resources`
+
+The one-command host installer selects the `diagnose` policy ceiling by
+default. It additionally publishes compiled-in active-read probes through the
+management host, an exact Pod/container exec target, or operator-configured
+OpenSSH aliases. No tool accepts arbitrary shell, paths, addresses,
+credentials, or environment reads. Use `sudo ./install.sh --execution-mode
+detect` to disable every active execution channel.
+
+Diagnose mode also provides approved external CANN plog capture tasks. They
+follow matching Pod UIDs, incrementally copy files only from fixed Ascend log
+roots into the Agent Evidence Store, and stop at a duration or byte budget.
+They do not patch the workload, inject a sidecar, write into the container, or
+delete evidence when stopped.
 
 Only when discovery confirms InferNex Bridge does the Agent publish five more
 Bridge-specific tools:

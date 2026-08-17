@@ -251,6 +251,7 @@ install -m 0644 \
   "${agent_dir}/docs/candidate-validation-zh.md" \
   "${agent_dir}/docs/install-and-modes-zh.md" \
   "${agent_dir}/docs/model-configuration-zh.md" \
+  "${agent_dir}/docs/plog-capture-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \
   "${agent_dir}/docs/operations-runbook-zh.md" \
   "${agent_dir}/docs/change-safety-zh.md" \

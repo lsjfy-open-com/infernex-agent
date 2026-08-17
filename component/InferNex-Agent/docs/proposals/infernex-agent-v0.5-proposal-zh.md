@@ -257,6 +257,7 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
   源日志只读，最终 Markdown 报告保存源路径、时间与 SHA-256，并通过批准后写入保护目录；
 - **短命容器的 plog 要在外部留证**：诊断模式可启动有保留期和容量预算的 `PlogCapture`，按 Pod UID
   增量收集到 Evidence Store；不 patch 业务服务、不注入 sidecar，Pod 重建后旧证据仍可参与时间线分析；
+  当前已完成 start/list/get/stop、重启恢复、时限/字节预算的纵向切片，A2 现场路径兼容和日志平台适配继续迭代；
 - **领域 Skill 渐进加载且不能提权**：CANN、HiXL、InferNex 组件经验以带来源和版本的 Skill/参考文件离线发布，先按描述选择、再按症状读取；用户可安装内部 Markdown Skill，但 Skill 不执行脚本、不新增工具、不绕过 Policy，实时事实仍由 typed MCP tool 获取；
 - **长任务必须有心跳**：工具调用、重试、压缩、等待、截断和失败原因对用户可见。展示事实与简要
   阶段说明，但不展示模型私有思维链；遇到歧义应主动询问，而不是耗尽工具轮次后返回一个 error；
