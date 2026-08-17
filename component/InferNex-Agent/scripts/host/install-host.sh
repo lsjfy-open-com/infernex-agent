@@ -664,9 +664,15 @@ done
 )
 service_was_active="false"
 service_was_enabled="false"
+collector_was_active="false"
+collector_was_enabled="false"
 systemctl is-active --quiet infernex-agent.service && service_was_active="true"
 systemctl is-enabled --quiet infernex-agent.service && service_was_enabled="true"
-printf 'active=%s\nenabled=%s\n' "$service_was_active" "$service_was_enabled" \
+systemctl is-active --quiet infernex-agent-collector.service && collector_was_active="true"
+systemctl is-enabled --quiet infernex-agent-collector.service && collector_was_enabled="true"
+printf 'active=%s\nenabled=%s\ncollector_active=%s\ncollector_enabled=%s\n' \
+  "$service_was_active" "$service_was_enabled" \
+  "$collector_was_active" "$collector_was_enabled" \
   >"${install_backup_root}/host/service-state"
 chmod 0600 "${install_backup_root}/host/service-state"
 : >"${install_backup_root}/host/checksums.sha256"
@@ -698,6 +704,7 @@ rollback_failed_install() {
   [[ "$installation_committed" == "false" ]] || return "$exit_status"
   bundle_warn "installation failed; restoring the previous host installation and cluster baseline"
   systemctl stop infernex-agent.service >/dev/null 2>&1 || true
+  systemctl stop infernex-agent-collector.service >/dev/null 2>&1 || true
   for target_index in "${!host_backup_targets[@]}"; do
     target="${host_backup_targets[$target_index]}"
     backup="${install_backup_root}/host/${target_index}"
@@ -717,6 +724,15 @@ rollback_failed_install() {
     fi
   done
   systemctl daemon-reload >/dev/null 2>&1 || true
+  if [[ "$collector_was_enabled" == "true" ]]; then
+    systemctl enable infernex-agent-collector.service >/dev/null 2>&1 || true
+  else
+    systemctl disable infernex-agent-collector.service >/dev/null 2>&1 || true
+  fi
+  if [[ "$collector_was_active" == "true" ]]; then
+    systemctl reset-failed infernex-agent-collector.service >/dev/null 2>&1 || true
+    systemctl start infernex-agent-collector.service >/dev/null 2>&1 || true
+  fi
   if [[ "$service_was_enabled" == "true" ]]; then
     systemctl enable infernex-agent.service >/dev/null 2>&1 || true
   else

@@ -98,7 +98,7 @@ bundle_info "verifying recovery-point checksums"
   sha256sum --check checksums.sha256
 )
 
-host_targets=(
+legacy_host_targets=(
   /opt/infernex-agent/bin/infernex-agent
   /opt/infernex-agent/bin/infernex-agent.previous
   /opt/infernex-agent/bin/run-agent.sh
@@ -121,8 +121,40 @@ host_targets=(
 )
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"
-[[ "$manifest_count" =~ ^[0-9]+$ && "$manifest_count" -le "${#host_targets[@]}" ]] ||
-  bundle_die "recovery manifest has an unsupported target count"
+case "$manifest_count" in
+  "${#legacy_host_targets[@]}")
+    # Recovery points before the isolated collector helper used this exact order.
+    legacy_manifest="true"
+    host_targets=("${legacy_host_targets[@]}")
+    ;;
+  20)
+    # Keep this schema stable. Future targets must be appended, never inserted.
+    legacy_manifest="false"
+    host_targets=(
+      /opt/infernex-agent/bin/infernex-agent
+      /opt/infernex-agent/bin/infernex-agent.previous
+      /opt/infernex-agent/bin/run-agent.sh
+      /etc/infernex-agent/kubeconfig
+      /etc/infernex-agent/openai-api-key
+      /etc/infernex-agent/agent.conf
+      /opt/infernex-agent/bin/configure-model.sh
+      /opt/infernex-agent/bin/restore-host-install.sh
+      /opt/infernex-agent/bin/bundle-lib.sh
+      /etc/systemd/system/infernex-agent.service
+      /etc/systemd/system/infernex-agent-collector.service
+      /opt/infernex-agent/bin/chat.sh
+      /usr/local/bin/infernex-agent
+      /opt/infernex-agent/bin/tui.sh
+      /opt/infernex-agent/pi-runtime
+      /opt/infernex-agent/pi/infernex.ts
+      /opt/infernex-agent/pi/LICENSE.pi.txt
+      /opt/infernex-agent/bin/configure-evidence.sh
+      /opt/infernex-agent/bin/configure-skills.sh
+      /opt/infernex-agent/skills
+    )
+    ;;
+  *) bundle_die "recovery manifest has an unsupported target count" ;;
+esac
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"
   manifest_status="$(
@@ -159,13 +191,27 @@ service_was_active="$(
 service_was_enabled="$(
   awk -F= '$1 == "enabled" {print $2}' "${backup_dir}/host/service-state"
 )"
+collector_was_active="$(
+  awk -F= '$1 == "collector_active" {print $2}' "${backup_dir}/host/service-state"
+)"
+collector_was_enabled="$(
+  awk -F= '$1 == "collector_enabled" {print $2}' "${backup_dir}/host/service-state"
+)"
+# Older recovery points predate the isolated collector helper.
+collector_was_active="${collector_was_active:-false}"
+collector_was_enabled="${collector_was_enabled:-false}"
 [[ "$service_was_active" == "true" || "$service_was_active" == "false" ]] ||
   bundle_die "invalid saved active state"
 [[ "$service_was_enabled" == "true" || "$service_was_enabled" == "false" ]] ||
   bundle_die "invalid saved enabled state"
+[[ "$collector_was_active" == "true" || "$collector_was_active" == "false" ]] ||
+  bundle_die "invalid saved collector active state"
+[[ "$collector_was_enabled" == "true" || "$collector_was_enabled" == "false" ]] ||
+  bundle_die "invalid saved collector enabled state"
 
 bundle_info "restoring Agent host files"
 systemctl stop infernex-agent.service >/dev/null 2>&1 || true
+systemctl stop infernex-agent-collector.service >/dev/null 2>&1 || true
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"
   manifest_status="$(
@@ -192,8 +238,22 @@ for target_index in "${!host_targets[@]}"; do
     fi
   fi
 done
+if [[ "$legacy_manifest" == "true" ]]; then
+  # The helper did not exist in this baseline, but may exist in the version
+  # currently being rolled back. It is an exact Agent-owned path.
+  rm -f -- /etc/systemd/system/infernex-agent-collector.service
+fi
 
 systemctl daemon-reload
+if [[ "$collector_was_enabled" == "true" ]]; then
+  systemctl enable infernex-agent-collector.service >/dev/null
+else
+  systemctl disable infernex-agent-collector.service >/dev/null 2>&1 || true
+fi
+if [[ "$collector_was_active" == "true" ]]; then
+  systemctl reset-failed infernex-agent-collector.service >/dev/null 2>&1 || true
+  systemctl start infernex-agent-collector.service
+fi
 if [[ "$service_was_enabled" == "true" ]]; then
   systemctl enable infernex-agent.service >/dev/null
 else
