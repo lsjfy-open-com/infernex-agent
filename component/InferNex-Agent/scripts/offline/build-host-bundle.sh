@@ -183,6 +183,9 @@ install -m 0644 \
   "${agent_dir}/docs/local-evidence-and-reports-zh.md" \
   "${agent_dir}/docs/plog-capture-zh.md" \
   "${agent_dir}/docs/collector-runs-zh.md" \
+  "${agent_dir}/docs/diagnostic-subagent-requirements-zh.md" \
+  "${agent_dir}/docs/diagnostic-subagent-architecture-zh.md" \
+  "${agent_dir}/docs/diagnostic-subagent-development-guide-zh.md" \
   "${agent_dir}/docs/skills-and-cann-hixl-zh.md" \
   "${agent_dir}/docs/terminal-interaction-zh.md" \
   "${agent_dir}/docs/pi-tui-zh.md" \

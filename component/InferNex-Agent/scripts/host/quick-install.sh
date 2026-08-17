@@ -40,6 +40,7 @@ Advanced recovery/automation options:
   --evidence-root DIR           Allow read-only historical log analysis (repeatable)
   --execution-mode MODE         detect, diagnose (default), modify, install, or recover
   --no-root-collector           Disable the isolated fixed-profile root helper
+  --disable-diagnostic-subagent Disable the restricted local diagnostic MCP endpoint
   --diagnostic-ssh-config FILE  OpenSSH config for operator-managed node aliases
   --diagnostic-ssh-target ALIAS Allow fixed probes on one SSH alias (repeatable)
   --non-interactive             Do not read from the terminal
@@ -60,6 +61,7 @@ execution_mode=""
 pass_execution_mode="false"
 diagnostic_ssh_config=""
 enable_root_collector="true"
+enable_diagnostic_subagent="true"
 declare -a evidence_roots=()
 declare -a diagnostic_ssh_targets=()
 
@@ -107,6 +109,10 @@ while (($#)); do
       ;;
     --no-root-collector)
       enable_root_collector="false"
+      shift
+      ;;
+    --disable-diagnostic-subagent)
+      enable_diagnostic_subagent="false"
       shift
       ;;
     --hardened-identity)
@@ -385,6 +391,9 @@ if [[ "$pass_execution_mode" == "true" ]]; then
 fi
 if [[ "$enable_root_collector" == "true" && "$effective_execution_mode" != "detect" ]]; then
   install_args+=(--enable-root-collector)
+fi
+if [[ "$enable_diagnostic_subagent" != "true" ]]; then
+  install_args+=(--disable-diagnostic-subagent)
 fi
 for evidence_root in "${evidence_roots[@]}"; do
   install_args+=(--evidence-root "$evidence_root")

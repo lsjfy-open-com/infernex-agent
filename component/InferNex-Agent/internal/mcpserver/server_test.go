@@ -753,6 +753,89 @@ func TestServerPublishesProgressiveDiagnosticSkills(t *testing.T) {
 	}
 }
 
+func TestDiagnosticDelegatePublishesRestrictedScopedContract(t *testing.T) {
+	ctx := context.Background()
+	collector, err := collectorrun.NewManager(stubCollectorSource{}, filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, namespace := range []string{"models", "other-team"} {
+		if _, err := collector.Create(collectorrun.StartRequest{Profile: "npu-inventory", Namespace: namespace, LabelSelector: "app=vllm", DurationMinutes: 1, MaxBytes: 1024 * 1024, Confirm: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(
+		stubObserver{}, "test",
+		WithKubernetes(stubKubernetes{}),
+		WithNamespaces([]string{"models"}),
+		WithDiagnosticDelegate([]string{"models"}),
+		WithDeployer(stubDeployer{}),
+		WithCollectorRuns(collector),
+	)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "diagnostic-partner", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	if tools["infernex_get_diagnostic_delegate_contract"] == nil {
+		t.Fatal("diagnostic delegate contract tool is missing")
+	}
+	for _, forbidden := range []string{"k8s_read_resources", "infernex_deploy_model", "infernex_remember"} {
+		if tools[forbidden] != nil {
+			t.Fatalf("restricted endpoint exposed forbidden tool %s", forbidden)
+		}
+	}
+	allowed, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_list_workloads", Arguments: map[string]any{"namespace": "models"}})
+	if err != nil || allowed.IsError {
+		t.Fatalf("scoped workload read failed: err=%v result=%#v", err, allowed)
+	}
+	denied, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_list_workloads", Arguments: map[string]any{"namespace": "kube-system"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !denied.IsError {
+		t.Fatalf("out-of-scope namespace was accepted: %#v", denied)
+	}
+	collectorList, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_list_collector_runs", Arguments: map[string]any{}})
+	if err != nil || collectorList.IsError {
+		t.Fatalf("collector list failed: err=%v result=%#v", err, collectorList)
+	}
+	payload, _ := json.Marshal(collectorList.StructuredContent)
+	var visible collectorrun.TaskList
+	if err := json.Unmarshal(payload, &visible); err != nil || len(visible.Tasks) != 1 || visible.Tasks[0].Namespace != "models" {
+		t.Fatalf("delegate-visible collectors=%#v err=%v", visible, err)
+	}
+}
+
+func TestDiagnosticDelegateUsesBoundedEventBurstDefaults(t *testing.T) {
+	options := serverOptions{diagnosticDelegate: true}
+	duration, bytes, err := boundDelegateCapture(options, 0, 0)
+	if err != nil || duration != 15 || bytes != 256*1024*1024 {
+		t.Fatalf("defaults duration=%d bytes=%d err=%v", duration, bytes, err)
+	}
+	if _, _, err := boundDelegateCapture(options, 61, 1024*1024); err == nil {
+		t.Fatal("continuous delegated capture exceeded the burst duration ceiling")
+	}
+	if _, _, err := boundDelegateCapture(options, 15, 3*1024*1024*1024); err == nil {
+		t.Fatal("delegated capture exceeded the evidence budget")
+	}
+}
+
 func TestStreamableHTTPHandlerSupportsStatelessJSONToolCalls(t *testing.T) {
 	server := New(stubObserver{}, "test")
 	handler := StreamableHTTPHandler(server)

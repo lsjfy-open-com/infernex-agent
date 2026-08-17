@@ -25,6 +25,9 @@ Options:
   --generic-kubernetes            Install without InferNex Bridge CRDs
   --listen-address ADDRESS        MCP bind (default: 127.0.0.1:8080)
   --dashboard-listen-address ADDR Dashboard bind (default: 127.0.0.1:8081)
+  --diagnostic-subagent-listen-address ADDR Restricted MCP bind (default: 127.0.0.1:18082)
+  --diagnostic-subagent-max-concurrency N Concurrent delegated requests (default: 4)
+  --disable-diagnostic-subagent    Do not expose the restricted diagnostic MCP endpoint
   --openai-base-url URL            Internal OpenAI-compatible /v1 endpoint
   --openai-model MODEL             Diagnostic model name
   --openai-api-key-file FILE       API key copied as a protected credential
@@ -71,6 +74,9 @@ binary_source=""
 kubeconfig_source=""
 listen_address="127.0.0.1:8080"
 dashboard_listen_address="127.0.0.1:8081"
+diagnostic_subagent_listen_address="127.0.0.1:18082"
+diagnostic_subagent_max_concurrency="4"
+enable_diagnostic_subagent="true"
 openai_base_url=""
 openai_model=""
 openai_api_key_source=""
@@ -153,6 +159,20 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--dashboard-listen-address requires a value"
       dashboard_listen_address="$2"
       shift 2
+      ;;
+    --diagnostic-subagent-listen-address)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-subagent-listen-address requires a value"
+      diagnostic_subagent_listen_address="$2"
+      shift 2
+      ;;
+    --diagnostic-subagent-max-concurrency)
+      [[ $# -ge 2 ]] || bundle_die "--diagnostic-subagent-max-concurrency requires a value"
+      diagnostic_subagent_max_concurrency="$2"
+      shift 2
+      ;;
+    --disable-diagnostic-subagent)
+      enable_diagnostic_subagent="false"
+      shift
       ;;
     --openai-base-url)
       [[ $# -ge 2 ]] || bundle_die "--openai-base-url requires a value"
@@ -424,8 +444,16 @@ validate_listen_address "$listen_address" ||
   bundle_die "invalid or privileged MCP listen address: ${listen_address}"
 validate_listen_address "$dashboard_listen_address" ||
   bundle_die "invalid or privileged dashboard listen address: ${dashboard_listen_address}"
+validate_listen_address "$diagnostic_subagent_listen_address" ||
+  bundle_die "invalid or privileged diagnostic subagent listen address: ${diagnostic_subagent_listen_address}"
 [[ "$listen_address" != "$dashboard_listen_address" ]] ||
   bundle_die "MCP and dashboard listen addresses must differ"
+[[ "$diagnostic_subagent_listen_address" != "$listen_address" &&
+  "$diagnostic_subagent_listen_address" != "$dashboard_listen_address" ]] ||
+  bundle_die "diagnostic subagent, MCP, and dashboard listen addresses must differ"
+[[ "$diagnostic_subagent_max_concurrency" =~ ^[0-9]+$ ]] &&
+  ((diagnostic_subagent_max_concurrency >= 1 && diagnostic_subagent_max_concurrency <= 64)) ||
+  bundle_die "diagnostic subagent concurrency must be between 1 and 64"
 
 health_url_for_address() {
   local address="$1"
@@ -556,6 +584,7 @@ installed_binary="${install_root}/bin/infernex-agent"
 runner_path="${install_root}/bin/run-agent.sh"
 installed_kubeconfig="${config_root}/kubeconfig"
 installed_api_key="${config_root}/openai-api-key"
+installed_delegate_token="${config_root}/diagnostic-subagent-token"
 agent_config="${config_root}/agent.conf"
 installed_configurator="${install_root}/bin/configure-model.sh"
 installed_evidence_configurator="${install_root}/bin/configure-evidence.sh"
@@ -644,6 +673,7 @@ host_backup_targets=(
   "$installed_evidence_configurator"
   "$installed_skills_configurator"
   "$installed_builtin_skills"
+  "$installed_delegate_token"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -1061,6 +1091,33 @@ agent_args+=(
   "--reasoning-display=${reasoning_display}"
   "--execution-mode=${execution_mode}"
 )
+if [[ "$enable_diagnostic_subagent" == "true" && "$execution_mode" != "detect" && ${#scan_namespaces[@]} -gt 0 ]]; then
+  if [[ -e "$installed_delegate_token" ]]; then
+    [[ -f "$installed_delegate_token" && ! -L "$installed_delegate_token" ]] ||
+      bundle_die "refusing unsafe diagnostic subagent token path: ${installed_delegate_token}"
+  else
+    bundle_require_command od
+    bundle_require_command tr
+    diagnostic_subagent_token="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+    [[ ${#diagnostic_subagent_token} -eq 64 ]] ||
+      bundle_die "failed to generate diagnostic subagent token"
+    temporary_delegate_token="$(mktemp "${config_root}/.diagnostic-subagent-token.XXXXXX")"
+    printf '%s\n' "$diagnostic_subagent_token" >"$temporary_delegate_token"
+    chmod 0640 "$temporary_delegate_token"
+    chown root:"$service_group" "$temporary_delegate_token"
+    mv -f -- "$temporary_delegate_token" "$installed_delegate_token"
+  fi
+  chmod 0640 "$installed_delegate_token"
+  chown root:"$service_group" "$installed_delegate_token"
+  agent_args+=(
+    "--diagnostic-subagent-listen-address=${diagnostic_subagent_listen_address}"
+    "--diagnostic-subagent-token-file=${installed_delegate_token}"
+    "--diagnostic-subagent-max-concurrency=${diagnostic_subagent_max_concurrency}"
+  )
+fi
+if [[ "$enable_diagnostic_subagent" == "true" && "$execution_mode" != "detect" && ${#scan_namespaces[@]} -eq 0 ]]; then
+  bundle_warn "diagnostic subagent endpoint disabled because no scan namespace was discovered or configured"
+fi
 if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
   agent_args+=("--root-collector-socket=/run/infernex-agent/collector.sock")
 fi
@@ -1255,6 +1312,7 @@ collect_install_failure_evidence() {
     printf 'stage=systemd-activation\n'
     printf 'mcp_address=%s\n' "$listen_address"
     printf 'dashboard_address=%s\n' "$dashboard_listen_address"
+    printf 'diagnostic_subagent_address=%s\n' "$diagnostic_subagent_listen_address"
     printf '\n[systemctl status]\n'
     systemctl status infernex-agent.service --no-pager --full 2>&1 |
       awk '{ print substr($0, 1, 1000) }' || true
@@ -1265,6 +1323,7 @@ collect_install_failure_evidence() {
       printf '\n[listening TCP sockets for configured ports]\n'
       ss -H -ltnp "sport = :${listen_address##*:}" 2>&1 || true
       ss -H -ltnp "sport = :${dashboard_listen_address##*:}" 2>&1 || true
+      ss -H -ltnp "sport = :${diagnostic_subagent_listen_address##*:}" 2>&1 || true
     fi
   } >"$output_file"
 }
@@ -1331,6 +1390,10 @@ bundle_info "host installation completed"
 bundle_info "pre-install recovery point: ${install_backup_root}"
 bundle_info "dashboard listener: ${dashboard_listen_address}"
 bundle_info "MCP listener: ${listen_address}"
+if [[ "$enable_diagnostic_subagent" == "true" && "$execution_mode" != "detect" && ${#scan_namespaces[@]} -gt 0 ]]; then
+  bundle_info "restricted diagnostic subagent MCP: ${diagnostic_subagent_listen_address}"
+  bundle_info "diagnostic subagent token: ${installed_delegate_token}"
+fi
 if [[ "$enable_root_collector" == "true" && "$execution_mode" != "detect" ]]; then
   bundle_info "root collector: isolated fixed-profile helper enabled"
 fi

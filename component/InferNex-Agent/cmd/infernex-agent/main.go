@@ -43,6 +43,7 @@ import (
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/delegation"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
@@ -68,6 +69,9 @@ type options struct {
 	transport                    string
 	listen                       string
 	dashboardListen              string
+	diagnosticDelegateListen     string
+	diagnosticDelegateTokenFile  string
+	diagnosticDelegateConcurrent int
 	kubeconfig                   string
 	enableDeployment             bool
 	enableTestCatalog            bool
@@ -175,6 +179,9 @@ func parseServerOptions(args []string) (options, error) {
 		"",
 		"Dashboard HTTP listen address; empty disables the dashboard",
 	)
+	flags.StringVar(&opts.diagnosticDelegateListen, "diagnostic-subagent-listen-address", "", "Restricted diagnostic-subagent MCP listener; empty disables delegation")
+	flags.StringVar(&opts.diagnosticDelegateTokenFile, "diagnostic-subagent-token-file", "", "Protected bearer token file for the restricted diagnostic-subagent endpoint")
+	flags.IntVar(&opts.diagnosticDelegateConcurrent, "diagnostic-subagent-max-concurrency", 4, "Maximum concurrent requests accepted from diagnostic subagents")
 	flags.BoolVar(
 		&opts.enableTestCatalog,
 		"enable-test-catalog",
@@ -344,6 +351,17 @@ func parseServerOptions(args []string) (options, error) {
 	if strings.TrimSpace(opts.sshTargets) != "" && strings.TrimSpace(opts.sshConfig) == "" {
 		return options{}, fmt.Errorf("--diagnostic-ssh-targets requires --diagnostic-ssh-config")
 	}
+	if strings.TrimSpace(opts.diagnosticDelegateListen) != "" {
+		if strings.TrimSpace(opts.diagnosticDelegateTokenFile) == "" {
+			return options{}, fmt.Errorf("--diagnostic-subagent-listen-address requires --diagnostic-subagent-token-file")
+		}
+		if strings.EqualFold(strings.TrimSpace(opts.executionMode), "detect") {
+			return options{}, fmt.Errorf("diagnostic subagent delegation requires diagnose-or-higher execution mode")
+		}
+	}
+	if opts.diagnosticDelegateConcurrent < 1 || opts.diagnosticDelegateConcurrent > 64 {
+		return options{}, fmt.Errorf("--diagnostic-subagent-max-concurrency must be between 1 and 64")
+	}
 	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
 		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
 		CompactionThresholdPercent: opts.contextCompactionThreshold,
@@ -398,6 +416,14 @@ func serveAgent(opts options) error {
 	serverOptions := make([]mcpserver.Option, 0, 8)
 	namespaces := parseNamespaces(opts.scanNamespaces)
 	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
+	delegateEnabled := strings.TrimSpace(opts.diagnosticDelegateListen) != ""
+	delegateOptions := make([]mcpserver.Option, 0, 8)
+	if delegateEnabled {
+		if len(namespaces) == 0 {
+			return fmt.Errorf("diagnostic subagent delegation requires at least one scan namespace")
+		}
+		delegateOptions = append(delegateOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader), mcpserver.WithDiagnosticDelegate(namespaces))
+	}
 	evidenceRoots := parsePathList(opts.evidenceRoots)
 	defaultEvidenceRoot := filepath.Join(opts.stateDir, "imports")
 	if err := os.MkdirAll(defaultEvidenceRoot, 0o700); err != nil {
@@ -415,11 +441,17 @@ func serveAgent(opts options) error {
 		return fmt.Errorf("configure local evidence workspace: %w", err)
 	}
 	serverOptions = append(serverOptions, mcpserver.WithLocalFiles(localWorkspace))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithLocalFiles(localWorkspace))
+	}
 	skillRegistry, err := infernexskills.NewRegistry(parsePathList(opts.skillDirectories))
 	if err != nil {
 		return fmt.Errorf("configure diagnostic Skills: %w", err)
 	}
 	serverOptions = append(serverOptions, mcpserver.WithSkills(skillRegistry))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithSkills(skillRegistry))
+	}
 	memoryStore, err := semanticmemory.NewFileStore(
 		filepath.Join(opts.stateDir, "semantic-memory"),
 		clusterIdentity(restConfig.Host),
@@ -436,6 +468,9 @@ func serveAgent(opts options) error {
 		return fmt.Errorf("detect openFuyao environment: %w", err)
 	}
 	serverOptions = append(serverOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
+	}
 	if strings.ToLower(strings.TrimSpace(opts.executionMode)) != "detect" {
 		diagnosticOptions := []diagnosticexec.RunnerOption{}
 		if strings.TrimSpace(opts.rootCollectorSocket) != "" {
@@ -446,6 +481,9 @@ func serveAgent(opts options) error {
 			return fmt.Errorf("configure active diagnostic execution: %w", err)
 		}
 		serverOptions = append(serverOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+		}
 		plogSource, err := plogcapture.NewKubernetesSource(clientset, restConfig)
 		if err != nil {
 			return fmt.Errorf("configure CANN plog source: %w", err)
@@ -456,6 +494,9 @@ func serveAgent(opts options) error {
 		}
 		plogManager.StartBackground(ctx)
 		serverOptions = append(serverOptions, mcpserver.WithPlogCapture(plogManager))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithPlogCapture(plogManager))
+		}
 		collectorSource, err := collectorrun.NewKubernetesSource(clientset, diagnosticRunner)
 		if err != nil {
 			return fmt.Errorf("configure diagnostic collector source: %w", err)
@@ -470,6 +511,9 @@ func serveAgent(opts options) error {
 		}
 		collectorManager.StartBackground(ctx)
 		serverOptions = append(serverOptions, mcpserver.WithCollectorRuns(collectorManager))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithCollectorRuns(collectorManager))
+		}
 	}
 
 	var changeStore changesafety.Store
@@ -518,6 +562,9 @@ func serveAgent(opts options) error {
 		}
 		domainDiagnoser = collector
 		serverOptions = append(serverOptions, mcpserver.WithDiagnoser(collector))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithDiagnoser(collector))
+		}
 	}
 
 	var domainExperiments experiment.Manager
@@ -550,6 +597,20 @@ func serveAgent(opts options) error {
 		serverOptions = append(serverOptions, mcpserver.WithExperiments(controller))
 	}
 	server := mcpserver.New(domainObserver, version, serverOptions...)
+	var diagnosticDelegateHandler http.Handler
+	if delegateEnabled {
+		token, tokenErr := delegation.ReadBearerToken(opts.diagnosticDelegateTokenFile)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		delegateServer := mcpserver.New(domainObserver, version, delegateOptions...)
+		diagnosticDelegateHandler, tokenErr = delegation.Protect(
+			mcpserver.StreamableHTTPHandler(delegateServer), token, opts.diagnosticDelegateConcurrent,
+		)
+		if tokenErr != nil {
+			return fmt.Errorf("protect diagnostic subagent endpoint: %w", tokenErr)
+		}
+	}
 
 	domainAnalyzer, err := buildAnalyzer(opts)
 	if err != nil {
@@ -610,6 +671,9 @@ func serveAgent(opts options) error {
 		if strings.TrimSpace(opts.dashboardListen) != "" {
 			return fmt.Errorf("dashboard HTTP listener requires streamable-http transport")
 		}
+		if diagnosticDelegateHandler != nil {
+			return fmt.Errorf("diagnostic subagent HTTP listener requires streamable-http transport")
+		}
 		return server.Run(ctx, &mcp.StdioTransport{})
 	case "streamable-http":
 		var dashboardHandler http.Handler
@@ -620,7 +684,7 @@ func serveAgent(opts options) error {
 			}
 			dashboardHandler = dashboard.New(snapshotStore, dashboardOptions...)
 		}
-		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler)
+		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler, opts.diagnosticDelegateListen, diagnosticDelegateHandler)
 	default:
 		return fmt.Errorf("unsupported transport %q", opts.transport)
 	}
@@ -729,6 +793,8 @@ func serveHTTP(
 	listenAddress string,
 	dashboardListenAddress string,
 	dashboardHandler http.Handler,
+	diagnosticDelegateListenAddress string,
+	diagnosticDelegateHandler http.Handler,
 ) error {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpserver.StreamableHTTPHandler(server))
@@ -743,6 +809,18 @@ func serveHTTP(
 		}
 		servers = append(servers, newHTTPServer(dashboardListenAddress, dashboardHandler))
 		names = append(names, "dashboard")
+	}
+	if diagnosticDelegateHandler != nil {
+		delegateAddress := strings.TrimSpace(diagnosticDelegateListenAddress)
+		if delegateAddress == strings.TrimSpace(listenAddress) || delegateAddress == strings.TrimSpace(dashboardListenAddress) {
+			return fmt.Errorf("diagnostic subagent, MCP, and dashboard listen addresses must differ")
+		}
+		delegateMux := http.NewServeMux()
+		delegateMux.Handle("/mcp", diagnosticDelegateHandler)
+		delegateMux.HandleFunc("/healthz", healthHandler)
+		delegateMux.HandleFunc("/readyz", healthHandler)
+		servers = append(servers, newHTTPServer(delegateAddress, delegateMux))
+		names = append(names, "diagnostic-subagent MCP")
 	}
 
 	errCh := make(chan error, len(servers))

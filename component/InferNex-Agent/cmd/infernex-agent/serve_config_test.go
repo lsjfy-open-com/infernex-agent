@@ -56,3 +56,24 @@ func TestParseServerOptionsValidatesExecutionModeAndSSHPair(t *testing.T) {
 		t.Fatalf("unexpected options: %#v", opts)
 	}
 }
+
+func TestParseServerOptionsValidatesDiagnosticDelegation(t *testing.T) {
+	if _, err := parseServerOptions([]string{"--execution-mode=diagnose", "--diagnostic-subagent-listen-address=127.0.0.1:18082"}); err == nil {
+		t.Fatal("diagnostic delegation without a token file was accepted")
+	}
+	if _, err := parseServerOptions([]string{"--execution-mode=detect", "--diagnostic-subagent-listen-address=127.0.0.1:18082", "--diagnostic-subagent-token-file=/tmp/token"}); err == nil {
+		t.Fatal("diagnostic delegation in detect mode was accepted")
+	}
+	opts, err := parseServerOptions([]string{
+		"--execution-mode=diagnose",
+		"--diagnostic-subagent-listen-address=127.0.0.1:18082",
+		"--diagnostic-subagent-token-file=/etc/infernex-agent/diagnostic-subagent-token",
+		"--diagnostic-subagent-max-concurrency=3",
+	})
+	if err != nil {
+		t.Fatalf("valid diagnostic delegation options: %v", err)
+	}
+	if opts.diagnosticDelegateConcurrent != 3 || opts.diagnosticDelegateListen != "127.0.0.1:18082" {
+		t.Fatalf("unexpected diagnostic delegation options: %#v", opts)
+	}
+}

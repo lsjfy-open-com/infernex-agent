@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -391,19 +392,122 @@ type experimentListOutput struct {
 }
 
 type serverOptions struct {
-	deployer       deployer.Deployer
-	diagnoser      diagnostics.Diagnoser
-	experiments    experiment.Manager
-	kubernetes     kubeops.Reader
-	namespaces     []string
-	testCatalog    bool
-	bridge         bool
-	memory         semanticmemory.Store
-	localFiles     *localfiles.Workspace
-	skills         *skills.Registry
-	diagnosticExec *diagnosticexec.Runner
-	plogCapture    *plogcapture.Manager
-	collectorRuns  *collectorrun.Manager
+	deployer           deployer.Deployer
+	diagnoser          diagnostics.Diagnoser
+	experiments        experiment.Manager
+	kubernetes         kubeops.Reader
+	namespaces         []string
+	testCatalog        bool
+	bridge             bool
+	memory             semanticmemory.Store
+	localFiles         *localfiles.Workspace
+	skills             *skills.Registry
+	diagnosticExec     *diagnosticexec.Runner
+	plogCapture        *plogcapture.Manager
+	collectorRuns      *collectorrun.Manager
+	diagnosticDelegate bool
+	namespaceScope     map[string]bool
+}
+
+type diagnosticDelegateContract struct {
+	APIVersion           string   `json:"apiVersion"`
+	Kind                 string   `json:"kind"`
+	Role                 string   `json:"role"`
+	NamespaceScope       []string `json:"namespaceScope"`
+	ExecutionChannels    []string `json:"executionChannels,omitempty"`
+	ActionClasses        []string `json:"actionClasses"`
+	EvidenceProtocol     string   `json:"evidenceProtocol"`
+	ReportFormat         string   `json:"reportFormat"`
+	DefaultCollection    string   `json:"defaultCollection"`
+	MaximumBurstMinutes  int      `json:"maximumBurstMinutes"`
+	MaximumEvidenceBytes int64    `json:"maximumEvidenceBytes"`
+	ExcludedCapabilities []string `json:"excludedCapabilities"`
+}
+
+func implementationName(options serverOptions) string {
+	if options.diagnosticDelegate {
+		return "infernex-agent-diagnostic-delegate"
+	}
+	return "infernex-agent"
+}
+
+func newDiagnosticDelegateContract(options serverOptions) diagnosticDelegateContract {
+	namespaces := make([]string, 0, len(options.namespaceScope))
+	for namespace := range options.namespaceScope {
+		namespaces = append(namespaces, namespace)
+	}
+	sort.Strings(namespaces)
+	channels := []string{}
+	if options.diagnosticExec != nil {
+		channels = options.diagnosticExec.Channels()
+	}
+	return diagnosticDelegateContract{
+		APIVersion: "agent.infernex.io/v1alpha1", Kind: "DiagnosticDelegateContract",
+		Role: "fault-diagnosis", NamespaceScope: namespaces, ExecutionChannels: channels,
+		ActionClasses:    []string{"observe", "active-read", "evidence-write"},
+		EvidenceProtocol: "artifact-path+sha256+bounded-page", ReportFormat: "markdown-v1",
+		DefaultCollection: "event-triggered-burst", MaximumBurstMinutes: 60,
+		MaximumEvidenceBytes: 2 * 1024 * 1024 * 1024,
+		ExcludedCapabilities: []string{"deployment", "configuration-mutation", "recovery", "experiment", "semantic-memory-write", "arbitrary-shell"},
+	}
+}
+
+func requireScopedNamespace(options serverOptions, namespace string) error {
+	if !options.diagnosticDelegate {
+		return nil
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return fmt.Errorf("diagnostic delegate requires an explicit namespace")
+	}
+	if !options.namespaceScope[namespace] {
+		return fmt.Errorf("namespace %q is outside the diagnostic delegation scope", namespace)
+	}
+	return nil
+}
+
+func namespaceVisible(options serverOptions, namespace string) bool {
+	return !options.diagnosticDelegate || options.namespaceScope[strings.TrimSpace(namespace)]
+}
+
+func collectorVisible(options serverOptions, task collectorrun.Task) bool {
+	return !options.diagnosticDelegate || task.Channel != "pod" || namespaceVisible(options, task.Namespace)
+}
+
+func boundDelegateCapture(options serverOptions, durationMinutes int, maxBytes int64) (int, int64, error) {
+	if !options.diagnosticDelegate {
+		return durationMinutes, maxBytes, nil
+	}
+	if durationMinutes == 0 {
+		durationMinutes = 15
+	}
+	if durationMinutes < 1 || durationMinutes > 60 {
+		return 0, 0, fmt.Errorf("diagnostic delegate capture duration must be between 1 and 60 minutes")
+	}
+	if maxBytes == 0 {
+		maxBytes = 256 * 1024 * 1024
+	}
+	if maxBytes < 1024*1024 || maxBytes > 2*1024*1024*1024 {
+		return 0, 0, fmt.Errorf("diagnostic delegate evidence budget must be between 1 MiB and 2 GiB")
+	}
+	return durationMinutes, maxBytes, nil
+}
+
+// WithDiagnosticDelegate turns the server into the deliberately smaller MCP
+// surface offered to a fault-diagnosis subagent. Namespace-bearing calls are
+// confined to the supplied scope and generic arbitrary-resource reads are not
+// published on this endpoint.
+func WithDiagnosticDelegate(namespaces []string) Option {
+	return func(options *serverOptions) {
+		options.diagnosticDelegate = true
+		options.namespaceScope = map[string]bool{}
+		for _, namespace := range namespaces {
+			namespace = strings.TrimSpace(namespace)
+			if namespace != "" {
+				options.namespaceScope[namespace] = true
+			}
+		}
+	}
 }
 
 func WithSkills(registry *skills.Registry) Option {
@@ -495,16 +599,16 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	if options.bridge {
 		serverInstructions += readOnlyInstructions
 	}
-	if options.bridge && options.deployer != nil {
+	if options.bridge && options.deployer != nil && !options.diagnosticDelegate {
 		serverInstructions += deploymentInstructions
 	}
 	if options.bridge && options.diagnoser != nil {
 		serverInstructions += diagnosticInstructions
 	}
-	if options.bridge && options.experiments != nil {
+	if options.bridge && options.experiments != nil && !options.diagnosticDelegate {
 		serverInstructions += experimentInstructions
 	}
-	if options.memory != nil {
+	if options.memory != nil && !options.diagnosticDelegate {
 		serverInstructions += memoryInstructions
 	}
 	if options.localFiles != nil {
@@ -523,7 +627,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		serverInstructions += collectorRunInstructions
 	}
 	server := mcp.NewServer(
-		&mcp.Implementation{Name: "infernex-agent", Version: version},
+		&mcp.Implementation{Name: implementationName(options), Version: version},
 		&mcp.ServerOptions{Instructions: serverInstructions},
 	)
 
@@ -540,6 +644,15 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}
 
 	if options.kubernetes != nil {
+		if options.diagnosticDelegate {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "infernex_get_diagnostic_delegate_contract",
+				Description: "Return the stable capability, namespace, evidence, and action-class contract granted to this diagnostic subagent endpoint.",
+				Annotations: readOnly("Get diagnostic delegate contract"),
+			}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, diagnosticDelegateContract, error) {
+				return nil, newDiagnosticDelegateContract(options), nil
+			})
+		}
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "openfuyao_detect_environment",
 			Description: "Detect whether the active kubeconfig points at an openFuyao bootstrap/management control plane, an openFuyao business cluster, or a general Kubernetes cluster, and report BKE, Helm, LWS, Bridge, KServe, Gateway, scaling, and monitoring capabilities.",
@@ -563,6 +676,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "List bounded Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, and Services across the selected namespace scope with readiness, images, owners, selectors, and Helm association.",
 			Annotations: readOnly("List Kubernetes workloads and services"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input workloadInput) (*mcp.CallToolResult, kubeops.WorkloadInventory, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, kubeops.WorkloadInventory{}, err
+			}
 			output, err := options.kubernetes.ListWorkloads(ctx, kubeops.WorkloadRequest{
 				Namespace: input.Namespace, LabelSelector: input.LabelSelector, Limit: input.Limit,
 			})
@@ -578,25 +694,30 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			return nil, output, err
 		})
 
-		mcp.AddTool(server, &mcp.Tool{
-			Name:        "k8s_read_resources",
-			Description: "Get one or list a page of any discovered Kubernetes resource using read-only API calls. Follows kubeconfig RBAC, supports selectors and continuation, removes managedFields, redacts credential-like fields, and never returns Secret data/stringData.",
-			Annotations: readOnly("Read discovered Kubernetes resources"),
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, input resourceReadInput) (*mcp.CallToolResult, kubeops.ResourceReadResult, error) {
-			output, err := options.kubernetes.ReadResources(ctx, kubeops.ResourceReadRequest{
-				GroupVersion: input.GroupVersion, Resource: input.Resource,
-				Namespace: input.Namespace, Name: input.Name,
-				LabelSelector: input.LabelSelector, FieldSelector: input.FieldSelector,
-				Limit: input.Limit, Continue: input.Continue,
+		if !options.diagnosticDelegate {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "k8s_read_resources",
+				Description: "Get one or list a page of any discovered Kubernetes resource using read-only API calls. Follows kubeconfig RBAC, supports selectors and continuation, removes managedFields, redacts credential-like fields, and never returns Secret data/stringData.",
+				Annotations: readOnly("Read discovered Kubernetes resources"),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input resourceReadInput) (*mcp.CallToolResult, kubeops.ResourceReadResult, error) {
+				output, err := options.kubernetes.ReadResources(ctx, kubeops.ResourceReadRequest{
+					GroupVersion: input.GroupVersion, Resource: input.Resource,
+					Namespace: input.Namespace, Name: input.Name,
+					LabelSelector: input.LabelSelector, FieldSelector: input.FieldSelector,
+					Limit: input.Limit, Continue: input.Continue,
+				})
+				return nil, output, err
 			})
-			return nil, output, err
-		})
+		}
 
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "k8s_get_events",
 			Description: "Get recent bounded, redacted Kubernetes Events, optionally scoped to one object, without requiring InferNex ownership labels.",
 			Annotations: readOnly("Get Kubernetes events"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input kubernetesEventInput) (*mcp.CallToolResult, kubeops.EventList, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, kubeops.EventList{}, err
+			}
 			output, err := options.kubernetes.GetEvents(ctx, kubeops.EventRequest{
 				Namespace: input.Namespace, Kind: input.Kind, Name: input.Name,
 				SinceMinutes: input.SinceMinutes, Limit: input.Limit,
@@ -609,6 +730,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Read bounded, credential-redacted current or previous Pod logs for explicit Pod/container targets returned by k8s_list_workloads. No exec or host-file access is performed.",
 			Annotations: readOnly("Get bounded Kubernetes Pod logs"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input podLogInput) (*mcp.CallToolResult, kubeops.PodLogResult, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, kubeops.PodLogResult{}, err
+			}
 			output, err := options.kubernetes.GetPodLogs(ctx, kubeops.PodLogRequest{
 				Namespace: input.Namespace, Pod: input.Pod, Container: input.Container,
 				Previous: input.Previous, SinceMinutes: input.SinceMinutes, TailLines: input.TailLines,
@@ -621,6 +745,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "List Helm release name, namespace, current revision, and status from Kubernetes metadata only. Secret payloads and stored release values are never returned.",
 			Annotations: readOnly("List Helm releases"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input helmReleaseInput) (*mcp.CallToolResult, kubeops.HelmReleaseList, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, kubeops.HelmReleaseList{}, err
+			}
 			output, err := options.kubernetes.ListHelmReleases(ctx, kubeops.HelmReleaseRequest{
 				Namespace: input.Namespace, Limit: input.Limit,
 			})
@@ -641,6 +768,11 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Run one compiled-in active-read probe through local, Pod exec, or an operator-approved SSH alias. Arbitrary commands, paths, addresses, credentials, and writes are not accepted.",
 			Annotations: readOnly("Run bounded active diagnostic probe"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input activeDiagnosticInput) (*mcp.CallToolResult, diagnosticexec.Result, error) {
+			if strings.EqualFold(strings.TrimSpace(input.Channel), "pod") {
+				if err := requireScopedNamespace(options, input.Namespace); err != nil {
+					return nil, diagnosticexec.Result{}, err
+				}
+			}
 			output, err := options.diagnosticExec.Run(ctx, diagnosticexec.Request{Channel: input.Channel, Probe: input.Probe, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, SSHTarget: input.SSHTarget, DeviceID: input.DeviceID})
 			return nil, output, err
 		})
@@ -652,22 +784,42 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld}
 		}
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_plog_capture", Description: "Start an approved external incremental CANN plog capture with explicit Pod selector, duration, and byte budget. Writes only Agent-owned Evidence Store files and does not mutate the workload.", Annotations: localMutation("Start external CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogStartInput) (*mcp.CallToolResult, plogTaskOutput, error) {
-			task, err := options.plogCapture.Create(plogcapture.StartRequest{Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, MaxBytes: input.MaxBytes, DurationMinutes: input.DurationMinutes, Confirm: input.Confirm})
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, plogTaskOutput{}, err
+			}
+			duration, maxBytes, err := boundDelegateCapture(options, input.DurationMinutes, input.MaxBytes)
+			if err != nil {
+				return nil, plogTaskOutput{}, err
+			}
+			task, err := options.plogCapture.Create(plogcapture.StartRequest{Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, MaxBytes: maxBytes, DurationMinutes: duration, Confirm: input.Confirm})
 			return nil, toPlogTaskOutput(task), err
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_plog_captures", Description: "List durable CANN plog capture tasks, progress, evidence location, limits, and errors.", Annotations: readOnly("List CANN plog captures")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, plogTaskListOutput, error) {
 			list := options.plogCapture.List()
 			output := plogTaskListOutput{Tasks: make([]plogTaskOutput, 0, len(list.Tasks))}
 			for _, task := range list.Tasks {
+				if !namespaceVisible(options, task.Namespace) {
+					continue
+				}
 				output.Tasks = append(output.Tasks, toPlogTaskOutput(task))
 			}
 			return nil, output, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_get_plog_capture", Description: "Read one durable CANN plog capture task without loading raw plog into model context.", Annotations: readOnly("Get CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogTaskInput) (*mcp.CallToolResult, plogTaskOutput, error) {
 			task, err := options.plogCapture.Get(input.TaskID)
+			if err == nil && !namespaceVisible(options, task.Namespace) {
+				return nil, plogTaskOutput{}, fmt.Errorf("plog capture task is outside the diagnostic delegation scope")
+			}
 			return nil, toPlogTaskOutput(task), err
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_stop_plog_capture", Description: "Stop an approved CANN plog capture task without deleting retained evidence.", Annotations: localMutation("Stop CANN plog capture")}, func(_ context.Context, _ *mcp.CallToolRequest, input plogTaskInput) (*mcp.CallToolResult, plogTaskOutput, error) {
+			existing, err := options.plogCapture.Get(input.TaskID)
+			if err != nil {
+				return nil, plogTaskOutput{}, err
+			}
+			if !namespaceVisible(options, existing.Namespace) {
+				return nil, plogTaskOutput{}, fmt.Errorf("plog capture task is outside the diagnostic delegation scope")
+			}
 			task, err := options.plogCapture.Stop(input.TaskID, input.Confirm)
 			return nil, toPlogTaskOutput(task), err
 		})
@@ -679,17 +831,43 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld}
 		}
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_collector_run", Description: "Start an approved durable fixed-profile collector. Pod channel expands a namespace/selector; local and configured host-root channels sample the management node. Evidence is written only to Agent-owned files.", Annotations: localMutation("Start diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorStartInput) (*mcp.CallToolResult, collectorrun.Task, error) {
-			output, err := options.collectorRuns.Create(collectorrun.StartRequest{Channel: input.Channel, Profile: input.Profile, Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, DeviceIDs: input.DeviceIDs, IntervalSeconds: input.IntervalSeconds, DurationMinutes: input.DurationMinutes, MaxBytes: input.MaxBytes, Confirm: input.Confirm})
+			if strings.TrimSpace(input.Channel) == "" || strings.EqualFold(strings.TrimSpace(input.Channel), "pod") {
+				if err := requireScopedNamespace(options, input.Namespace); err != nil {
+					return nil, collectorrun.Task{}, err
+				}
+			}
+			duration, maxBytes, err := boundDelegateCapture(options, input.DurationMinutes, input.MaxBytes)
+			if err != nil {
+				return nil, collectorrun.Task{}, err
+			}
+			output, err := options.collectorRuns.Create(collectorrun.StartRequest{Channel: input.Channel, Profile: input.Profile, Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, DeviceIDs: input.DeviceIDs, IntervalSeconds: input.IntervalSeconds, DurationMinutes: duration, MaxBytes: maxBytes, Confirm: input.Confirm})
 			return nil, output, err
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_collector_runs", Description: "List durable diagnostic CollectorRuns without loading raw samples into model context.", Annotations: readOnly("List diagnostic CollectorRuns")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, collectorrun.TaskList, error) {
-			return nil, options.collectorRuns.List(), nil
+			list := options.collectorRuns.List()
+			output := collectorrun.TaskList{Tasks: make([]collectorrun.Task, 0, len(list.Tasks))}
+			for _, task := range list.Tasks {
+				if collectorVisible(options, task) {
+					output.Tasks = append(output.Tasks, task)
+				}
+			}
+			return nil, output, nil
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_get_collector_run", Description: "Get one CollectorRun status, target count, sample count, limits, evidence location, and last error.", Annotations: readOnly("Get diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorTaskInput) (*mcp.CallToolResult, collectorrun.Task, error) {
 			output, err := options.collectorRuns.Get(input.TaskID)
+			if err == nil && !collectorVisible(options, output) {
+				return nil, collectorrun.Task{}, fmt.Errorf("collector task is outside the diagnostic delegation scope")
+			}
 			return nil, output, err
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_stop_collector_run", Description: "Stop an approved CollectorRun without deleting retained evidence.", Annotations: localMutation("Stop diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorTaskInput) (*mcp.CallToolResult, collectorrun.Task, error) {
+			existing, err := options.collectorRuns.Get(input.TaskID)
+			if err != nil {
+				return nil, collectorrun.Task{}, err
+			}
+			if !collectorVisible(options, existing) {
+				return nil, collectorrun.Task{}, fmt.Errorf("collector task is outside the diagnostic delegation scope")
+			}
 			output, err := options.collectorRuns.Stop(input.TaskID, input.Confirm)
 			return nil, output, err
 		})
@@ -701,6 +879,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "List normalized InferNexService readiness summaries in one namespace.",
 			Annotations: readOnly("List InferNex services"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input namespaceInput) (*mcp.CallToolResult, observer.ServiceList, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, observer.ServiceList{}, err
+			}
 			output, err := domainObserver.ListServices(ctx, input.Namespace)
 			return nil, output, err
 		})
@@ -728,6 +909,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Correlate bounded, redacted Pod log evidence and Kubernetes Events across the nodes and components managed for one InferNexService.",
 			Annotations: readOnly("Diagnose InferNex service"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input diagnosticInput) (*mcp.CallToolResult, diagnostics.Report, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, diagnostics.Report{}, err
+			}
 			output, err := options.diagnoser.Diagnose(ctx, diagnostics.Request{
 				Namespace:    input.Namespace,
 				Name:         input.Name,
@@ -745,6 +929,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Inspect one InferNexService using its existing status, model, source, base templates, components, and conditions.",
 			Annotations: readOnly("Inspect InferNex service"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.ServiceDetail, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, observer.ServiceDetail{}, err
+			}
 			output, err := domainObserver.InspectService(ctx, input.Namespace, input.Name)
 			return nil, output, err
 		})
@@ -754,6 +941,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Get the actual Deployment, DaemonSet, LeaderWorkerSet, and Pod topology managed for one InferNexService.",
 			Annotations: readOnly("Get InferNex service topology"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input serviceInput) (*mcp.CallToolResult, observer.Topology, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, observer.Topology{}, err
+			}
 			output, err := domainObserver.GetTopology(ctx, input.Namespace, input.Name)
 			return nil, output, err
 		})
@@ -763,6 +953,9 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Description: "Get recent Kubernetes events only for one InferNexService and its InferNex-managed workloads and pods.",
 			Annotations: readOnly("Get InferNex service events"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input eventInput) (*mcp.CallToolResult, observer.EventEvidence, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, observer.EventEvidence{}, err
+			}
 			output, err := domainObserver.GetEvents(
 				ctx,
 				input.Namespace,
@@ -774,7 +967,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		})
 	}
 
-	if options.bridge && options.deployer != nil {
+	if options.bridge && options.deployer != nil && !options.diagnosticDelegate {
 		mutating := func(title string, destructive bool) *mcp.ToolAnnotations {
 			openWorld := true
 			return &mcp.ToolAnnotations{
@@ -852,7 +1045,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		})
 	}
 
-	if options.bridge && options.experiments != nil {
+	if options.bridge && options.experiments != nil && !options.diagnosticDelegate {
 		mutating := func(title string) *mcp.ToolAnnotations {
 			destructive := false
 			openWorld := true
@@ -898,7 +1091,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 		})
 	}
 
-	if options.memory != nil {
+	if options.memory != nil && !options.diagnosticDelegate {
 		memoryMutation := func(title string, destructive bool) *mcp.ToolAnnotations {
 			openWorld := false
 			return &mcp.ToolAnnotations{

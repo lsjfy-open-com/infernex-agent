@@ -119,6 +119,28 @@ legacy_host_targets=(
   /opt/infernex-agent/bin/configure-skills.sh
   /opt/infernex-agent/skills
 )
+collector_host_targets=(
+  /opt/infernex-agent/bin/infernex-agent
+  /opt/infernex-agent/bin/infernex-agent.previous
+  /opt/infernex-agent/bin/run-agent.sh
+  /etc/infernex-agent/kubeconfig
+  /etc/infernex-agent/openai-api-key
+  /etc/infernex-agent/agent.conf
+  /opt/infernex-agent/bin/configure-model.sh
+  /opt/infernex-agent/bin/restore-host-install.sh
+  /opt/infernex-agent/bin/bundle-lib.sh
+  /etc/systemd/system/infernex-agent.service
+  /etc/systemd/system/infernex-agent-collector.service
+  /opt/infernex-agent/bin/chat.sh
+  /usr/local/bin/infernex-agent
+  /opt/infernex-agent/bin/tui.sh
+  /opt/infernex-agent/pi-runtime
+  /opt/infernex-agent/pi/infernex.ts
+  /opt/infernex-agent/pi/LICENSE.pi.txt
+  /opt/infernex-agent/bin/configure-evidence.sh
+  /opt/infernex-agent/bin/configure-skills.sh
+  /opt/infernex-agent/skills
+)
 
 manifest_count="$(awk 'END {print NR}' "${backup_dir}/host/manifest")"
 case "$manifest_count" in
@@ -128,30 +150,13 @@ case "$manifest_count" in
     host_targets=("${legacy_host_targets[@]}")
     ;;
   20)
-    # Keep this schema stable. Future targets must be appended, never inserted.
     legacy_manifest="false"
-    host_targets=(
-      /opt/infernex-agent/bin/infernex-agent
-      /opt/infernex-agent/bin/infernex-agent.previous
-      /opt/infernex-agent/bin/run-agent.sh
-      /etc/infernex-agent/kubeconfig
-      /etc/infernex-agent/openai-api-key
-      /etc/infernex-agent/agent.conf
-      /opt/infernex-agent/bin/configure-model.sh
-      /opt/infernex-agent/bin/restore-host-install.sh
-      /opt/infernex-agent/bin/bundle-lib.sh
-      /etc/systemd/system/infernex-agent.service
-      /etc/systemd/system/infernex-agent-collector.service
-      /opt/infernex-agent/bin/chat.sh
-      /usr/local/bin/infernex-agent
-      /opt/infernex-agent/bin/tui.sh
-      /opt/infernex-agent/pi-runtime
-      /opt/infernex-agent/pi/infernex.ts
-      /opt/infernex-agent/pi/LICENSE.pi.txt
-      /opt/infernex-agent/bin/configure-evidence.sh
-      /opt/infernex-agent/bin/configure-skills.sh
-      /opt/infernex-agent/skills
-    )
+    host_targets=("${collector_host_targets[@]}")
+    ;;
+  21)
+    # Keep schemas stable. New targets are appended, never inserted.
+    legacy_manifest="false"
+    host_targets=("${collector_host_targets[@]}" /etc/infernex-agent/diagnostic-subagent-token)
     ;;
   *) bundle_die "recovery manifest has an unsupported target count" ;;
 esac
@@ -242,6 +247,9 @@ if [[ "$legacy_manifest" == "true" ]]; then
   # The helper did not exist in this baseline, but may exist in the version
   # currently being rolled back. It is an exact Agent-owned path.
   rm -f -- /etc/systemd/system/infernex-agent-collector.service
+fi
+if ((manifest_count < 21)); then
+  rm -f -- /etc/infernex-agent/diagnostic-subagent-token
 fi
 
 systemctl daemon-reload
