@@ -323,6 +323,12 @@ remember, and forget MCP tools. It accepts only operator-authored,
 user-confirmed, or tool-verified records and isolates cluster-scoped memory by
 a hash of the Kubernetes API server identity.
 
+Operator-collected logs that can no longer be fetched from Kubernetes can be
+registered as read-only local evidence roots. Controlled glob, grep, bounded
+line reads, default metrics/health-probe noise filtering, and persistent
+Markdown reports are provided without enabling arbitrary host filesystem
+tools. See the [Chinese local evidence guide](docs/local-evidence-and-reports-zh.md).
+
 Pi reasoning blocks are hidden by default without disabling model reasoning or
 tool-call parsing. Use `configure-model.sh --reasoning-display visible`, pass
 `infernex-agent tui --reasoning-display visible`, or press `Ctrl+T` in the TUI

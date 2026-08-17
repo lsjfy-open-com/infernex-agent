@@ -74,6 +74,12 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | tool/能力 | 所在层 | 状态与边界 |
 | --- | --- | --- |
 | `infernex_read_artifact` | Pi extension | 大工具结果按 SHA-256 落盘并分页读取，不是集群写操作 |
+| `infernex_list_evidence_roots` | Go MCP Core | 列出运维人员显式授权的宿主机历史证据根目录 |
+| `infernex_find_evidence_files` | Go MCP Core | 在授权根目录内有界 glob，拒绝路径和符号链接逃逸 |
+| `infernex_grep_evidence_files` | Go MCP Core | RE2 检索历史日志，默认过滤 metrics/health 探针噪声并报告过滤计数 |
+| `infernex_read_evidence_file` | Go MCP Core | 分页读取常规文件、脱敏并返回 SHA-256，不修改源日志 |
+| `infernex_create_markdown_report` | Go MCP Core | 经批准在保护目录创建带证据 hash 的持久 Markdown 报告 |
+| `infernex_list_reports` / `infernex_read_report` | Go MCP Core | 跨 Session 枚举和读取既有报告 |
 | `infernex_search_memory` | Go MCP Core | 检索当前集群和 global 的结构化长期记忆；结果使用前需重新验证 |
 | `infernex_remember` | Go MCP Core | 写入 fact/decision/preference/procedure/incident/configuration-baseline；必须批准且来源受限 |
 | `infernex_forget_memory` | Go MCP Core | 软删除并保留审计 tombstone；必须批准 |

@@ -47,6 +47,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
@@ -70,6 +71,8 @@ type options struct {
 	deploymentTemplateNS         string
 	deploymentSourceNamespaces   string
 	stateDir                     string
+	evidenceRoots                string
+	reportDirectory              string
 	deploymentTimeout            time.Duration
 	scanNamespaces               string
 	scanInterval                 time.Duration
@@ -196,6 +199,8 @@ func parseServerOptions(args []string) (options, error) {
 		"/var/lib/infernex-agent",
 		"Protected persistent directory for change records and rollback state",
 	)
+	flags.StringVar(&opts.evidenceRoots, "evidence-roots", "", "Comma-separated operator-approved host directories for read-only historical log analysis; empty uses state-dir/imports")
+	flags.StringVar(&opts.reportDirectory, "report-directory", "", "Protected Markdown report directory; empty uses state-dir/reports")
 	flags.DurationVar(
 		&opts.deploymentTimeout,
 		"deployment-readiness-timeout",
@@ -366,9 +371,26 @@ func serveAgent(opts options) error {
 	}
 
 	domainObserver := observer.New(kubeClient)
-	serverOptions := make([]mcpserver.Option, 0, 4)
+	serverOptions := make([]mcpserver.Option, 0, 8)
 	namespaces := parseNamespaces(opts.scanNamespaces)
 	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
+	evidenceRoots := parsePathList(opts.evidenceRoots)
+	if len(evidenceRoots) == 0 {
+		defaultEvidenceRoot := filepath.Join(opts.stateDir, "imports")
+		if err := os.MkdirAll(defaultEvidenceRoot, 0o700); err != nil {
+			return fmt.Errorf("create default evidence root: %w", err)
+		}
+		evidenceRoots = []string{defaultEvidenceRoot}
+	}
+	reportDirectory := strings.TrimSpace(opts.reportDirectory)
+	if reportDirectory == "" {
+		reportDirectory = filepath.Join(opts.stateDir, "reports")
+	}
+	localWorkspace, err := localfiles.New(evidenceRoots, reportDirectory)
+	if err != nil {
+		return fmt.Errorf("configure local evidence workspace: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithLocalFiles(localWorkspace))
 	memoryStore, err := semanticmemory.NewFileStore(
 		filepath.Join(opts.stateDir, "semantic-memory"),
 		clusterIdentity(restConfig.Host),
@@ -603,6 +625,20 @@ func parseNamespaces(value string) []string {
 		return nil
 	}
 	return strings.Split(value, ",")
+}
+
+func parsePathList(value string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+	}
+	return result
 }
 
 func serveHTTP(

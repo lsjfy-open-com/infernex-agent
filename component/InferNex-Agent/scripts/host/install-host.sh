@@ -35,6 +35,8 @@ Options:
   --context-compaction-threshold P Compact at this usage percent (default: 80)
   --context-keep-recent-turns N    Recent user turns kept verbatim (default: 4)
   --tool-result-max-tokens N       Approximate cap for one tool result
+  --evidence-root DIR              Allow read-only historical log analysis (repeatable)
+  --report-directory DIR           Protected Markdown output directory
   --enable-log-diagnostics         Read bounded InferNex-owned Pod logs
   --max-diagnostics-per-scan N     Degraded services read per scan (default: 10)
   --enable-experiments             Run durable, single-feature experiments
@@ -81,6 +83,10 @@ context_threshold_set="false"
 keep_recent_set="false"
 tool_result_max_set="false"
 reasoning_display_set="false"
+report_directory=""
+report_directory_set="false"
+evidence_roots_set="false"
+declare -a evidence_roots=()
 enable_log_diagnostics="false"
 max_diagnostics_per_scan="10"
 enable_experiments="false"
@@ -193,6 +199,18 @@ while (($#)); do
       tool_result_max_set="true"
       shift 2
       ;;
+    --evidence-root)
+      [[ $# -ge 2 ]] || bundle_die "--evidence-root requires a value"
+      evidence_roots+=("$2")
+      evidence_roots_set="true"
+      shift 2
+      ;;
+    --report-directory)
+      [[ $# -ge 2 ]] || bundle_die "--report-directory requires a value"
+      report_directory="$2"
+      report_directory_set="true"
+      shift 2
+      ;;
     --enable-log-diagnostics)
       enable_log_diagnostics="true"
       shift
@@ -292,6 +310,7 @@ bundle_require_command useradd
 bundle_require_command awk
 bundle_require_command wc
 bundle_require_command readlink
+bundle_require_command runuser
 bundle_require_command cp
 bundle_require_command date
 bundle_require_command sha256sum
@@ -505,6 +524,7 @@ installed_kubeconfig="${config_root}/kubeconfig"
 installed_api_key="${config_root}/openai-api-key"
 agent_config="${config_root}/agent.conf"
 installed_configurator="${install_root}/bin/configure-model.sh"
+installed_evidence_configurator="${install_root}/bin/configure-evidence.sh"
 installed_restorer="${install_root}/bin/restore-host-install.sh"
 installed_bundle_lib="${install_root}/bin/bundle-lib.sh"
 installed_chat="${install_root}/bin/chat.sh"
@@ -530,7 +550,7 @@ if ! id "$service_user" >/dev/null 2>&1; then
 fi
 service_group="$(id -gn "$service_user")"
 install -d -m 0755 -o root -g root "${install_root}/bin"
-install -d -m 0750 -o "$service_user" -g "$service_group" "$config_root" "$state_root"
+install -d -m 0750 -o "$service_user" -g "$service_group" "$config_root" "$state_root" "${state_root}/imports" "${state_root}/reports"
 
 install_backup_root="${state_root}/backups/install-$(
   date -u +%Y%m%dT%H%M%SZ
@@ -583,6 +603,7 @@ host_backup_targets=(
   "$installed_pi_runtime"
   "$installed_pi_extension"
   "$installed_pi_license"
+  "$installed_evidence_configurator"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -682,6 +703,7 @@ if [[ ! -f "$bundle_lib_source" ]]; then
   bundle_lib_source="${script_dir}/../offline/bundle-lib.sh"
 fi
 [[ -f "${script_dir}/configure-model.sh" &&
+  -f "${script_dir}/configure-evidence.sh" &&
   -f "${script_dir}/chat.sh" &&
   -f "${script_dir}/tui.sh" &&
   -f "${script_dir}/restore-host-install.sh" &&
@@ -690,6 +712,9 @@ fi
 install -m 0755 -o root -g root \
   "${script_dir}/configure-model.sh" \
   "$installed_configurator"
+install -m 0755 -o root -g root \
+  "${script_dir}/configure-evidence.sh" \
+  "$installed_evidence_configurator"
 install -m 0755 -o root -g root \
   "${script_dir}/restore-host-install.sh" \
   "$installed_restorer"
@@ -753,6 +778,20 @@ if [[ -z "$openai_base_url" &&
   -z "$openai_timeout" &&
   -f "$agent_config" ]]; then
   preserve_model_config="true"
+fi
+if [[ -f "$agent_config" ]]; then
+  while IFS= read -r existing_argument; do
+    case "$existing_argument" in
+      --evidence-roots=*)
+        if [[ "$evidence_roots_set" == "false" ]]; then
+          IFS=',' read -r -a evidence_roots <<<"${existing_argument#*=}"
+        fi
+        ;;
+      --report-directory=*)
+        [[ "$report_directory_set" == "true" ]] || report_directory="${existing_argument#*=}"
+        ;;
+    esac
+  done <"$agent_config"
 fi
 if [[ "$preserve_model_config" == "true" ]]; then
   bundle_info "preserving existing model configuration"
@@ -836,6 +875,14 @@ if [[ "$preserve_model_config" == "true" ]]; then
       --reasoning-display=*)
         [[ "$reasoning_display_set" == "true" ]] || reasoning_display="${argument#*=}"
         ;;
+      --evidence-roots=*)
+        if [[ "$evidence_roots_set" == "false" ]]; then
+          IFS=',' read -r -a evidence_roots <<<"${argument#*=}"
+        fi
+        ;;
+      --report-directory=*)
+        [[ "$report_directory_set" == "true" ]] || report_directory="${argument#*=}"
+        ;;
     esac
   done <"$agent_config"
   [[ "$preserved_base_url" == "$preserved_model" ]] ||
@@ -885,6 +932,27 @@ done
   bundle_die "max output tokens must be smaller than the compaction threshold budget"
 [[ "$reasoning_display" == "hidden" || "$reasoning_display" == "visible" ]] ||
   bundle_die "reasoning display must be hidden or visible"
+declare -a canonical_evidence_roots=()
+for evidence_root in "${evidence_roots[@]}"; do
+  [[ "$evidence_root" == /* && "$evidence_root" != *','* ]] ||
+    bundle_die "evidence roots must be absolute paths without commas"
+  canonical_evidence_root="$(readlink -f -- "$evidence_root")"
+  [[ -d "$canonical_evidence_root" ]] ||
+    bundle_die "evidence root is not an existing directory: ${evidence_root}"
+  runuser -u "$service_user" -- test -r "$canonical_evidence_root" &&
+    runuser -u "$service_user" -- test -x "$canonical_evidence_root" ||
+    bundle_die "evidence root is not readable/traversable by ${service_user}: ${canonical_evidence_root}"
+  canonical_evidence_roots+=("$canonical_evidence_root")
+done
+if [[ -n "$report_directory" ]]; then
+  [[ "$report_directory" == /* && "$report_directory" != *','* ]] ||
+    bundle_die "report directory must be an absolute path without commas"
+  report_directory="$(readlink -f -- "$report_directory")"
+  [[ -d "$report_directory" ]] || bundle_die "report directory must already exist"
+  runuser -u "$service_user" -- test -w "$report_directory" &&
+    runuser -u "$service_user" -- test -x "$report_directory" ||
+    bundle_die "report directory is not writable/traversable by ${service_user}: ${report_directory}"
+fi
 agent_args+=(
   "--context-window-tokens=${context_window_tokens}"
   "--max-output-tokens=${max_output_tokens}"
@@ -893,6 +961,13 @@ agent_args+=(
   "--tool-result-max-tokens=${tool_result_max_tokens}"
   "--reasoning-display=${reasoning_display}"
 )
+if ((${#canonical_evidence_roots[@]} > 0)); then
+  evidence_roots_csv="$(IFS=,; printf '%s' "${canonical_evidence_roots[*]}")"
+  agent_args+=("--evidence-roots=${evidence_roots_csv}")
+fi
+if [[ -n "$report_directory" ]]; then
+  agent_args+=("--report-directory=${report_directory}")
+fi
 if [[ "$enable_deployment" == "true" ]]; then
   scan_namespaces_csv="$(IFS=,; printf '%s' "${scan_namespaces[*]}")"
   agent_args+=(

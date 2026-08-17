@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 )
@@ -581,6 +584,65 @@ func TestServerPublishesDurableSemanticMemoryWithWriteAnnotations(t *testing.T) 
 	var result semanticmemory.SearchResult
 	if err := json.Unmarshal(payload, &result); err != nil || len(result.Records) != 1 {
 		t.Fatalf("semantic memory search=%#v err=%v", result, err)
+	}
+}
+
+func TestServerPublishesBoundedLocalEvidenceAndReportTools(t *testing.T) {
+	ctx := context.Background()
+	evidenceRoot := filepath.Join(t.TempDir(), "logs")
+	if err := os.MkdirAll(evidenceRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(evidenceRoot, "vllm.log"), []byte("GET /metrics 200\nERROR worker timeout\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := localfiles.New([]string{evidenceRoot}, filepath.Join(t.TempDir(), "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithLocalFiles(workspace))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_list_evidence_roots", "infernex_find_evidence_files", "infernex_grep_evidence_files", "infernex_read_evidence_file", "infernex_list_reports", "infernex_read_report", "infernex_create_markdown_report"} {
+		if tools[name] == nil {
+			t.Fatalf("missing local evidence tool %s", name)
+		}
+	}
+	if !tools["infernex_grep_evidence_files"].Annotations.ReadOnlyHint || tools["infernex_create_markdown_report"].Annotations.ReadOnlyHint {
+		t.Fatal("local evidence annotations do not enforce read/write boundary")
+	}
+	rootID := workspace.Roots()[0].ID
+	grep, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_grep_evidence_files", Arguments: map[string]any{"rootId": rootID, "pattern": ".", "recursive": true}})
+	if err != nil || grep.IsError {
+		t.Fatalf("grep failed: err=%v result=%#v", err, grep)
+	}
+	payload, _ := json.Marshal(grep.StructuredContent)
+	var grepResult localfiles.GrepResult
+	if err := json.Unmarshal(payload, &grepResult); err != nil || len(grepResult.Matches) != 1 || grepResult.FilteredLines != 1 {
+		t.Fatalf("grep result=%#v err=%v", grepResult, err)
+	}
+	report, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_create_markdown_report", Arguments: map[string]any{"title": "worker timeout", "markdown": "## Finding\n\nWorker timed out.", "sources": []map[string]any{{"rootId": rootID, "path": "vllm.log"}}, "confirm": true}})
+	if err != nil || report.IsError {
+		t.Fatalf("report failed: err=%v result=%#v", err, report)
 	}
 }
 

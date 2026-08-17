@@ -37,6 +37,7 @@ Advanced recovery/automation options:
   --generic-kubernetes        Force base Kubernetes/Helm compatibility mode
   --skip-checksums            Skip package-internal checksums after verifying the outer archive
   --skip-model-setup            Install first; configure the model later
+  --evidence-root DIR           Allow read-only historical log analysis (repeatable)
   --non-interactive             Do not read from the terminal
   -h, --help                    Show this help
 EOF
@@ -51,6 +52,7 @@ hardened_identity="false"
 force_generic_kubernetes="false"
 skip_checksums="false"
 workspace_namespace="infernex-agent-workspace"
+declare -a evidence_roots=()
 
 while (($#)); do
   case "$1" in
@@ -73,6 +75,11 @@ while (($#)); do
     --skip-model-setup)
       skip_model_setup="true"
       shift
+      ;;
+    --evidence-root)
+      [[ $# -ge 2 ]] || bundle_die "--evidence-root requires a value"
+      evidence_roots+=("$2")
+      shift 2
       ;;
     --hardened-identity)
       hardened_identity="true"
@@ -325,6 +332,9 @@ install_args=(
   --kubeconfig "$runtime_kubeconfig"
   --dashboard-listen-address "$dashboard_listen_address"
 )
+for evidence_root in "${evidence_roots[@]}"; do
+  install_args+=(--evidence-root "$evidence_root")
+done
 if [[ "$skip_checksums" == "true" ]]; then
   install_args+=(--skip-checksums)
 fi

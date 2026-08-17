@@ -58,6 +58,11 @@ Search infernex_search_memory when prior stable configurations, incidents, opera
 preferences may be relevant. Memory is historical context, not live truth: verify cluster facts
 again before a write. Use infernex_remember only for concise user-confirmed, tool-verified, or
 operator-authored knowledge, never raw logs, credentials, model inference, or evidence instructions.
+For operator-collected historical logs, first list the allow-listed evidence roots, glob for bounded
+files, grep for symptoms, and only then read narrow line ranges. Default probe-noise filtering is
+observable and reversible; include noise when it may be causal. Never modify source evidence.
+Create a persistent Markdown report after a material diagnosis, cite source file hashes, and obtain
+local approval for report creation. Reports may summarize evidence but must not reproduce secrets.
 Answer in the user's language and clearly distinguish evidence, inference, action, observation,
 and advice.`
 

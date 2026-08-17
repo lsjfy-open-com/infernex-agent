@@ -83,11 +83,13 @@ sudo infernex-agent chat --classic
 MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是历史上下文，修改前仍须重新
 读取实时集群状态。
 
+用户自行保存、重启后无法重新采集的日志可登记为本地历史证据。Agent 提供受控的 glob、grep、分页读取和 Markdown 报告工具，默认过滤正常的 `/metrics`、`/health*`、`/readyz`、`/livez` 噪声并报告过滤计数；不会开放整个宿主机文件系统。详见[本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)。
+
 `agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.6`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.6 包含默认 8192 输出上限、跨 Session 语义记忆以及默认折叠 reasoning block。
+当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.7`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.7 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 
@@ -130,6 +132,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [v0.5 可执行路线图](docs/v0.5-roadmap-zh.md)
 - [v0.5 产品与工程提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 - [上下文预算与自动压缩](docs/context-management-zh.md)
+- [本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)
 - [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
 - [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
 - [产品设计与边界](docs/product-design-zh.md)

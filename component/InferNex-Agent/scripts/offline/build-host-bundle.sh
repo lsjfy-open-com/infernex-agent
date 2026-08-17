@@ -146,6 +146,7 @@ fi
 install -m 0755 \
   "${script_dir}/bundle-lib.sh" \
   "${agent_dir}/scripts/host/configure-model.sh" \
+  "${agent_dir}/scripts/host/configure-evidence.sh" \
   "${agent_dir}/scripts/host/chat.sh" \
   "${agent_dir}/scripts/host/tui.sh" \
   "${agent_dir}/scripts/host/create-kubeconfig.sh" \
@@ -177,6 +178,7 @@ install -m 0644 \
   "${agent_dir}/docs/install-and-modes-zh.md" \
   "${agent_dir}/docs/model-configuration-zh.md" \
   "${agent_dir}/docs/context-management-zh.md" \
+  "${agent_dir}/docs/local-evidence-and-reports-zh.md" \
   "${agent_dir}/docs/terminal-interaction-zh.md" \
   "${agent_dir}/docs/pi-tui-zh.md" \
   "${agent_dir}/docs/security-boundaries-zh.md" \
