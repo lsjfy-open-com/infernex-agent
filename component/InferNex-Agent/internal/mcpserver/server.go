@@ -365,6 +365,7 @@ type plogTaskListOutput struct {
 }
 
 type collectorStartInput struct {
+	Channel         string `json:"channel,omitempty" jsonschema:"Collector channel: pod (default), local, or host-root when configured"`
 	Profile         string `json:"profile" jsonschema:"Fixed profile: hccn-pfc-stats, hccn-device, npu-inventory, cann-version, hccl-root-info, or hccl-test-layout"`
 	Namespace       string `json:"namespace" jsonschema:"Namespace containing target Pods"`
 	LabelSelector   string `json:"labelSelector" jsonschema:"Non-empty Kubernetes label selector expanded on every sample"`
@@ -677,8 +678,8 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			destructive, openWorld := false, false
 			return &mcp.ToolAnnotations{Title: title, ReadOnlyHint: false, IdempotentHint: false, DestructiveHint: &destructive, OpenWorldHint: &openWorld}
 		}
-		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_collector_run", Description: "Start an approved durable fixed-profile collector against Pods automatically expanded from a namespace and label selector. Samples are written only to Agent-owned Evidence Store files.", Annotations: localMutation("Start diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorStartInput) (*mcp.CallToolResult, collectorrun.Task, error) {
-			output, err := options.collectorRuns.Create(collectorrun.StartRequest{Profile: input.Profile, Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, DeviceIDs: input.DeviceIDs, IntervalSeconds: input.IntervalSeconds, DurationMinutes: input.DurationMinutes, MaxBytes: input.MaxBytes, Confirm: input.Confirm})
+		mcp.AddTool(server, &mcp.Tool{Name: "infernex_start_collector_run", Description: "Start an approved durable fixed-profile collector. Pod channel expands a namespace/selector; local and configured host-root channels sample the management node. Evidence is written only to Agent-owned files.", Annotations: localMutation("Start diagnostic CollectorRun")}, func(_ context.Context, _ *mcp.CallToolRequest, input collectorStartInput) (*mcp.CallToolResult, collectorrun.Task, error) {
+			output, err := options.collectorRuns.Create(collectorrun.StartRequest{Channel: input.Channel, Profile: input.Profile, Namespace: input.Namespace, LabelSelector: input.LabelSelector, Container: input.Container, DeviceIDs: input.DeviceIDs, IntervalSeconds: input.IntervalSeconds, DurationMinutes: input.DurationMinutes, MaxBytes: input.MaxBytes, Confirm: input.Confirm})
 			return nil, output, err
 		})
 		mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_collector_runs", Description: "List durable diagnostic CollectorRuns without loading raw samples into model context.", Annotations: readOnly("List diagnostic CollectorRuns")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, collectorrun.TaskList, error) {

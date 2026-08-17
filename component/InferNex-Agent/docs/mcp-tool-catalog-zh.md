@@ -49,7 +49,7 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 | `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 持续增量读取固定 CANN plog 根目录；需要时限、容量和本地批准 | execution mode 不是 `detect` |
 | `infernex_list_plog_captures` / `infernex_get_plog_capture` | passive-read | 只返回任务、Pod UID segment 数、进度和 Evidence 路径，不把原始 plog 塞入上下文 | execution mode 不是 `detect` |
 | `infernex_stop_plog_capture` | diagnose-local-write | 停止采集但不删除已保留证据；需要批准 | execution mode 不是 `detect` |
-| `infernex_start_collector_run` | diagnose-local-write | selector 自动展开 Pod/container，周期运行固定 PFC/HCCN/NPU/CANN/HCCL-preflight profile，结果直接落 Evidence；需要批准 | execution mode 不是 `detect` |
+| `infernex_start_collector_run` | diagnose-local-write | `pod` 自动展开 selector；`local/host-root` 采集安装节点；周期运行固定 PFC/HCCN/NPU/CANN/HCCL-preflight profile并直接落 Evidence；需要批准 | execution mode 不是 `detect` |
 | `infernex_list_collector_runs` / `infernex_get_collector_run` | passive-read | 返回状态、目标数、样本数、预算、Evidence 路径和错误，不加载原始 JSONL | execution mode 不是 `detect` |
 | `infernex_stop_collector_run` | diagnose-local-write | 停止持续采集但保留全部样本；需要批准 | execution mode 不是 `detect` |
 

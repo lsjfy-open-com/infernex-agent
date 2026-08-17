@@ -48,7 +48,7 @@ type stubExperiments struct{}
 
 type stubCollectorSource struct{}
 
-func (stubCollectorSource) ListTargets(context.Context, string, string, string) ([]collectorrun.Target, error) {
+func (stubCollectorSource) ListTargets(context.Context, string, string, string, string) ([]collectorrun.Target, error) {
 	return nil, nil
 }
 

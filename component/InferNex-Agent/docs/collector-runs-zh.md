@@ -32,6 +32,15 @@ Profile 不接受 shell、脚本正文、路径、镜像、环境变量或额外
 3. 通过 Evidence 工具 grep/分页读取样本；
 4. `infernex_stop_collector_run` 提前停止。
 
+安装节点的 root-only 周期采集不需要 Pod selector，例如：
+
+```text
+在安装 Agent 的节点通过 host-root，每 30 秒采集 device 0-7 的 PFC 计数，持续 2 小时，
+最多保存 2 GiB；展示计划并等我批准。
+```
+
+`pod` 是默认 channel；`local` 在非 root 主 Agent 进程执行；`host-root` 只在隔离 helper 已配置时可用。
+
 启动和停止需要本机确认。任务状态保存在：
 
 ```text
@@ -44,7 +53,7 @@ Profile 不接受 shell、脚本正文、路径、镜像、环境变量或额外
 /var/lib/infernex-agent/imports/collectors/<run-id>/samples.jsonl
 ```
 
-每条样本包含采集时间、namespace、Pod、Pod UID、container、device、实际固定命令、退出码、stdout、
+每条样本包含采集时间、channel、namespace、Pod、Pod UID、container、device、实际固定命令、退出码、stdout、
 stderr、截断标记和错误。`imports` 是 Agent 自有 Evidence Root，因此不需要人再次复制文件。
 
 ## 权限与容器用户

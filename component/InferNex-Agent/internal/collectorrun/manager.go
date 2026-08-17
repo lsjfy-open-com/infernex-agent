@@ -39,6 +39,7 @@ var profiles = map[string]bool{
 }
 
 type StartRequest struct {
+	Channel         string `json:"channel,omitempty"`
 	Profile         string `json:"profile"`
 	Namespace       string `json:"namespace"`
 	LabelSelector   string `json:"labelSelector"`
@@ -52,6 +53,7 @@ type StartRequest struct {
 
 type Task struct {
 	ID              string     `json:"id"`
+	Channel         string     `json:"channel"`
 	Profile         string     `json:"profile"`
 	Namespace       string     `json:"namespace"`
 	LabelSelector   string     `json:"labelSelector"`
@@ -138,12 +140,25 @@ func (m *Manager) Create(request StartRequest) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("unsupported collector profile %q", profile)
 	}
-	namespace, selector := strings.TrimSpace(request.Namespace), strings.TrimSpace(request.LabelSelector)
-	if namespace == "" || selector == "" {
-		return Task{}, fmt.Errorf("namespace and a non-empty labelSelector are required")
+	channel := strings.ToLower(strings.TrimSpace(request.Channel))
+	if channel == "" {
+		channel = "pod"
 	}
-	if _, err := labels.Parse(selector); err != nil {
-		return Task{}, fmt.Errorf("invalid labelSelector: %w", err)
+	namespace, selector, container := strings.TrimSpace(request.Namespace), strings.TrimSpace(request.LabelSelector), strings.TrimSpace(request.Container)
+	switch channel {
+	case "pod":
+		if namespace == "" || selector == "" {
+			return Task{}, fmt.Errorf("namespace and a non-empty labelSelector are required for pod collectors")
+		}
+		if _, err := labels.Parse(selector); err != nil {
+			return Task{}, fmt.Errorf("invalid labelSelector: %w", err)
+		}
+	case "local", "host-root":
+		if namespace != "" || selector != "" || container != "" {
+			return Task{}, fmt.Errorf("namespace, labelSelector, and container must be empty for %s collectors", channel)
+		}
+	default:
+		return Task{}, fmt.Errorf("collector channel must be pod, local, or host-root")
 	}
 	for _, deviceID := range request.DeviceIDs {
 		if deviceID < 0 || deviceID > 63 {
@@ -176,10 +191,10 @@ func (m *Manager) Create(request StartRequest) (Task, error) {
 		return Task{}, fmt.Errorf("maxBytes must be between 1 MiB and 100 GiB")
 	}
 	now := time.Now().UTC()
-	task := &Task{ID: newID(), Profile: profile, Namespace: namespace, LabelSelector: selector, Container: strings.TrimSpace(request.Container), DeviceIDs: devices, IntervalSeconds: int(interval / time.Second), Status: "running", CreatedAt: now, UpdatedAt: now, Deadline: now.Add(duration), MaxBytes: maxBytes, EvidenceRoot: m.evidenceDir}
+	task := &Task{ID: newID(), Channel: channel, Profile: profile, Namespace: namespace, LabelSelector: selector, Container: container, DeviceIDs: devices, IntervalSeconds: int(interval / time.Second), Status: "running", CreatedAt: now, UpdatedAt: now, Deadline: now.Add(duration), MaxBytes: maxBytes, EvidenceRoot: m.evidenceDir}
 	m.mu.Lock()
 	for _, existing := range m.tasks {
-		if existing.Status == "running" && existing.Profile == task.Profile && existing.Namespace == task.Namespace && existing.LabelSelector == task.LabelSelector && existing.Container == task.Container {
+		if existing.Status == "running" && existing.Channel == task.Channel && existing.Profile == task.Profile && existing.Namespace == task.Namespace && existing.LabelSelector == task.LabelSelector && existing.Container == task.Container {
 			m.mu.Unlock()
 			return Task{}, fmt.Errorf("an equivalent collector task is already running: %s", existing.ID)
 		}
@@ -279,7 +294,7 @@ func (m *Manager) poll(ctx context.Context, id string) bool {
 	}
 	snapshot := clone(task)
 	m.mu.Unlock()
-	targets, err := m.source.ListTargets(ctx, snapshot.Namespace, snapshot.LabelSelector, snapshot.Container)
+	targets, err := m.source.ListTargets(ctx, snapshot.Channel, snapshot.Namespace, snapshot.LabelSelector, snapshot.Container)
 	if err != nil {
 		m.recordError(id, err)
 		return true
@@ -430,6 +445,9 @@ func (m *Manager) load() error {
 		}
 		if task.ID == "" || safe(task.ID)+".json" != entry.Name() {
 			return fmt.Errorf("invalid collector task identity in %s", entry.Name())
+		}
+		if task.Channel == "" {
+			task.Channel = "pod"
 		}
 		m.tasks[task.ID] = &task
 	}

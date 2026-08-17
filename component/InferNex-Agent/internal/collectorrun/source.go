@@ -22,6 +22,7 @@ import (
 // Target is a concrete container identity. UID prevents a replacement Pod
 // from being confused with the process that produced earlier evidence.
 type Target struct {
+	Channel   string `json:"channel"`
 	Namespace string `json:"namespace"`
 	Pod       string `json:"pod"`
 	UID       string `json:"uid"`
@@ -30,7 +31,7 @@ type Target struct {
 
 // Source resolves current targets and runs one compiled-in diagnostic profile.
 type Source interface {
-	ListTargets(context.Context, string, string, string) ([]Target, error)
+	ListTargets(context.Context, string, string, string, string) ([]Target, error)
 	Collect(context.Context, Target, string, int) (diagnosticexec.Result, error)
 }
 
@@ -46,7 +47,14 @@ func NewKubernetesSource(client kubernetes.Interface, runner *diagnosticexec.Run
 	return &KubernetesSource{client: client, runner: runner}, nil
 }
 
-func (s *KubernetesSource) ListTargets(ctx context.Context, namespace, selector, requestedContainer string) ([]Target, error) {
+func (s *KubernetesSource) ListTargets(ctx context.Context, channel, namespace, selector, requestedContainer string) ([]Target, error) {
+	switch channel {
+	case "local", "host-root":
+		return []Target{{Channel: channel, Pod: "management-node", UID: "management-node", Container: channel}}, nil
+	case "pod":
+	default:
+		return nil, fmt.Errorf("collector channel must be pod, local, or host-root")
+	}
 	if strings.TrimSpace(namespace) == "" || strings.TrimSpace(selector) == "" {
 		return nil, fmt.Errorf("namespace and label selector are required")
 	}
@@ -64,7 +72,7 @@ func (s *KubernetesSource) ListTargets(ctx context.Context, namespace, selector,
 			if requestedContainer != "" && container.Name != requestedContainer {
 				continue
 			}
-			result = append(result, Target{Namespace: namespace, Pod: pod.Name, UID: string(pod.UID), Container: container.Name})
+			result = append(result, Target{Channel: "pod", Namespace: namespace, Pod: pod.Name, UID: string(pod.UID), Container: container.Name})
 		}
 	}
 	return result, nil
@@ -72,7 +80,7 @@ func (s *KubernetesSource) ListTargets(ctx context.Context, namespace, selector,
 
 func (s *KubernetesSource) Collect(ctx context.Context, target Target, profile string, deviceID int) (diagnosticexec.Result, error) {
 	return s.runner.Run(ctx, diagnosticexec.Request{
-		Channel: "pod", Probe: profile, Namespace: target.Namespace, Pod: target.Pod,
+		Channel: target.Channel, Probe: profile, Namespace: target.Namespace, Pod: target.Pod,
 		Container: target.Container, DeviceID: deviceID,
 	})
 }

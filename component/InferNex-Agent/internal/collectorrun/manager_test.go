@@ -16,8 +16,19 @@ type fakeSource struct {
 	calls   atomic.Int32
 }
 
-func (f *fakeSource) ListTargets(context.Context, string, string, string) ([]Target, error) {
+func (f *fakeSource) ListTargets(context.Context, string, string, string, string) ([]Target, error) {
 	return f.targets, nil
+}
+
+func TestHostRootCollectorDoesNotRequirePodSelectors(t *testing.T) {
+	manager, err := NewManager(&fakeSource{}, filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := manager.Create(StartRequest{Channel: "host-root", Profile: "hccn-pfc-stats", DeviceIDs: []int{0}, IntervalSeconds: 60, DurationMinutes: 1, MaxBytes: 1024 * 1024, Confirm: true})
+	if err != nil || task.Channel != "host-root" {
+		t.Fatalf("task=%#v err=%v", task, err)
+	}
 }
 func (f *fakeSource) Collect(_ context.Context, target Target, profile string, device int) (diagnosticexec.Result, error) {
 	f.calls.Add(1)
