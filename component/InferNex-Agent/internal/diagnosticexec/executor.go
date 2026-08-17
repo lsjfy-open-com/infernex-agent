@@ -90,7 +90,10 @@ func New(client kubernetes.Interface, config *rest.Config, sshConfigPath string,
 }
 
 func (r *Runner) Probes() []string {
-	return []string{"system-summary", "filesystem-usage", "network-links", "npu-inventory", "cann-version", "hccn-device"}
+	return []string{
+		"system-summary", "filesystem-usage", "network-links", "npu-inventory", "cann-version",
+		"hccn-device", "hccn-pfc-stats", "hccl-root-info", "hccl-test-layout",
+	}
 }
 
 func (r *Runner) SSHTargets() []string { return append([]string(nil), r.sshTargets...) }
@@ -160,6 +163,26 @@ func probeCommands(probe string, deviceID int) ([]commandSpec, error) {
 		return []commandSpec{
 			{name: "hccn_tool", args: []string{"-i", strconv.Itoa(deviceID), "-link", "-g"}},
 			{name: "/usr/local/Ascend/driver/tools/hccn_tool", args: []string{"-i", strconv.Itoa(deviceID), "-link", "-g"}},
+		}, nil
+	case "hccn-pfc-stats":
+		if deviceID < 0 || deviceID > 63 {
+			return nil, fmt.Errorf("deviceId must be between 0 and 63")
+		}
+		// Keep the complete counter snapshot. PFC fields differ between driver
+		// versions, so filtering belongs to the evidence analyzer rather than a
+		// shell pipeline inside the target Pod or host.
+		return []commandSpec{
+			{name: "hccn_tool", args: []string{"-i", strconv.Itoa(deviceID), "-stat", "-g"}},
+			{name: "/usr/local/Ascend/driver/tools/hccn_tool", args: []string{"-i", strconv.Itoa(deviceID), "-stat", "-g"}},
+		}, nil
+	case "hccl-root-info":
+		return []commandSpec{{name: "cat", args: []string{"/etc/hccl_rootInfo.json"}}}, nil
+	case "hccl-test-layout":
+		// This is only a presence/layout preflight. Running an HCCL benchmark is
+		// load-generating and must be handled as an approved benchmark task.
+		return []commandSpec{
+			{name: "ls", args: []string{"-la", "/usr/local/Ascend/ascend-toolkit/latest/tools/hccl_test"}},
+			{name: "ls", args: []string{"-la", "/usr/local/Ascend/cann/tools/hccl_test"}},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported diagnostic probe %q", probe)

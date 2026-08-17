@@ -258,6 +258,15 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 - **短命容器的 plog 要在外部留证**：诊断模式可启动有保留期和容量预算的 `PlogCapture`，按 Pod UID
   增量收集到 Evidence Store；不 patch 业务服务、不注入 sidecar，Pod 重建后旧证据仍可参与时间线分析；
   当前已完成 start/list/get/stop、重启恢复、时限/字节预算的纵向切片，A2 现场路径兼容和日志平台适配继续迭代；
+- **采集器应主动到证据所在处执行**：不能要求运维人员逐个真实 IP 登录节点、运行脚本，再手工复制到
+  `imports`。Core 维护版本化 Collector Profile，先从 Kubernetes 拓扑自动展开 Node/Pod/container，
+  再选择现有业务 Pod exec、管理节点、预授权 SSH 或经批准的短命 DaemonSet/Job 通道；原始输出直接写入
+  Evidence Store，记录 profile hash、目标 UID、开始/结束时间、退出码和采集预算。业务容器不写入、不
+  注入 sidecar，Pod 重建前后的证据按 UID 分段关联；
+- **诊断读取与压力测试分级**：`hccn_tool -stat -g` 的 PFC counter 快照属于 active-read，可周期采样并
+  计算 delta；HCCL Test、带流量互 ping、profiling 等会占用 NPU/网络，属于 benchmark。Agent 可以自动
+  编排它们，但必须检查在线实例冲突，展示节点/设备/流量/时限计划并取得批准，不能用“采集脚本”名义
+  绕过维护窗口和预算；
 - **领域 Skill 渐进加载且不能提权**：CANN、HiXL、InferNex 组件经验以带来源和版本的 Skill/参考文件离线发布，先按描述选择、再按症状读取；用户可安装内部 Markdown Skill，但 Skill 不执行脚本、不新增工具、不绕过 Policy，实时事实仍由 typed MCP tool 获取；
 - **长任务必须有心跳**：工具调用、重试、压缩、等待、截断和失败原因对用户可见。展示事实与简要
   阶段说明，但不展示模型私有思维链；遇到歧义应主动询问，而不是耗尽工具轮次后返回一个 error；
@@ -279,7 +288,8 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 
 下一阶段不会增加一个可切换 verb 的万能 Kubernetes 工具，而是补齐以下领域 toolset：主 Chart 的
 values/history/render/diff/upgrade/rollback、Configuration Version capture/diff/restore、Gateway
-路由 plan/publish、infernex-checker、serving warmup、EvalScope 和 vLLM/Mooncake/PD 专项观察。
+路由 plan/publish、infernex-checker、PFC/HCCL CollectorRun、serving warmup、EvalScope 和
+vLLM/Mooncake/PD 专项观察。
 这既提高模型效率，也使每种写操作有独立 Policy 和恢复语义。
 
 ### 4.5 Mode、Policy、Configuration Version 与 Dashboard route

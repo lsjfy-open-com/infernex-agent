@@ -43,7 +43,8 @@ Helm 元数据来源。
 - 读取环境变量、未经登记的宿主机路径，或通过命令参数绕过路径/目标范围。
 
 `diagnose`、`modify`、`install` 和 `recover` 模式可以发布受控主动诊断工具。当前第一批实现只接受
-编译进 Core 的固定探针（系统摘要、文件系统、网络链路、NPU inventory、CANN 版本和 HCCN 设备链路）：
+编译进 Core 的固定探针（系统摘要、文件系统、网络链路、NPU inventory、CANN 版本、HCCN 设备链路、
+PFC 计数以及 HCCL root-info/测试工具布局预检）：
 
 | 通道 | 目标从哪里来 | 允许什么 | 不允许什么 |
 | --- | --- | --- | --- |
@@ -53,7 +54,11 @@ Helm 元数据来源。
 | 宿主机文件 | 运维人员登记的 Evidence Root | glob、grep、有界行读取 | 越界路径、符号链接逃逸、特殊文件和改写源文件 |
 
 这些探针归类为 `active-read`：可能建立 exec/SSH 会话并消耗少量设备或网络资源，但不改变 desired
-state。高负载互 ping、带流量的 serving/eval 和长时间采集还需要独立预算及启动/停止批准。写配置、
+state。PFC 计数快照只读取完整 `hccn_tool -stat -g` 输出，不在目标中执行 shell/grep。HCCL 性能测试
+会占用 NPU、建立跨节点通信并可能影响在线推理，因此 `hccl-test-layout` 只做存在性预检；真正测试必须
+作为独立 benchmark task，绑定设备/节点、并发、数据量、时限、维护窗口及启动/停止批准。
+
+高负载互 ping、带流量的 serving/eval 和长时间采集还需要独立预算及启动/停止批准。写配置、
 重启、扩缩容、部署和删除始终属于更高动作等级，不能因为已有 exec/SSH 通道而越权。
 
 通用日志工具要求当前身份已有目标命名空间 `get pods/log`，且调用者必须给出明确 Pod；
