@@ -1,0 +1,4 @@
+# Updating this file requests an InferNex Agent prerelease from the
+# agent/pi-agent-foundation branch. Keep the workflow default version aligned.
+version=0.5.0-alpha.11
+request=1
