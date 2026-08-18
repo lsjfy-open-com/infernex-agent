@@ -1063,24 +1063,49 @@ if ((${#diagnostic_ssh_targets[@]} > 0)); then
 fi
 declare -a canonical_evidence_roots=()
 for evidence_root in "${evidence_roots[@]}"; do
-  [[ "$evidence_root" == /* && "$evidence_root" != *','* ]] ||
-    bundle_die "evidence roots must be absolute paths without commas"
-  canonical_evidence_root="$(readlink -f -- "$evidence_root")"
-  [[ -d "$canonical_evidence_root" ]] ||
-    bundle_die "evidence root is not an existing directory: ${evidence_root}"
-  runuser -u "$service_user" -- test -r "$canonical_evidence_root" &&
-    runuser -u "$service_user" -- test -x "$canonical_evidence_root" ||
-    bundle_die "evidence root is not readable/traversable by ${service_user}: ${canonical_evidence_root}"
+  evidence_error=""
+  if [[ "$evidence_root" != /* || "$evidence_root" == *','* ]]; then
+    evidence_error="evidence root must be an absolute path without commas: ${evidence_root}"
+  else
+    canonical_evidence_root="$(readlink -f -- "$evidence_root" 2>/dev/null || true)"
+    if [[ -z "$canonical_evidence_root" || ! -d "$canonical_evidence_root" ]]; then
+      evidence_error="evidence root is not an existing directory: ${evidence_root}"
+    elif ! runuser -u "$service_user" -- test -r "$canonical_evidence_root" ||
+      ! runuser -u "$service_user" -- test -x "$canonical_evidence_root"; then
+      evidence_error="evidence root is not readable/traversable by ${service_user}: ${canonical_evidence_root}"
+    fi
+  fi
+  if [[ -n "$evidence_error" ]]; then
+    if [[ "$evidence_roots_set" == "true" ]]; then
+      bundle_die "$evidence_error"
+    fi
+    bundle_warn "ignoring stale evidence configuration during upgrade: ${evidence_error}"
+    continue
+  fi
   canonical_evidence_roots+=("$canonical_evidence_root")
 done
 if [[ -n "$report_directory" ]]; then
-  [[ "$report_directory" == /* && "$report_directory" != *','* ]] ||
-    bundle_die "report directory must be an absolute path without commas"
-  report_directory="$(readlink -f -- "$report_directory")"
-  [[ -d "$report_directory" ]] || bundle_die "report directory must already exist"
-  runuser -u "$service_user" -- test -w "$report_directory" &&
-    runuser -u "$service_user" -- test -x "$report_directory" ||
-    bundle_die "report directory is not writable/traversable by ${service_user}: ${report_directory}"
+  report_error=""
+  if [[ "$report_directory" != /* || "$report_directory" == *','* ]]; then
+    report_error="report directory must be an absolute path without commas"
+  else
+    canonical_report_directory="$(readlink -f -- "$report_directory" 2>/dev/null || true)"
+    if [[ -z "$canonical_report_directory" || ! -d "$canonical_report_directory" ]]; then
+      report_error="report directory must already exist: ${report_directory}"
+    elif ! runuser -u "$service_user" -- test -w "$canonical_report_directory" ||
+      ! runuser -u "$service_user" -- test -x "$canonical_report_directory"; then
+      report_error="report directory is not writable/traversable by ${service_user}: ${canonical_report_directory}"
+    fi
+  fi
+  if [[ -n "$report_error" ]]; then
+    if [[ "$report_directory_set" == "true" ]]; then
+      bundle_die "$report_error"
+    fi
+    bundle_warn "ignoring stale report configuration during upgrade: ${report_error}"
+    report_directory=""
+  else
+    report_directory="$canonical_report_directory"
+  fi
 fi
 agent_args+=(
   "--context-window-tokens=${context_window_tokens}"

@@ -8,6 +8,8 @@ package plogcapture
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strconv"
@@ -25,9 +27,10 @@ import (
 const maxChunkBytes int64 = 256 * 1024
 
 var defaultPlogRoots = []string{
-	"/root/ascend/log/plog",
-	"/home/HwHiAiUser/ascend/log/plog",
-	"/var/log/npu/slog",
+	"/root/ascend/log",
+	"/home/HwHiAiUser/ascend/log",
+	"/var/log/ascend",
+	"/var/log/npu",
 }
 
 type PodContainer struct {
@@ -35,6 +38,18 @@ type PodContainer struct {
 	Pod       string
 	UID       string
 	Container string
+	Roots     []string
+}
+
+type TargetSnapshot struct {
+	PodJSON     []byte
+	CurrentLog  []byte
+	PreviousLog []byte
+	Errors      []string
+}
+
+type SnapshotSource interface {
+	Snapshot(context.Context, PodContainer) (TargetSnapshot, error)
 }
 
 type Source interface {
@@ -75,23 +90,34 @@ func (s *KubernetesSource) ListTargets(ctx context.Context, namespace, selector,
 			if requestedContainer != "" && container.Name != requestedContainer {
 				continue
 			}
-			result = append(result, PodContainer{Namespace: namespace, Pod: pod.Name, UID: string(pod.UID), Container: container.Name})
+			result = append(result, PodContainer{Namespace: namespace, Pod: pod.Name, UID: string(pod.UID), Container: container.Name, Roots: plogRootsForContainer(container)})
 		}
 	}
 	return result, nil
 }
 
 func (s *KubernetesSource) ListFiles(ctx context.Context, target PodContainer) ([]string, error) {
+	roots := target.Roots
+	if len(roots) == 0 {
+		roots = s.roots
+	}
 	seen := map[string]bool{}
 	files := []string{}
-	for _, root := range s.roots {
-		stdout, _, err := s.exec(ctx, target, []string{"find", root, "-maxdepth", "6", "-type", "f", "-print0"}, 1024*1024)
+	discoveryErrors := []error{}
+	for _, root := range roots {
+		stdout, stderr, err := s.exec(ctx, target, []string{"find", root, "-maxdepth", "6", "-type", "f", "-print0"}, 1024*1024)
 		if err != nil {
+			detail := strings.TrimSpace(string(stderr))
+			if detail != "" {
+				discoveryErrors = append(discoveryErrors, fmt.Errorf("find %s: %w: %s", root, err, detail))
+			} else {
+				discoveryErrors = append(discoveryErrors, fmt.Errorf("find %s: %w", root, err))
+			}
 			continue
 		}
 		for _, candidate := range bytes.Split(stdout, []byte{0}) {
 			file := string(candidate)
-			if file == "" || !withinPlogRoots(file, s.roots) || seen[file] {
+			if file == "" || !withinPlogRoots(file, roots) || seen[file] {
 				continue
 			}
 			seen[file] = true
@@ -101,11 +127,14 @@ func (s *KubernetesSource) ListFiles(ctx context.Context, target PodContainer) (
 			}
 		}
 	}
+	if len(files) == 0 && len(discoveryErrors) > 0 {
+		return nil, fmt.Errorf("container log discovery failed for every candidate root: %w", errors.Join(discoveryErrors...))
+	}
 	return files, nil
 }
 
 func (s *KubernetesSource) FileSize(ctx context.Context, target PodContainer, file string) (int64, error) {
-	if !withinPlogRoots(file, s.roots) {
+	if !withinPlogRoots(file, targetRoots(target, s.roots)) {
 		return 0, fmt.Errorf("plog path is outside fixed roots")
 	}
 	stdout, stderr, err := s.exec(ctx, target, []string{"stat", "-c", "%s", "--", file}, 1024)
@@ -120,7 +149,7 @@ func (s *KubernetesSource) FileSize(ctx context.Context, target PodContainer, fi
 }
 
 func (s *KubernetesSource) ReadChunk(ctx context.Context, target PodContainer, file string, offset, limit int64) ([]byte, error) {
-	if !withinPlogRoots(file, s.roots) {
+	if !withinPlogRoots(file, targetRoots(target, s.roots)) {
 		return nil, fmt.Errorf("plog path is outside fixed roots")
 	}
 	if offset < 0 || limit < 1 || limit > maxChunkBytes {
@@ -131,6 +160,58 @@ func (s *KubernetesSource) ReadChunk(ctx context.Context, target PodContainer, f
 		return nil, fmt.Errorf("read plog chunk: %w: %s", err, strings.TrimSpace(string(stderr)))
 	}
 	return stdout, nil
+}
+
+func targetRoots(target PodContainer, fallback []string) []string {
+	if len(target.Roots) > 0 {
+		return target.Roots
+	}
+	return fallback
+}
+
+func plogRootsForContainer(container corev1.Container) []string {
+	roots := append([]string(nil), defaultPlogRoots...)
+	seen := map[string]bool{}
+	for _, root := range roots {
+		seen[root] = true
+	}
+	for _, mount := range container.VolumeMounts {
+		candidate := path.Clean(mount.MountPath)
+		lower := strings.ToLower(candidate)
+		if !path.IsAbs(candidate) || candidate == "/" || (!strings.Contains(lower, "ascend") && !strings.Contains(lower, "plog") && !strings.Contains(lower, "npu")) || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		roots = append([]string{candidate}, roots...)
+	}
+	return roots
+}
+
+func (s *KubernetesSource) Snapshot(ctx context.Context, target PodContainer) (TargetSnapshot, error) {
+	podObject, err := s.client.CoreV1().Pods(target.Namespace).Get(ctx, target.Pod, metav1.GetOptions{})
+	if err != nil {
+		return TargetSnapshot{}, fmt.Errorf("get Pod snapshot: %w", err)
+	}
+	result := TargetSnapshot{}
+	result.PodJSON, err = json.MarshalIndent(podObject, "", "  ")
+	if err != nil {
+		return TargetSnapshot{}, fmt.Errorf("encode Pod snapshot: %w", err)
+	}
+	limit := int64(1024 * 1024)
+	result.CurrentLog, err = s.client.CoreV1().Pods(target.Namespace).GetLogs(target.Pod, &corev1.PodLogOptions{Container: target.Container, Timestamps: true, LimitBytes: &limit}).DoRaw(ctx)
+	if err != nil {
+		result.Errors = append(result.Errors, "current container log: "+err.Error())
+	}
+	for _, status := range podObject.Status.ContainerStatuses {
+		if status.Name == target.Container && status.RestartCount > 0 {
+			result.PreviousLog, err = s.client.CoreV1().Pods(target.Namespace).GetLogs(target.Pod, &corev1.PodLogOptions{Container: target.Container, Previous: true, Timestamps: true, LimitBytes: &limit}).DoRaw(ctx)
+			if err != nil {
+				result.Errors = append(result.Errors, "previous container log: "+err.Error())
+			}
+			break
+		}
+	}
+	return result, nil
 }
 
 func withinPlogRoots(file string, roots []string) bool {

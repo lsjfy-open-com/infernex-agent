@@ -47,6 +47,7 @@ type Request struct {
 
 // Result is bounded evidence from an active-read diagnostic probe.
 type Result struct {
+	Status      string `json:"status"`
 	Channel     string `json:"channel"`
 	Probe       string `json:"probe"`
 	Target      string `json:"target"`
@@ -57,6 +58,7 @@ type Result struct {
 	ExitCode    int    `json:"exitCode"`
 	Truncated   bool   `json:"truncated"`
 	DurationMS  int64  `json:"durationMs"`
+	Error       string `json:"error,omitempty"`
 }
 
 // Runner runs only the probes compiled into this package. SSH destinations are
@@ -237,8 +239,10 @@ func (r *Runner) runCommand(ctx context.Context, channel, target, probe string, 
 	command := exec.CommandContext(probeCtx, executable, args...)
 	command.Stdout, command.Stderr = stdout, stderr
 	err := command.Run()
-	result := Result{Channel: channel, Probe: probe, Target: target, ActionClass: "active-read", Command: displayCommand(spec), Output: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode(err), Truncated: stdout.truncated || stderr.truncated, DurationMS: time.Since(started).Milliseconds()}
+	result := Result{Status: "succeeded", Channel: channel, Probe: probe, Target: target, ActionClass: "active-read", Command: displayCommand(spec), Output: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode(err), Truncated: stdout.truncated || stderr.truncated, DurationMS: time.Since(started).Milliseconds()}
 	if err != nil {
+		result.Status = "failed"
+		result.Error = err.Error()
 		return result, fmt.Errorf("%s probe %s failed: %w", channel, probe, err)
 	}
 	return result, nil
@@ -275,8 +279,10 @@ func (r *Runner) runPod(ctx context.Context, probe string, request Request, spec
 	stdout := &limitedBuffer{limit: maxOutputBytes}
 	stderr := &limitedBuffer{limit: maxOutputBytes / 4}
 	err = executor.StreamWithContext(probeCtx, remotecommand.StreamOptions{Stdout: stdout, Stderr: stderr})
-	result := Result{Channel: "pod", Probe: probe, Target: namespace + "/" + pod + ":" + container, ActionClass: "active-read", Command: displayCommand(spec), Output: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode(err), Truncated: stdout.truncated || stderr.truncated, DurationMS: time.Since(started).Milliseconds()}
+	result := Result{Status: "succeeded", Channel: "pod", Probe: probe, Target: namespace + "/" + pod + ":" + container, ActionClass: "active-read", Command: displayCommand(spec), Output: stdout.String(), Stderr: stderr.String(), ExitCode: exitCode(err), Truncated: stdout.truncated || stderr.truncated, DurationMS: time.Since(started).Milliseconds()}
 	if err != nil {
+		result.Status = "failed"
+		result.Error = err.Error()
 		return result, fmt.Errorf("pod probe %s failed: %w", probe, err)
 	}
 	return result, nil

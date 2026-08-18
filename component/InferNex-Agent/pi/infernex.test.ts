@@ -114,6 +114,35 @@ test("denies write-capable tools without interactive approval", async () => {
 	);
 });
 
+test("scopes filesystem tools to the launch workspace and gates mutations", async () => {
+	mockLargeResponse = false;
+	installMockFetch();
+	process.env.INFERNEX_WORKSPACE_ROOT = await mkdtemp(join(tmpdir(), "infernex-workspace-"));
+	const mock = mockAPI();
+	await infernexExtension(mock.api);
+	const gate = mock.handlers.get("tool_call")?.[0];
+	assert.ok(gate);
+
+	assert.equal(
+		await gate({ toolName: "read", input: { path: "." } }, { hasUI: false }),
+		undefined,
+	);
+	await assert.rejects(
+		gate({ toolName: "read", input: { path: "../outside" } }, { hasUI: false }),
+		/outside the InferNex workspace/,
+	);
+	const denied = await gate(
+		{ toolName: "write", input: { path: "report.md", content: "result" } },
+		{ hasUI: true, ui: { confirm: async () => false } },
+	);
+	assert.deepEqual(denied, { block: true, reason: "operator denied workspace write" });
+	const allowed = await gate(
+		{ toolName: "write", input: { path: "report.md", content: "result" } },
+		{ hasUI: true, ui: { confirm: async () => true } },
+	);
+	assert.equal(allowed, undefined);
+});
+
 test("stores large tool results and reads them progressively by hash", async () => {
 	installMockFetch();
 	mockLargeResponse = true;

@@ -151,3 +151,33 @@ func TestNormalizeReasoningDisplay(t *testing.T) {
 		t.Fatal("invalid reasoning display accepted")
 	}
 }
+
+func TestResolveTUIWorkspaceDefaultsToCurrentDirectory(t *testing.T) {
+	dir := t.TempDir()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	got, err := resolveTUIWorkspace("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := filepath.EvalSymlinks(dir)
+	if got != want {
+		t.Fatalf("workspace=%q want %q", got, want)
+	}
+}
+
+func TestResolveTUIWorkspaceRejectsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveTUIWorkspace(path); err == nil {
+		t.Fatal("file workspace accepted")
+	}
+}

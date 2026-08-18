@@ -46,7 +46,7 @@ Configuration Version Manager 和 Evidence Store，而不能退化为任意 shel
 | --- | --- | --- | --- |
 | `infernex_list_diagnostic_probes` | passive-read | 列出固定 probe、local/pod/ssh channel 和运维预配置 SSH alias | execution mode 不是 `detect` |
 | `infernex_run_diagnostic_probe` | active-read | 固定 system/磁盘/网络/NPU/CANN/HCCN/PFC/HCCL-preflight 探针；支持 local、Pod exec、SSH alias 和已配置 `host-root` helper | `diagnose`/`modify`/`install`/`recover` |
-| `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 持续增量读取固定 CANN plog 根目录；需要时限、容量和本地批准 | execution mode 不是 `detect` |
+| `infernex_start_plog_capture` | diagnose-local-write | 按 namespace + label selector 从容器挂载与 CANN/NPU 兼容根增量采集 Pod 元信息、current/previous logs 和 plog；需要时限、容量和本地批准 | execution mode 不是 `detect` |
 | `infernex_list_plog_captures` / `infernex_get_plog_capture` | passive-read | 只返回任务、Pod UID segment 数、进度和 Evidence 路径，不把原始 plog 塞入上下文 | execution mode 不是 `detect` |
 | `infernex_stop_plog_capture` | diagnose-local-write | 停止采集但不删除已保留证据；需要批准 | execution mode 不是 `detect` |
 | `infernex_start_collector_run` | diagnose-local-write | `pod` 自动展开 selector；`local/host-root` 采集安装节点；周期运行固定 PFC/HCCN/NPU/CANN/HCCL-preflight profile并直接落 Evidence；需要批准 | execution mode 不是 `detect` |

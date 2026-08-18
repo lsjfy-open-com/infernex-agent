@@ -3,12 +3,19 @@ package plogcapture
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
 type fakeSource struct {
 	targets []PodContainer
 	files   map[string][]byte
+}
+
+type fakeSnapshotSource struct{ *fakeSource }
+
+func (f *fakeSnapshotSource) Snapshot(context.Context, PodContainer) (TargetSnapshot, error) {
+	return TargetSnapshot{PodJSON: []byte(`{"metadata":{"name":"worker-0"}}`), CurrentLog: []byte("runtime stdout\n"), PreviousLog: []byte("previous crash\n")}, nil
 }
 
 func (f *fakeSource) ListTargets(context.Context, string, string, string) ([]PodContainer, error) {
@@ -105,6 +112,28 @@ func TestWithinPlogRoots(t *testing.T) {
 	for _, candidate := range []string{"/etc/shadow", "/root/ascend/log/plog/../../secret", "/root/ascend/log/plog/a\n/etc/shadow"} {
 		if withinPlogRoots(candidate, defaultPlogRoots) {
 			t.Fatalf("unsafe path accepted: %q", candidate)
+		}
+	}
+}
+
+func TestCaptureStoresPodAndContainerSnapshot(t *testing.T) {
+	state, evidence := t.TempDir(), t.TempDir()
+	base := &fakeSource{targets: []PodContainer{{Namespace: "models", Pod: "worker-0", UID: "uid-1", Container: "vllm"}}, files: map[string][]byte{"/root/ascend/log/plog/runtime.log": []byte("plog\n")}}
+	manager, err := NewManager(&fakeSnapshotSource{base}, state, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := manager.Create(StartRequest{Namespace: "models", LabelSelector: "app=vllm", MaxBytes: 1024 * 1024, DurationMinutes: 60, Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !manager.poll(context.Background(), task.ID) {
+		t.Fatal("capture stopped unexpectedly")
+	}
+	directory := filepath.Join(evidence, safeName(task.ID), "uid-1", "vllm")
+	for _, name := range []string{"pod.json", "current.log", "previous.log"} {
+		if _, err := os.Stat(filepath.Join(directory, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
 		}
 	}
 }

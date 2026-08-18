@@ -1,6 +1,7 @@
 # 本地历史日志分析与 Markdown 报告
 
-InferNex Agent 不默认遍历宿主机文件系统。Pi 的任意文件工具也被关闭，模型只能访问运维人员明确登记的只读证据目录，以及 Agent 自己管理的报告目录。
+InferNex Agent 把交互式当前目录与后台 Evidence Root 分成两种用途。TUI 可直接读取启动目录；后台
+服务若要跨 Session、无人值守地持续扫描某个固定目录，才需要登记 Evidence Root。
 
 这用于处理无法从 Kubernetes 重新取得的材料，例如：
 
@@ -9,7 +10,17 @@ InferNex Agent 不默认遍历宿主机文件系统。Pi 的任意文件工具�
 - infernex-checker、网络互 ping、时延或 NPU 检查结果；
 - 现场人员补充的时间线、配置差异和复现记录。
 
-## 登记日志目录
+## 交互式分析：无需登记
+
+```bash
+cd /data/array/incidents/case-20260818
+sudo infernex-agent tui
+```
+
+模型可在该目录内使用 read、glob/find、grep、ls。创建或修改 Markdown 会弹出确认；不能通过 `..`、
+绝对路径或符号链接越过这个工作区。也可用 `--workspace /data/array/incidents/case-20260818` 显式指定。
+
+## 后台长期扫描：登记 Evidence Root
 
 新安装时可以重复指定：
 
@@ -26,7 +37,8 @@ sudo /opt/infernex-agent/bin/configure-evidence.sh \
 sudo /opt/infernex-agent/bin/configure-evidence.sh --show
 ```
 
-目录必须是已存在的绝对路径，且 `infernex-agent` 服务用户能够读取和进入。删除授权不会删除原日志：
+目录必须是已存在的绝对路径，且后台 `infernex-agent` 服务用户能够读取和进入。它与 root 启动的
+TUI 权限不同。删除授权不会删除原日志：
 
 ```bash
 sudo /opt/infernex-agent/bin/configure-evidence.sh \
@@ -46,7 +58,7 @@ sudo chown -R infernex-agent:infernex-agent \
 
 ## 自然语言使用
 
-进入 `infernex-agent tui` 或 classic chat 后可以直接说：
+进入相应目录后启动 `infernex-agent tui`，可以直接说：
 
 ```text
 遍历我登记的历史日志目录，找出所有 vllm、mooncake 和 hccl 日志；
@@ -98,7 +110,7 @@ sudo cp /var/lib/infernex-agent/reports/<report>.md /data/reports/
 
 ## 安全边界
 
-- 只允许显式根目录；拒绝绝对子路径、`..`、符号链接逃逸、设备、socket 和 FIFO。
+- TUI 只允许其启动工作区；后台工具只允许显式 Evidence Root。两者都拒绝 `..`、符号链接逃逸、设备、socket 和 FIFO。
 - `.env`、私钥、证书私钥包、kubeconfig 等明显凭据文件即使位于授权目录内也拒绝读取。
 - 单文件、总扫描字节、匹配数、返回行数和 Markdown 大小都有硬上限。
 - 常见 credential 形式在送入模型和写入报告前脱敏。

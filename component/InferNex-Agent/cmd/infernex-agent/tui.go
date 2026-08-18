@@ -31,6 +31,7 @@ type tuiOptions struct {
 	stateDir         string
 	checkOnly        bool
 	reasoningDisplay string
+	workspace        string
 	piArgs           []string
 }
 
@@ -77,12 +78,16 @@ func runTUI(args []string) error {
 	if err := preparePiState(opts.stateDir, modelOpts, apiKey, opts.reasoningDisplay); err != nil {
 		return err
 	}
-	workspaceDir := filepath.Join(opts.stateDir, "workspace")
+	workspaceDir, err := resolveTUIWorkspace(opts.workspace)
+	if err != nil {
+		return err
+	}
 	piEnv := append(os.Environ(),
 		"PI_CODING_AGENT_DIR="+opts.stateDir,
 		"INFERNEX_PI_API_KEY="+apiKey,
 		"INFERNEX_MCP_URL="+opts.mcpURL,
 		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
+		"INFERNEX_WORKSPACE_ROOT="+workspaceDir,
 	)
 	if err := checkPiModelConfiguration(opts, modelOpts, piEnv); err != nil {
 		return err
@@ -95,7 +100,6 @@ func runTUI(args []string) error {
 	piArgs := []string{
 		"--provider", "infernex",
 		"--model", modelOpts.model,
-		"--no-builtin-tools",
 		"--no-extensions",
 		"--extension", opts.extension,
 		"--no-skills",
@@ -111,9 +115,9 @@ func runTUI(args []string) error {
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	command.Env = piEnv
-	// Pi records its process working directory in every session. Do not inherit
-	// the caller's package/extraction directory: it may disappear after an
-	// upgrade and make an otherwise valid session impossible to resume.
+	// The interactive Agent deliberately inherits the operator's selected
+	// workspace. Pi session state remains under stateDir and is not mixed with
+	// files in this directory.
 	command.Dir = workspaceDir
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("Pi TUI stopped: %w", err)
@@ -154,6 +158,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	flags.StringVar(&opts.stateDir, "state-dir", defaultPiStateDir, "Pi configuration and session directory")
 	flags.BoolVar(&opts.checkOnly, "check", false, "validate the migrated InferNex model configuration without opening the TUI")
 	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "", "reasoning block display: hidden (default) or visible")
+	flags.StringVar(&opts.workspace, "workspace", "", "filesystem workspace; defaults to the directory where infernex-agent was started")
 	if err := flags.Parse(args); err != nil {
 		return tuiOptions{}, modelFileOptions{}, "", err
 	}
@@ -183,6 +188,32 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 		return tuiOptions{}, modelFileOptions{}, "", err
 	}
 	return opts, modelOpts, apiKey, nil
+}
+
+func resolveTUIWorkspace(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		current, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("resolve current workspace: %w", err)
+		}
+		value = current
+	}
+	absolute, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace %q: %w", value, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("workspace is unavailable: %s: %w", absolute, err)
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", fmt.Errorf("inspect workspace %s: %w", resolved, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workspace is not a directory: %s", resolved)
+	}
+	return resolved, nil
 }
 
 func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey, reasoningDisplay string) error {

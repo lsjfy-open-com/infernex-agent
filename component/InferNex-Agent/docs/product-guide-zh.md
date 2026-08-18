@@ -99,7 +99,9 @@ sudo ./install.sh
 输出阶段性结论。运行中可用 `/context` 查看预算、用 `/compact` 手动压缩；完整说明见
 [上下文管理](context-management-zh.md)。
 
-对于重启后无法重新采集的人工保存日志，先用 `configure-evidence.sh --add-root /绝对/日志目录` 登记只读根目录。Agent 可以 glob、grep、过滤海量 metrics/health 探针噪声、分页读取并创建带源文件 hash 的 Markdown 报告；不会获得全盘文件访问。完整用法见[本地历史日志分析与 Markdown 报告](local-evidence-and-reports-zh.md)。
+对于重启后无法重新采集的人工保存日志，直接在日志目录中启动 TUI，或用 `--workspace /绝对/目录`；
+无需登记即可 glob、grep、过滤 metrics/health 噪声、分页读取，并在确认后创建 Markdown。只有后台
+无人值守扫描才使用 `configure-evidence.sh` 登记 Evidence Root。完整用法见[本地历史日志分析与 Markdown 报告](local-evidence-and-reports-zh.md)。
 
 对于仍在运行的业务 Pod，`CollectorRun` 可以按 namespace + label selector 自动展开当前 Pod/container，周期采集 PFC、HCCN、NPU、CANN 和 HCCL 前置检查，并把样本直接写入 Evidence Store。完整用法见[节点与容器持续诊断 CollectorRun](collector-runs-zh.md)。
 

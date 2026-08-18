@@ -92,7 +92,8 @@ MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是�
 PFC、HCCN、NPU、CANN 和 HCCL 前置检查可由持久 `CollectorRun` 自动按 label selector 展开 Pod/container，周期执行固定 Profile，并把 JSONL 样本直接保存到 Agent Evidence Store，不需要运维人员逐节点执行和搬运文件。详见[节点与容器持续诊断 CollectorRun](docs/collector-runs-zh.md)。
 
 `diagnose` 模式还可经用户批准启动外部 `PlogCapture`：按 workload label selector 监听 Pod，通过只读
-exec 增量采集固定 CANN plog 目录，按 Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
+exec 从容器挂载与 CANN/NPU 兼容根发现日志，保存 Pod 元信息、current/previous logs 和 plog，并按
+Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 采集任务有持续时间和最大字节上限，停止任务不会删除证据，也不会 patch 或注入业务 Pod。
 
 `agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、

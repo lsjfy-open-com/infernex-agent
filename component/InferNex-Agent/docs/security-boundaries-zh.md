@@ -52,7 +52,8 @@ PFC 计数以及 HCCL root-info/测试工具布局预检）：
 | 宿主机探针 | Agent 所在管理节点 | 固定程序和固定参数 | 模型提供命令、路径或环境变量读取 |
 | root helper | 仅安装节点；受保护 Unix socket | root 身份执行固定 NPU/CANN/HCCN/HCCL-preflight profile | 模型进程成为 root、任意 shell/脚本/路径/参数、远程地址 |
 | SSH 探针 | 运维人员预先写入 OpenSSH config 的 alias allow-list | 在该 alias 上运行相同固定探针 | 模型提供 IP、用户名、密钥、跳板参数或命令 |
-| 宿主机文件 | 运维人员登记的 Evidence Root | glob、grep、有界行读取 | 越界路径、符号链接逃逸、特殊文件和改写源文件 |
+| 交互式宿主机文件 | 启动 TUI 时的当前目录或 `--workspace` | read、glob/find、grep、ls | 越界/符号链接逃逸；write/edit/bash 需本机批准 |
+| 后台宿主机证据 | 运维人员登记的 Evidence Root | glob、grep、有界行读取 | 越界路径、符号链接逃逸、特殊文件和改写源文件 |
 
 这些探针归类为 `active-read`：可能建立 exec/SSH 会话并消耗少量设备或网络资源，但不改变 desired
 state。PFC 计数快照只读取完整 `hccn_tool -stat -g` 输出，不在目标中执行 shell/grep。HCCL 性能测试

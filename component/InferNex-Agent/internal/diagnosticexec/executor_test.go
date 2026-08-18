@@ -1,14 +1,27 @@
 package diagnosticexec
 
 import (
+	"context"
 	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 )
+
+func TestCommandFailureRemainsStructuredEvidence(t *testing.T) {
+	runner := &Runner{timeout: time.Second}
+	result, err := runner.runCommand(context.Background(), "local", "management-node", "test-missing", commandSpec{name: "definitely-not-an-infernex-command"}, "definitely-not-an-infernex-command")
+	if err == nil {
+		t.Fatal("missing command unexpectedly succeeded")
+	}
+	if result.Status != "failed" || result.ExitCode != -1 || result.Error == "" || result.Command == "" {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+}
 
 func TestProbeCommandsRejectsArbitraryProbeAndDevice(t *testing.T) {
 	if _, err := probeCommands("rm-everything", 0); err == nil {

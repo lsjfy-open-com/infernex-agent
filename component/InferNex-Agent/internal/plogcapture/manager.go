@@ -58,6 +58,7 @@ type Task struct {
 	EvidenceRoot  string            `json:"evidenceRoot"`
 	Offsets       map[string]int64  `json:"offsets,omitempty"`
 	SegmentFiles  map[string]string `json:"segmentFiles,omitempty"`
+	Snapshots     map[string]bool   `json:"snapshots,omitempty"`
 }
 
 type TaskList struct {
@@ -140,7 +141,7 @@ func (m *Manager) Create(request StartRequest) (Task, error) {
 		return Task{}, fmt.Errorf("durationMinutes must be between 1 and 10080")
 	}
 	now := time.Now().UTC()
-	task := &Task{ID: newTaskID(), Namespace: namespace, LabelSelector: selector, Container: strings.TrimSpace(request.Container), Status: "running", CreatedAt: now, UpdatedAt: now, Deadline: now.Add(duration), MaxBytes: maxBytes, EvidenceRoot: m.evidenceDir, Offsets: map[string]int64{}, SegmentFiles: map[string]string{}}
+	task := &Task{ID: newTaskID(), Namespace: namespace, LabelSelector: selector, Container: strings.TrimSpace(request.Container), Status: "running", CreatedAt: now, UpdatedAt: now, Deadline: now.Add(duration), MaxBytes: maxBytes, EvidenceRoot: m.evidenceDir, Offsets: map[string]int64{}, SegmentFiles: map[string]string{}, Snapshots: map[string]bool{}}
 	m.mu.Lock()
 	for _, existing := range m.tasks {
 		if existing.Status == "running" && existing.Namespace == task.Namespace && existing.LabelSelector == task.LabelSelector && existing.Container == task.Container {
@@ -253,6 +254,9 @@ func (m *Manager) poll(ctx context.Context, id string) bool {
 	}
 captureTargets:
 	for _, target := range targets {
+		if !m.captureTargetSnapshot(ctx, id, target) {
+			return false
+		}
 		files, err := m.source.ListFiles(ctx, target)
 		if err != nil {
 			m.recordError(id, err)
@@ -284,6 +288,79 @@ captureTargets:
 		m.mu.Unlock()
 	}
 	return true
+}
+
+func (m *Manager) captureTargetSnapshot(ctx context.Context, id string, target PodContainer) bool {
+	source, ok := m.source.(SnapshotSource)
+	if !ok {
+		return true
+	}
+	key := target.UID + "\x00" + target.Container
+	m.mu.Lock()
+	task := m.tasks[id]
+	if task.Snapshots[key] {
+		m.mu.Unlock()
+		return true
+	}
+	remaining := task.MaxBytes - task.CapturedBytes
+	m.mu.Unlock()
+	if remaining <= 0 {
+		m.finishCapacity(id)
+		return false
+	}
+	snapshot, err := source.Snapshot(ctx, target)
+	if err != nil {
+		m.recordError(id, err)
+		return true
+	}
+	directory := filepath.Join(m.evidenceDir, safeName(id), safeName(target.UID), safeName(target.Container))
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		m.recordError(id, err)
+		return true
+	}
+	files := []struct {
+		name string
+		data []byte
+	}{{"pod.json", snapshot.PodJSON}, {"current.log", snapshot.CurrentLog}, {"previous.log", snapshot.PreviousLog}}
+	if len(snapshot.Errors) > 0 {
+		encoded, _ := json.MarshalIndent(snapshot.Errors, "", "  ")
+		files = append(files, struct {
+			name string
+			data []byte
+		}{"capture-errors.json", encoded})
+	}
+	written := int64(0)
+	for _, item := range files {
+		if len(item.data) == 0 || written >= remaining {
+			continue
+		}
+		data := item.data
+		if int64(len(data)) > remaining-written {
+			data = data[:remaining-written]
+		}
+		if err := os.WriteFile(filepath.Join(directory, item.name), data, 0o600); err != nil {
+			m.recordError(id, fmt.Errorf("write %s snapshot: %w", item.name, err))
+			return true
+		}
+		written += int64(len(data))
+	}
+	m.mu.Lock()
+	if task = m.tasks[id]; task != nil {
+		task.Snapshots[key] = true
+		task.CapturedBytes += written
+		task.UpdatedAt = time.Now().UTC()
+		reachedCapacity := task.CapturedBytes >= task.MaxBytes
+		copy := cloneTask(task)
+		m.mu.Unlock()
+		_ = m.persist(copy)
+		if reachedCapacity {
+			m.finishCapacity(id)
+			return false
+		}
+		return true
+	}
+	m.mu.Unlock()
+	return false
 }
 
 func (m *Manager) captureFile(ctx context.Context, id string, target PodContainer, sourcePath string) bool {
@@ -369,7 +446,20 @@ func (m *Manager) segmentPath(id string, target PodContainer, sourcePath string)
 	}
 	destination := filepath.Join(directory, hex.EncodeToString(digest[:8])+".plog")
 	_, err := os.Stat(destination)
-	return destination, os.IsNotExist(err), nil
+	newSegment := os.IsNotExist(err)
+	if newSegment {
+		metadata, marshalErr := json.MarshalIndent(map[string]string{
+			"namespace": target.Namespace, "pod": target.Pod, "podUID": target.UID,
+			"container": target.Container, "sourcePath": sourcePath,
+		}, "", "  ")
+		if marshalErr != nil {
+			return "", false, marshalErr
+		}
+		if writeErr := os.WriteFile(destination+".source.json", append(metadata, '\n'), 0o600); writeErr != nil {
+			return "", false, writeErr
+		}
+	}
+	return destination, newSegment, nil
 }
 
 func (m *Manager) finishCapacity(id string) {
@@ -440,6 +530,9 @@ func (m *Manager) load() error {
 		if task.SegmentFiles == nil {
 			task.SegmentFiles = map[string]string{}
 		}
+		if task.Snapshots == nil {
+			task.Snapshots = map[string]bool{}
+		}
 		m.tasks[task.ID] = &task
 	}
 	return nil
@@ -454,6 +547,10 @@ func cloneTask(task *Task) Task {
 	copy.SegmentFiles = map[string]string{}
 	for key, value := range task.SegmentFiles {
 		copy.SegmentFiles[key] = value
+	}
+	copy.Snapshots = map[string]bool{}
+	for key, value := range task.Snapshots {
+		copy.Snapshots[key] = value
 	}
 	return copy
 }

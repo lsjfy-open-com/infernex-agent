@@ -13,19 +13,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.7`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.11`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.7-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.7-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.11-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.11-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.7-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.7-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.7-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.11-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.11-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.11-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -80,10 +80,18 @@ assistant message 为空时也会直接显示原因。这样可以区分“模�
 请保留告警中的 provider error、vLLM access log 对应请求，以及接口返回的首个 SSE event，作为后续
 适配具体 vLLM-Ascend 版本和 tool-call parser 的证据。
 
-TUI 固定使用 `/var/lib/infernex-agent/pi/workspace` 作为工作目录，并把该目录写入新 Session。
-它不会继承安装包解压目录或运维人员执行 `sudo` 时所在的临时目录，因此升级、删除旧安装目录后
-仍可恢复会话。旧 Session 如果记录的目录已经不存在，Pi 会提示在当前稳定工作目录继续；确认一次
-后，新会话记录将使用稳定目录。
+TUI 默认把**执行命令时的当前目录**作为文件工作区，并继承启动用户的操作系统权限。以 root 从
+`/data/array/case-01` 启动时，可直接只读遍历该磁盘阵列目录，无需 `configure-evidence`：
+
+```bash
+cd /data/array/case-01
+sudo infernex-agent tui
+# 或者不切换目录
+sudo infernex-agent tui --workspace /data/array/case-01
+```
+
+Session 仍单独保存在 `/var/lib/infernex-agent/pi/sessions`，不会写进工作区。恢复 Session 时对应挂载
+目录必须仍然存在；磁盘阵列未挂载时应先恢复挂载，不要把会话静默切换到另一个目录。
 
 新安装默认 `max-output-tokens=8192`，小窗口按 context window 的 1/4 降低。该值会转换为 Pi 模型
 配置的 `maxTokens`；可重新运行模型配置脚本调整，不需要重新打包或安装 Pi。Session 负责恢复一次
@@ -113,13 +121,21 @@ infernex-agent tui --reasoning-display visible
 
 ## 工具与安全边界
 
-启动器固定使用 `--no-builtin-tools`，因此模型不能使用 Pi 自带的任意 Shell 和文件读写能力。`infernex.ts` 从 `http://127.0.0.1:8080/mcp` 动态加载现有 InferNex 工具：
+alpha.11 启用受控的 Pi 文件工具，并由 InferNex 扩展实施工作区和批准策略：
+
+- `read`、`grep`、`find`、`ls` 在当前工作区内免确认；
+- 相对路径和绝对路径均不能越出工作区，符号链接也不能逃逸；
+- `write`、`edit` 每次必须由当前 TUI 确认；无交互终端时拒绝；
+- `bash` 暂按每条命令确认，因为单靠命令文本无法可靠证明其只读；
+- 权限来自启动用户；Agent 不绕过 Linux DAC/ACL，也不会自动 chmod/chown 磁盘阵列。
+
+`infernex.ts` 同时从 `http://127.0.0.1:8080/mcp` 动态加载现有 InferNex 集群工具：
 
 - MCP 标记为只读的发现、日志和诊断工具可主动执行；
 - 任何未明确标记只读的工具都需要当前终端确认；
 - 没有交互终端时写工具默认拒绝；
 - Kubernetes RBAC、Secret 脱敏、快照、变更记录、readiness 验证和回退仍由 Go 后端执行；
-- Pi 不能绕过 MCP 直接执行 `kubectl`、`helm` 或宿主机命令。
+- `kubectl`、`helm` 或宿主机 shell 只有在本机批准后才可执行；结构化 MCP 工具仍是首选。
 
 Pi 自身不是安全沙箱。若启动时移除上述限制、手工加载其他扩展或直接运行原始 Pi 二进制，行为不属于 InferNex Agent 的受支持模式。
 

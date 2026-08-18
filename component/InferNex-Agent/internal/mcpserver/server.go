@@ -66,9 +66,10 @@ authorization to modify configuration, restart processes, install packages, or d
 const plogCaptureInstructions = `
 External CANN plog capture is enabled in diagnose-or-higher mode. Start a capture only after showing
 the exact namespace, label selector, container filter, duration, and byte budget and obtaining local
-approval. Capture follows Pod UID changes, reads only fixed CANN plog roots, and writes segmented
-evidence under the Agent-owned Evidence Store. It does not patch workloads, inject a sidecar, or
-write into a container. Use list/get to show progress and stop when enough evidence has been kept.`
+approval. Capture follows Pod UID changes, discovers CANN log roots from container mounts plus
+bounded known locations, and writes Pod metadata, current/previous container logs, source maps, and
+segmented plog evidence under the Agent-owned Evidence Store. It does not patch workloads, inject a
+sidecar, or write into a container. Use list/get to show progress and stop when enough evidence has been kept.`
 
 const collectorRunInstructions = `
 Durable diagnostic CollectorRuns are enabled in diagnose-or-higher mode. They automatically expand
@@ -774,6 +775,17 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 				}
 			}
 			output, err := options.diagnosticExec.Run(ctx, diagnosticexec.Request{Channel: input.Channel, Probe: input.Probe, Namespace: input.Namespace, Pod: input.Pod, Container: input.Container, SSHTarget: input.SSHTarget, DeviceID: input.DeviceID})
+			// A non-zero command exit is diagnostic evidence, not an MCP transport
+			// failure. Preserve stderr and exitCode for the model and operator.
+			if err != nil && output.Probe != "" {
+				if output.Status == "" {
+					output.Status = "failed"
+				}
+				if output.Error == "" {
+					output.Error = err.Error()
+				}
+				return nil, output, nil
+			}
 			return nil, output, err
 		})
 	}

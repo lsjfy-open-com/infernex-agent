@@ -35,7 +35,13 @@ container 同时只允许一个运行任务，避免重复采集。
 ```text
 /var/lib/infernex-agent/
 ├── plog-captures/<task-id>.json
-└── imports/plog/<task-id>/<pod-uid>/<container>/<source-path-hash>.plog
+└── imports/plog/<task-id>/<pod-uid>/<container>/
+    ├── pod.json
+    ├── current.log
+    ├── previous.log
+    ├── capture-errors.json
+    ├── <source-path-hash>.plog
+    └── <source-path-hash>.plog.source.json
 ```
 
 任务状态包含 deadline、最大/已采集字节、segment 数和最近错误。Pod UID 改变后创建新 segment，旧
@@ -45,20 +51,23 @@ segment 不覆盖；进程重启后，deadline 尚未到期的 `running` 任务�
 `imports` 始终作为 Agent 自有 Evidence Root 注册。模型应先 grep，再有界读取需要的行；读取工具会
 做常见凭据脱敏、噪声过滤并计算文件 SHA-256。原始文件保持 `0600`，不得直接发送给外部模型。
 
-## 当前固定容器路径和依赖
+## 容器路径发现和依赖
 
-第一版只发现以下固定根目录下的常规文件：
+alpha.11 先检查目标容器的 `volumeMounts`，将包含 `ascend`、`plog` 或 `npu` 的挂载路径作为高优先级
+候选，再扫描以下有界兼容根：
 
-- `/root/ascend/log/plog`；
-- `/home/HwHiAiUser/ascend/log/plog`；
-- `/var/log/npu/slog`。
+- `/root/ascend/log`；
+- `/home/HwHiAiUser/ascend/log`；
+- `/var/log/ascend`；
+- `/var/log/npu`。
 
 容器需要提供 `find`、`stat` 和 `dd`。读取以最大 256KiB 的 chunk 递增进行，每轮最多处理 20 个
 Running Pod/container target 和合计 200 个文件。当前 kubeconfig 还必须在目标 namespace
 拥有 `get/list pods` 和 `create pods/exec`。
 
-若某个 vLLM-Ascend/CANN 镜像使用不同 plog 根目录，应先记录为兼容性缺口，而不是让模型传入任意
-路径。后续由经过审阅的 image/version capability profile 扩充固定 root。若已有 hostPath、Loki 或
+若所有候选路径失败，任务会保留每个 `find` 的 exec/stderr，而不是只显示空采集。每个远端镜像文件
+都有 source map，可追溯 namespace、Pod、UID、container 和容器内原路径。若某镜像使用无法从挂载
+推断的新路径，应通过经过审阅的 image/version capability profile 扩充，而不是让模型传任意路径。若已有 hostPath、Loki 或
 企业日志平台，应优先开发只读适配器，避免重复搬运。
 
 ## 安全和剩余边界

@@ -28,3 +28,16 @@ func TestListTargetsUsesSelectorPhaseAndContainer(t *testing.T) {
 		t.Fatalf("unexpected targets: %#v", targets)
 	}
 }
+
+func TestPlogRootsPreferContainerLogMounts(t *testing.T) {
+	roots := plogRootsForContainer(corev1.Container{VolumeMounts: []corev1.VolumeMount{
+		{Name: "ascend-logs", MountPath: "/data/array/ascend/log"},
+		{Name: "models", MountPath: "/models"},
+	}})
+	if len(roots) < 2 || roots[0] != "/data/array/ascend/log" {
+		t.Fatalf("roots=%v", roots)
+	}
+	if withinPlogRoots("/etc/shadow", roots) {
+		t.Fatal("path outside discovered roots accepted")
+	}
+}
