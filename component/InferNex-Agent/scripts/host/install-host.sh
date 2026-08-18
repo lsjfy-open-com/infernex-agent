@@ -598,6 +598,7 @@ installed_pi_runtime="${install_root}/pi-runtime"
 installed_pi="${installed_pi_runtime}/pi"
 installed_pi_extension="${install_root}/pi/infernex.ts"
 installed_pi_license="${install_root}/pi/LICENSE.pi.txt"
+installed_tool_runtime="${install_root}/tools"
 installed_cli="/usr/local/bin/infernex-agent"
 installed_version=""
 if [[ -x "$installed_binary" ]]; then
@@ -607,6 +608,8 @@ if [[ -x "$installed_binary" ]]; then
 fi
 [[ ! -e "$installed_pi_runtime" || ( -d "$installed_pi_runtime" && ! -L "$installed_pi_runtime" ) ]] ||
   bundle_die "refusing unsafe Pi runtime path: ${installed_pi_runtime}"
+[[ ! -e "$installed_tool_runtime" || ( -d "$installed_tool_runtime" && ! -L "$installed_tool_runtime" ) ]] ||
+  bundle_die "refusing unsafe TUI tool runtime path: ${installed_tool_runtime}"
 
 if ! id "$service_user" >/dev/null 2>&1; then
   bundle_info "creating system user ${service_user}"
@@ -674,6 +677,7 @@ host_backup_targets=(
   "$installed_skills_configurator"
   "$installed_builtin_skills"
   "$installed_delegate_token"
+  "$installed_tool_runtime"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -834,6 +838,27 @@ else
     rm -rf -- "$installed_pi_runtime"
   fi
   rm -f -- "$installed_pi_extension" "$installed_pi_license"
+fi
+
+if [[ -n "$bundle_root" &&
+  -x "${bundle_root}/payload/tools/bin/rg" &&
+  -x "${bundle_root}/payload/tools/bin/fd" &&
+  -d "${bundle_root}/payload/tools/licenses" ]]; then
+  if [[ -d "$installed_tool_runtime" ]]; then
+    rm -rf -- "$installed_tool_runtime"
+  fi
+  install -d -m 0755 -o root -g root "$installed_tool_runtime"
+  cp -a -- "${bundle_root}/payload/tools/." "$installed_tool_runtime/"
+  chown -R root:root "$installed_tool_runtime"
+  chmod 0755 "$installed_tool_runtime/bin/rg" "$installed_tool_runtime/bin/fd"
+  "$installed_tool_runtime/bin/rg" --version >/dev/null ||
+    bundle_die "bundled ripgrep cannot run on this host"
+  "$installed_tool_runtime/bin/fd" --version >/dev/null ||
+    bundle_die "bundled fd cannot run on this host"
+else
+  if [[ -d "$installed_tool_runtime" ]]; then
+    rm -rf -- "$installed_tool_runtime"
+  fi
 fi
 
 if [[ -n "$bundle_root" && -d "${bundle_root}/skills" ]]; then

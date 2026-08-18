@@ -13,24 +13,27 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.11`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.12`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.11-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.11-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.12-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.12-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.11-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.11-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.11-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.12-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.12-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.12-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
 
-完整包已经包含固定版本的 Pi runtime，安装过程不会执行 `npm install`，也不会访问 npm registry。
+完整包已经包含固定版本的 Pi runtime，以及 Pi 文件搜索使用的 `ripgrep (rg)` 和 `fd`。安装过程
+不会执行 `npm install`，不会访问 npm registry，也不会通过 dnf/yum 下载工具。两个工具安装到
+`/opt/infernex-agent/tools/bin`，只在受支持的 InferNex TUI 子进程 PATH 中优先启用，不覆盖宿主机
+已有的 `/usr/local/bin/rg` 或 `/usr/local/bin/fd`。
 `--skip-checksums` 只用于外层归档校验已经通过、但需要临时跳过包内逐文件校验的故障处置；正常安装
 不应使用：
 
@@ -121,7 +124,7 @@ infernex-agent tui --reasoning-display visible
 
 ## 工具与安全边界
 
-alpha.11 启用受控的 Pi 文件工具，并由 InferNex 扩展实施工作区和批准策略：
+alpha.12 启用受控的 Pi 文件工具，并由 InferNex 扩展实施工作区和批准策略：
 
 - `read`、`grep`、`find`、`ls` 在当前工作区内免确认；
 - 相对路径和绝对路径均不能越出工作区，符号链接也不能逃逸；

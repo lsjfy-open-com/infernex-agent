@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.11"
+        default: "0.5.0-alpha.12"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.11' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -118,6 +118,55 @@ jobs:
           node component/InferNex-Agent/pi/smoke.mjs \
             "${RUNNER_TEMP}/pi-runtime/pi/pi"
 
+      - name: Download and verify pinned TUI search tools
+        if: ${{ env.INCLUDE_PI_TUI == 'true' }}
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          metadata="component/InferNex-Agent/pi/tooling.json"
+          platform="linux-${ARCHITECTURE}"
+          tool_root="${RUNNER_TEMP}/tui-tools"
+          download_root="${RUNNER_TEMP}/tui-tool-download"
+          mkdir -p "${tool_root}/bin" "${tool_root}/licenses" \
+            "${download_root}/ripgrep" "${download_root}/fd"
+
+          rg_version="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].version' "${metadata}")"
+          rg_asset="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].asset' "${metadata}")"
+          rg_sha256="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].sha256' "${metadata}")"
+          test "${rg_version}" != "null" && test "${rg_asset}" != "null" && test "${rg_sha256}" != "null"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${download_root}/ripgrep/${rg_asset}" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${rg_version}/${rg_asset}"
+          echo "${rg_sha256}  ${download_root}/ripgrep/${rg_asset}" | sha256sum --check -
+          tar -xzf "${download_root}/ripgrep/${rg_asset}" -C "${download_root}/ripgrep"
+          rg_dir="$(find "${download_root}/ripgrep" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          install -m 0755 "${rg_dir}/rg" "${tool_root}/bin/rg"
+          install -m 0644 "${rg_dir}/LICENSE-MIT" "${tool_root}/licenses/ripgrep-LICENSE-MIT"
+          install -m 0644 "${rg_dir}/UNLICENSE" "${tool_root}/licenses/ripgrep-UNLICENSE"
+          install -m 0644 "${rg_dir}/COPYING" "${tool_root}/licenses/ripgrep-COPYING"
+
+          fd_version="$(jq -r --arg platform "${platform}" '.fd[$platform].version' "${metadata}")"
+          fd_asset="$(jq -r --arg platform "${platform}" '.fd[$platform].asset' "${metadata}")"
+          fd_sha256="$(jq -r --arg platform "${platform}" '.fd[$platform].sha256' "${metadata}")"
+          test "${fd_version}" != "null" && test "${fd_asset}" != "null" && test "${fd_sha256}" != "null"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${download_root}/fd/${fd_asset}" \
+            "https://github.com/sharkdp/fd/releases/download/v${fd_version}/${fd_asset}"
+          echo "${fd_sha256}  ${download_root}/fd/${fd_asset}" | sha256sum --check -
+          tar -xzf "${download_root}/fd/${fd_asset}" -C "${download_root}/fd"
+          fd_dir="$(find "${download_root}/fd" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          install -m 0755 "${fd_dir}/fd" "${tool_root}/bin/fd"
+          install -m 0644 "${fd_dir}/LICENSE-APACHE" "${tool_root}/licenses/fd-LICENSE-APACHE"
+          install -m 0644 "${fd_dir}/LICENSE-MIT" "${tool_root}/licenses/fd-LICENSE-MIT"
+
+          if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+            "${tool_root}/bin/rg" --version
+            "${tool_root}/bin/fd" --version
+          else
+            file "${tool_root}/bin/rg" "${tool_root}/bin/fd"
+          fi
+
       - name: Build architecture-specific image archive
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
@@ -172,14 +221,17 @@ jobs:
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
           pi_args=()
+          tool_args=()
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
             pi_args+=(--pi-runtime-dir "${RUNNER_TEMP}/pi-runtime/pi")
+            tool_args+=(--tool-runtime-dir "${RUNNER_TEMP}/tui-tools")
           fi
           component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
             --binary "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
             "${pi_args[@]}" \
+            "${tool_args[@]}" \
             --output-dir "${RUNNER_TEMP}/offline-dist"
           if [[ "${INCLUDE_PI_TUI}" == "true" && "${ARCHITECTURE}" == "amd64" ]]; then
             mkdir -p "${RUNNER_TEMP}/pi-model-check/state"
@@ -215,10 +267,16 @@ jobs:
             ./install.sh --help >/dev/null
             if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
               test -x ./payload/pi-runtime/pi
+              test -x ./payload/tools/bin/rg
+              test -x ./payload/tools/bin/fd
+              test -f ./payload/tools/licenses/ripgrep-LICENSE-MIT
+              test -f ./payload/tools/licenses/fd-LICENSE-MIT
               test -f ./pi/infernex.ts
               test -f ./pi/LICENSE.pi.txt
               if [[ "${ARCHITECTURE}" == "amd64" ]]; then
                 test "$(./payload/pi-runtime/pi --version)" = "0.84.1"
+                ./payload/tools/bin/rg --version
+                ./payload/tools/bin/fd --version
               fi
             fi
           )
@@ -241,7 +299,7 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.11' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:

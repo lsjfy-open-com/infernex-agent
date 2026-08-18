@@ -158,6 +158,14 @@ case "$manifest_count" in
     legacy_manifest="false"
     host_targets=("${collector_host_targets[@]}" /etc/infernex-agent/diagnostic-subagent-token)
     ;;
+  22)
+    legacy_manifest="false"
+    host_targets=(
+      "${collector_host_targets[@]}"
+      /etc/infernex-agent/diagnostic-subagent-token
+      /opt/infernex-agent/tools
+    )
+    ;;
   *) bundle_die "recovery manifest has an unsupported target count" ;;
 esac
 for target_index in "${!host_targets[@]}"; do

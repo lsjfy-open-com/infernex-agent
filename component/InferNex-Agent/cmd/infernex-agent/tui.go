@@ -20,6 +20,7 @@ const (
 	defaultPiBinary         = "/opt/infernex-agent/pi-runtime/pi"
 	defaultPiExtension      = "/opt/infernex-agent/pi/infernex.ts"
 	defaultPiStateDir       = "/var/lib/infernex-agent/pi"
+	defaultToolBinDir       = "/opt/infernex-agent/tools/bin"
 	defaultReasoningDisplay = "hidden"
 )
 
@@ -89,6 +90,7 @@ func runTUI(args []string) error {
 		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
 		"INFERNEX_WORKSPACE_ROOT="+workspaceDir,
 	)
+	piEnv = prependToolPath(piEnv, defaultToolBinDir)
 	if err := checkPiModelConfiguration(opts, modelOpts, piEnv); err != nil {
 		return err
 	}
@@ -123,6 +125,21 @@ func runTUI(args []string) error {
 		return fmt.Errorf("Pi TUI stopped: %w", err)
 	}
 	return nil
+}
+
+func prependToolPath(environment []string, toolDir string) []string {
+	if info, err := os.Stat(toolDir); err != nil || !info.IsDir() {
+		return environment
+	}
+	prefix := "PATH="
+	for index, value := range environment {
+		if strings.HasPrefix(value, prefix) {
+			path := strings.TrimPrefix(value, prefix)
+			environment[index] = prefix + toolDir + string(os.PathListSeparator) + path
+			return environment
+		}
+	}
+	return append(environment, prefix+toolDir)
 }
 
 func checkPiModelConfiguration(opts tuiOptions, modelOpts modelFileOptions, environment []string) error {

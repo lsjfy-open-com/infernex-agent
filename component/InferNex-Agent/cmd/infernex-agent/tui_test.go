@@ -181,3 +181,21 @@ func TestResolveTUIWorkspaceRejectsFile(t *testing.T) {
 		t.Fatal("file workspace accepted")
 	}
 }
+
+func TestPrependToolPathUsesBundledDirectory(t *testing.T) {
+	dir := t.TempDir()
+	environment := []string{"HOME=/tmp", "PATH=/usr/local/bin:/usr/bin"}
+	got := prependToolPath(environment, dir)
+	want := "PATH=" + dir + string(os.PathListSeparator) + "/usr/local/bin:/usr/bin"
+	if got[1] != want {
+		t.Fatalf("PATH=%q want %q", got[1], want)
+	}
+}
+
+func TestPrependToolPathIgnoresMissingDirectory(t *testing.T) {
+	environment := []string{"PATH=/usr/bin"}
+	got := prependToolPath(environment, filepath.Join(t.TempDir(), "missing"))
+	if got[0] != environment[0] {
+		t.Fatalf("PATH changed for missing tool directory: %q", got[0])
+	}
+}
