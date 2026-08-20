@@ -138,6 +138,7 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 ## 文档
 
 - [领域 Insight、设计原则与治理边界](docs/domain-insights-and-governance-zh.md)
+- [推理服务全生命周期](docs/deployment-lifecycle-zh.md)
 - [社区介绍提纲](docs/community-introduction-zh.md)
 - [产品使用指南](docs/product-guide-zh.md)
 - [离线安装](docs/offline-install-zh.md)

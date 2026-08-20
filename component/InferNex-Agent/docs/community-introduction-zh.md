@@ -13,6 +13,10 @@ Kubernetes、Helm 和 InferNex 组件，不建立第二套控制面。用户通�
 
 ## 2. 建议的 10 分钟叙事
 
+完整的阶段、角色、输出与价值指标见[推理服务全生命周期](deployment-lifecycle-zh.md)。介绍时可以把
+产品概括为：前期是环境侦察员和部署架构助手，中期是模型接入工程师、实验编排者与发布门禁，生产期
+是 SRE 助手；任一阶段发生异常时切换为证据协调者和 Incident Copilot。
+
 ### 第 1 页：问题不是“把 Pod 拉起来”
 
 - 新模型部署跨越 openFuyao、InferNex、Gateway、PD、vLLM-Ascend、Mooncake、CANN/HCCL 和 NPU；
@@ -113,6 +117,17 @@ Deterministic Gate     决定继续、停止、晋级或回退
 - infernex-checker、Prometheus/Eagle-Eye 适配；
 - 与 vLLM-Ascend/NPU 专项诊断 Subagent 联调；
 - 在真实 A2/PD 分离环境完成验收并逐步合入 InferNex 主仓。
+
+### 生命周期角色一句话
+
+```text
+接入/建栈：环境侦察员 + 变更守门员
+0-day 模型：模型接入工程师
+服务拉起：验收工程师
+特性演进：实验编排者 + 发布门禁
+生产运行：SRE 助手 + 知识管家
+异常发生：证据协调者 + Incident Copilot
+```
 
 ## 3. 建议演示顺序
 

@@ -133,6 +133,9 @@ Pi、OpenCode 或其他 Runtime 可以替换，但 MCP、Policy、Evidence 和�
 
 ## 5. 部署主闭环与诊断支线
 
+集群接入、0-day 模型部署、服务验收、特性实验、稳定晋级、故障处置和长期运维中的角色变化，详见
+[推理服务全生命周期](deployment-lifecycle-zh.md)。
+
 ```mermaid
 flowchart TD
     Goal["自然语言目标"] --> Discover["自动发现环境与能力"]
@@ -217,6 +220,7 @@ Subagent 只拥有受限证据和诊断推理，不拥有修改、安装或回�
 
 ## 10. 相关详细文档
 
+- [推理服务全生命周期](deployment-lifecycle-zh.md)
 - [产品设计](product-design-zh.md)
 - [MCP 工具目录与组件映射](mcp-tool-catalog-zh.md)
 - [安全边界](security-boundaries-zh.md)
