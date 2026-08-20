@@ -137,6 +137,8 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 
 ## 文档
 
+- [领域 Insight、设计原则与治理边界](docs/domain-insights-and-governance-zh.md)
+- [社区介绍提纲](docs/community-introduction-zh.md)
 - [产品使用指南](docs/product-guide-zh.md)
 - [离线安装](docs/offline-install-zh.md)
 - [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
@@ -155,7 +157,6 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 - [变更保护与回退](docs/change-safety-zh.md)
 - [安全边界](docs/security-boundaries-zh.md)
 - [候选版本验证](docs/candidate-validation-zh.md)
-- [v0.5 产品与工程推进提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
 
 Helm/Pod 安装保留给确实需要 Kubernetes 原生托管 Agent 的团队，属于高级模式，
 不出现在 V1 默认 Release 下载项中。

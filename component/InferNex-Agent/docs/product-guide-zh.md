@@ -54,8 +54,9 @@ Kubernetes API discovery 和分页 GET/LIST 读取当前 kubeconfig/RBAC 可见�
 Node 地址、Pod IP、宿主机 IP、Service 地址等事实可直接采集。Secret payload 始终排除。
 Bridge 专属观察和部署工具都会关闭，不应通过安装 Bridge CRD 来伪装兼容。
 
-> 当前 Pi TUI 现场测试包是 `v0.5.0-alpha.7`；v0.4 RC 仍作为稳定测试回退线。alpha.7 已包含
-> Kubernetes 通用只读、Node/Pod/Service 网络字段、长回答自动续写、`/usage` 和 Pi 流式错误可见性。
+> 当前 Pi TUI 现场测试包是 `v0.5.0-alpha.12`；v0.4 RC 仍作为稳定测试回退线。alpha.12 已包含
+> Kubernetes 通用读取、Node/Pod/Service 网络字段、长回答自动续写、`/usage`、Pi 流式错误可见性，
+> 以及离线内置的 `ripgrep (rg)` 和 `fd`。
 
 ## Release 到底下载哪个
 

@@ -186,7 +186,8 @@ systemd 服务：
 - 告警通知渠道；
 - 自动流量切换和业务回滚；
 - 企业 Secret Manager 集成；
-- openEuler/A2 硬件诊断；
+- 完整的 openEuler/A2 硬件资格认证、故障修复和有负载 HCCL benchmark（当前只提供固定
+  NPU/CANN/HCCN/PFC/HCCL-preflight 主动读取探针）；
 - 主动推理请求、SSE/JSON 完整性探针和性能基线比较；
 
 因此生产部署必须由外部网络边界保护入口，并由现有 IAM、堡垒机、日志平台、

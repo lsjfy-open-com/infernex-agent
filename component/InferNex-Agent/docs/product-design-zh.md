@@ -20,7 +20,8 @@ InferNex Agent 将 InferNex 已有能力组织成一个长期运行、证据驱�
 Agent 不负责：
 
 - 推理请求转发、流量切换或负载均衡；
-- 创建任意 Kubernetes YAML、运行 shell/SSH 或暴露通用 `kubectl`；
+- 向模型暴露任意 Kubernetes YAML、通用 `kubectl`、任意 shell/SSH 命令或凭据；
+  `diagnose` 模式可通过受控通道运行编译进 Core 的固定主动读取探针；
 - 安装 CANN、NPU 驱动、固件、模型权重或推理框架；
 - 替代 InferNex Bridge、Hermes、PD Orchestrator 或 Eagle-Eye；
 - 允许模型直接操作 Kubernetes、执行任意变更或绕过本机批准；
