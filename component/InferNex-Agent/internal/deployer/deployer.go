@@ -118,11 +118,10 @@ func (d *KubernetesDeployer) recoverPlanned(
 		}
 		return nil
 	}
-	if service.Labels[managedByLabel] != managedByAgent ||
-		service.Annotations[changeIDAnnotation] != record.ID {
+	if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
 		record.Status = changesafety.StatusRollbackFailed
 		record.OccurredAt = time.Now().UTC()
-		record.Message = "resource exists but change ownership cannot be proven"
+		record.Message = "resource exists but change identity cannot be proven: " + err.Error()
 		if err := d.store.Append(record); err != nil {
 			return fmt.Errorf("record unsafe planned deployment %s: %w", record.ID, err)
 		}
@@ -132,6 +131,7 @@ func (d *KubernetesDeployer) recoverPlanned(
 			key,
 		)
 	}
+	record.Target.UID = service.UID
 	record.Status = changesafety.StatusApplied
 	record.OccurredAt = time.Now().UTC()
 	record.Message = "Agent resumed after creation and before the applied event was persisted"
@@ -273,11 +273,12 @@ func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Resul
 			}
 			return Result{}, fmt.Errorf("create catalog InferNexService %s: %w", key, err)
 		}
+		record.Target.UID = desired.UID
 		record.Status = changesafety.StatusApplied
 		record.OccurredAt = time.Now().UTC()
 		record.Message = "resource created; readiness monitoring started"
 		if err := d.store.Append(record); err != nil {
-			rollbackErr := d.deleteOwnedChange(ctx, key, changeID)
+			rollbackErr := d.deleteOwnedChange(ctx, key, changeID, record.Target.UID)
 			if rollbackErr != nil {
 				return Result{}, fmt.Errorf(
 					"persist applied deployment: %v; emergency rollback: %w",
@@ -380,10 +381,11 @@ func (d *KubernetesDeployer) Delete(ctx context.Context, request Request) (Resul
 		nil,
 		"exact pre-delete object recorded",
 	)
+	record.Target.UID = current.UID
 	if err := d.store.Append(record); err != nil {
 		return Result{}, fmt.Errorf("persist pre-delete change record: %w", err)
 	}
-	if err := d.client.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+	if err := d.client.Delete(ctx, current, deletePreconditions(current)); err != nil && !apierrors.IsNotFound(err) {
 		record.Status = changesafety.StatusApplyFailed
 		record.OccurredAt = time.Now().UTC()
 		record.Message = err.Error()
@@ -463,9 +465,9 @@ func (d *KubernetesDeployer) monitorDeployment(
 		service := &infernexv1alpha1.InferNexService{}
 		err := d.client.Get(ctx, key, service)
 		if err == nil {
-			if service.Status.Ready &&
-				service.Status.ObservedGeneration >= service.Generation {
-				d.finishRecord(record, changesafety.StatusCommitted, "deployment reached Ready")
+			if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
+				d.finishRecord(record, changesafety.StatusRollbackFailed,
+					"deployment identity changed; automatic rollback refused: "+err.Error())
 				return
 			}
 			if terminalDegraded(service) {
@@ -474,6 +476,11 @@ func (d *KubernetesDeployer) monitorDeployment(
 					record,
 					"deployment reported a terminal Degraded condition",
 				)
+				return
+			}
+			if service.Status.Ready &&
+				service.Status.ObservedGeneration >= service.Generation {
+				d.finishRecord(record, changesafety.StatusCommitted, "deployment reached Ready")
 				return
 			}
 		} else if apierrors.IsNotFound(err) {
@@ -518,7 +525,7 @@ func (d *KubernetesDeployer) rollbackDeployment(
 	}
 	rollbackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := d.deleteOwnedChange(rollbackCtx, key, record.ID); err != nil {
+	if err := d.deleteOwnedChange(rollbackCtx, key, record.ID, record.Target.UID); err != nil {
 		d.finishRecord(
 			record,
 			changesafety.StatusRollbackFailed,
@@ -545,6 +552,7 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 	ctx context.Context,
 	key types.NamespacedName,
 	changeID string,
+	uid types.UID,
 ) error {
 	service := &infernexv1alpha1.InferNexService{}
 	if err := d.client.Get(ctx, key, service); err != nil {
@@ -553,14 +561,10 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		}
 		return fmt.Errorf("get rollback target: %w", err)
 	}
-	if service.Labels[managedByLabel] != managedByAgent ||
-		service.Annotations[changeIDAnnotation] != changeID {
-		return fmt.Errorf(
-			"rollback ownership changed; refusing to delete InferNexService %s",
-			key,
-		)
+	if err := verifyChangeIdentity(service, changeID, uid); err != nil {
+		return fmt.Errorf("refusing to delete rollback target: %w", err)
 	}
-	if err := d.client.Delete(ctx, service); err != nil && !apierrors.IsNotFound(err) {
+	if err := d.client.Delete(ctx, service, deletePreconditions(service)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete rollback target: %w", err)
 	}
 	for {
@@ -577,6 +581,27 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func verifyChangeIdentity(service *infernexv1alpha1.InferNexService, changeID string, uid types.UID) error {
+	key := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	if service.Labels[managedByLabel] != managedByAgent ||
+		service.Annotations[changeIDAnnotation] != changeID {
+		return fmt.Errorf("change ownership changed for InferNexService %s", key)
+	}
+	// Old journals and plans persisted before Create cannot contain a UID.
+	// Preserve their ownership-based recovery while binding all new applied
+	// records to the exact object returned by the API server.
+	if uid != "" && service.UID != uid {
+		return fmt.Errorf("InferNexService %s UID changed from %q to %q", key, uid, service.UID)
+	}
+	return nil
+}
+
+func deletePreconditions(service *infernexv1alpha1.InferNexService) client.Preconditions {
+	// Ownership checks above apply only to the version we read. Both conditions
+	// make the API server reject replacement or concurrent ownership changes.
+	return client.Preconditions{UID: &service.UID, ResourceVersion: &service.ResourceVersion}
 }
 
 func (d *KubernetesDeployer) finishRecord(
@@ -602,7 +627,11 @@ func terminalDegraded(service *infernexv1alpha1.InferNexService) bool {
 		return false
 	}
 	for _, condition := range service.Status.Conditions {
-		if condition.Type == "Degraded" && condition.Status == metav1.ConditionTrue {
+		// A stale or undated condition cannot override readiness for the current
+		// generation. Legacy writers that omit observedGeneration (zero) still
+		// use the normal Ready/deadline path when the object generation is known.
+		if condition.Type == "Degraded" && condition.Status == metav1.ConditionTrue &&
+			condition.ObservedGeneration == service.Generation {
 			return true
 		}
 	}

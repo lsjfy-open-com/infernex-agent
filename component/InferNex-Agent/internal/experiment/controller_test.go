@@ -14,6 +14,7 @@ package experiment
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
@@ -238,6 +240,69 @@ func TestControllerRefusesMultiplePendingPlansOnResume(t *testing.T) {
 	}
 	if err := controller.Start(context.Background()); err == nil {
 		t.Fatal("expected unsafe parallel resume to be rejected")
+	}
+}
+
+func TestCandidateRollbackPreservesConcurrentReplacementOrEdit(t *testing.T) {
+	for _, mutation := range []string{"replacement", "edit"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			if err := infernexv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			candidate := &infernexv1alpha1.InferNexService{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "models", Name: "trial-s01", UID: "original-candidate", ResourceVersion: "12",
+					Labels:      map[string]string{managedByLabel: managedByAgent, experimentIDLabel: "experiment"},
+					Annotations: map[string]string{changeIDAnnotation: "change"},
+				},
+			}
+			var retained *infernexv1alpha1.InferNexService
+			deleteCalled := false
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(candidate).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+						deleteCalled = true
+						pre := (&client.DeleteOptions{}).ApplyOptions(opts).Preconditions
+						if pre == nil || pre.UID == nil || pre.ResourceVersion == nil ||
+							*pre.UID != candidate.UID || *pre.ResourceVersion != candidate.ResourceVersion {
+							t.Fatalf("candidate rollback must bind the checked object identity: %#v", pre)
+						}
+						retained = candidate.DeepCopy()
+						retained.Spec.BaseRefs = []infernexv1alpha1.NamedRef{{Name: "operator-change"}}
+						if mutation == "replacement" {
+							if err := c.Delete(ctx, candidate); err != nil {
+								t.Fatal(err)
+							}
+							retained.UID, retained.ResourceVersion = "replacement-candidate", ""
+							if err := c.Create(ctx, retained); err != nil {
+								t.Fatal(err)
+							}
+						} else if err := c.Update(ctx, retained); err != nil {
+							t.Fatal(err)
+						}
+						// Simulate API precondition enforcement, including UID, which
+						// the controller-runtime fake client does not enforce.
+						if retained.UID == *pre.UID && retained.ResourceVersion == *pre.ResourceVersion {
+							t.Fatal("test mutation did not change the protected identity")
+						}
+						return apierrors.NewConflict(infernexv1alpha1.GroupVersion.WithResource("infernexservices").GroupResource(), obj.GetName(), errors.New("delete precondition failed"))
+					},
+				}).Build()
+			controller := &Controller{client: kubeClient}
+			err := controller.deleteOwnedCandidate(ctx, client.ObjectKeyFromObject(candidate), "experiment", "change")
+			if !deleteCalled || !apierrors.IsConflict(err) {
+				t.Fatalf("expected candidate rollback conflict, got %v", err)
+			}
+			current := &infernexv1alpha1.InferNexService{}
+			if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(retained), current); err != nil {
+				t.Fatalf("concurrent candidate was removed: %v", err)
+			}
+			if current.UID != retained.UID || current.Spec.BaseRefs[0].Name != "operator-change" {
+				t.Fatalf("concurrent candidate was changed: %#v", current)
+			}
+		})
 	}
 }
 

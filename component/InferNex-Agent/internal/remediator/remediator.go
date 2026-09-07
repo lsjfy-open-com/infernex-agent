@@ -223,7 +223,10 @@ func (r *ProfileRemediator) EnsureRecovery(ctx context.Context, request Request)
 	record.OccurredAt = time.Now().UTC()
 	record.Message = "approved recovery service created"
 	if err := r.store.Append(record); err != nil {
-		rollbackErr := r.client.Delete(ctx, desired)
+		rollbackErr := r.client.Delete(ctx, desired, client.Preconditions{
+			UID:             &desired.UID,
+			ResourceVersion: &desired.ResourceVersion,
+		})
 		if rollbackErr != nil && !apierrors.IsNotFound(rollbackErr) {
 			return Result{}, fmt.Errorf(
 				"persist recovery commit: %v; emergency rollback: %w",

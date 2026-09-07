@@ -14,13 +14,17 @@ package remediator
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
@@ -124,5 +128,90 @@ func TestEnsureRecoveryRejectsUnapprovedProfile(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), ApprovedProfileLabel) {
 		t.Fatalf("error = %v, want approval-label rejection", err)
+	}
+}
+
+type failingCommitStore struct {
+	changesafety.Store
+}
+
+func (s failingCommitStore) Append(record changesafety.ChangeRecord) error {
+	if record.Status == changesafety.StatusCommitted {
+		return errors.New("commit storage unavailable")
+	}
+	return s.Store.Append(record)
+}
+
+func TestEmergencyRollbackPreservesConcurrentlyChangedRecovery(t *testing.T) {
+	for _, mutation := range []string{"replacement", "edit"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			if err := infernexv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			profile := &infernexv1alpha1.InferNexServiceConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "templates", Name: "approved",
+					Labels: map[string]string{ApprovedProfileLabel: "true"},
+				},
+			}
+			var created *infernexv1alpha1.InferNexService
+			var retained *infernexv1alpha1.InferNexService
+			deleteCalled := false
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(profile).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+						obj.SetUID("original-recovery")
+						if err := c.Create(ctx, obj, opts...); err != nil {
+							return err
+						}
+						created = obj.(*infernexv1alpha1.InferNexService).DeepCopy()
+						return nil
+					},
+					Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+						deleteCalled = true
+						pre := (&client.DeleteOptions{}).ApplyOptions(opts).Preconditions
+						if pre == nil || pre.UID == nil || pre.ResourceVersion == nil ||
+							*pre.UID != created.UID || *pre.ResourceVersion != created.ResourceVersion {
+							t.Fatalf("emergency rollback must bind the create response identity: %#v", pre)
+						}
+						retained = created.DeepCopy()
+						retained.Spec.BaseRefs = []infernexv1alpha1.NamedRef{{Name: "operator-change"}}
+						if mutation == "replacement" {
+							if err := c.Delete(ctx, created); err != nil {
+								t.Fatal(err)
+							}
+							retained.UID, retained.ResourceVersion = "replacement-recovery", ""
+							if err := c.Create(ctx, retained); err != nil {
+								t.Fatal(err)
+							}
+						} else if err := c.Update(ctx, retained); err != nil {
+							t.Fatal(err)
+						}
+						// The fake client does not enforce UID preconditions, so model
+						// the API server's conflict after the concurrent mutation.
+						if retained.UID == *pre.UID && retained.ResourceVersion == *pre.ResourceVersion {
+							t.Fatal("test mutation did not change the protected identity")
+						}
+						return apierrors.NewConflict(infernexv1alpha1.GroupVersion.WithResource("infernexservices").GroupResource(), obj.GetName(), errors.New("delete precondition failed"))
+					},
+				}).Build()
+			r, err := New(kubeClient, "templates", WithStore(failingCommitStore{changesafety.NewMemoryStore()}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = r.EnsureRecovery(ctx, Request{Namespace: "models", SourceName: "qwen", Profile: "approved"})
+			if !deleteCalled || !apierrors.IsConflict(err) || !strings.Contains(err.Error(), "emergency rollback") {
+				t.Fatalf("expected emergency rollback conflict, got %v", err)
+			}
+			current := &infernexv1alpha1.InferNexService{}
+			if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(retained), current); err != nil {
+				t.Fatalf("concurrent recovery resource was removed: %v", err)
+			}
+			if current.UID != retained.UID || current.Spec.BaseRefs[0].Name != "operator-change" {
+				t.Fatalf("concurrent recovery resource was changed: %#v", current)
+			}
+		})
 	}
 }

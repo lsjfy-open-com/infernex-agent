@@ -103,13 +103,17 @@ sudo /opt/infernex-agent/bin/restore-host-install.sh \
   → 创建带 change-id 的 InferNexService
   → 保存 applied 记录
   → 后台观察 status
-      ├─ Ready 且 observedGeneration >= generation → committed
+      ├─ 对象身份/所有权不匹配 → rollback-failed，保留现场
+      ├─ Ready 且 observedGeneration >= generation，且无当前 Degraded → committed
       └─ 超时/当前 generation Degraded
-           → 校验所有权和 change-id
-           → 删除本次新建资源
+           → 校验所有权、change-id 和已记录 UID
+           → 带 UID/resourceVersion 前置条件删除本次新建资源
            → 确认资源不存在
            → rolled-back
 ```
+
+提前回退所用的 `Degraded=True` 条件自身也必须属于当前 generation。旧代或未填写
+`observedGeneration` 的条件不能覆盖当前 Ready；没有当前有效 Degraded 时继续按 Ready 和截止时间判断。
 
 默认 Ready 窗口为 `10m`。宿主机安装可调整：
 
@@ -136,12 +140,21 @@ sudo ./bin/install-host.sh \
 
 - `committed`：服务已通过 InferNex Ready 判定；
 - `rolled-back`：失败部署已经恢复到创建前的“不存在”状态；
-- `rollback-failed`：对象所有权改变、API 不可用或删除确认超时，需要告警和人工处理；
+- `rollback-failed`：对象身份/所有权改变、并发修改冲突、API 不可用或删除确认超时，需要告警和人工处理；
 - `apply-failed`：创建没有完成，集群保持创建前状态。
 
 变更事件以追加写方式保存在
 `/var/lib/infernex-agent/changes/<change-id>/`。Agent 在创建后崩溃、重启，
 仍会从 `planned` 或 `applied` 记录恢复监控；不会因为进程重启放弃回退。
+
+新部署在创建响应后将 API Server 分配的 UID 保存到 change target；Ready 成功判定和自动回退均
+核验该身份。旧版本的记录没有 UID 时仍校验 Agent ownership 与 change-id；恢复只有 `planned`
+的记录时，在确认这两项匹配后补录当前 UID。这是旧日志及创建后尚未落盘窗口的兼容边界，不能据此
+证明一个复制了全部 ownership 标记的对象就是原对象。
+
+显式删除、部署回退、实验候选回退、快照恢复清理和恢复候选的应急清理，均将本次读取或创建响应中的
+UID 与 resourceVersion 作为 Delete 前置条件。读取后同名重建或发生并发编辑时，删除冲突会保留对象并
+返回失败；不会去掉前置条件后重试删除。
 
 受控自动恢复服务的创建同样先写 `planned`，创建成功后写 `committed`，对象也
 携带 `change-id`。因此安装前快照恢复能够识别并撤销快照之后由自动恢复路径

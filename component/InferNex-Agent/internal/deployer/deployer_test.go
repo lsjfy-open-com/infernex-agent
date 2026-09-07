@@ -14,6 +14,7 @@ package deployer
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
@@ -283,6 +285,7 @@ func TestRestartResumesPlannedDeploymentCreatedBeforeEventFlush(t *testing.T) {
 	}
 	const changeID = "00112233445566778899aabbccddeeff"
 	service := tinyModelService("models", "interrupted")
+	service.UID = "interrupted-create-uid"
 	service.Annotations = map[string]string{changeIDAnnotation: changeID}
 	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(service).Build()
 	store := changesafety.NewMemoryStore()
@@ -314,6 +317,10 @@ func TestRestartResumesPlannedDeploymentCreatedBeforeEventFlush(t *testing.T) {
 	if err := domainDeployer.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	latest, err := store.Latest(changeID)
+	if err != nil || latest.Target.UID != service.UID {
+		t.Fatalf("recovered change did not persist the created UID: record=%#v err=%v", latest, err)
+	}
 
 	deadline := time.Now().Add(time.Second)
 	for {
@@ -333,4 +340,218 @@ func TestRestartResumesPlannedDeploymentCreatedBeforeEventFlush(t *testing.T) {
 	if err := kubeClient.Get(ctx, key, &infernexv1alpha1.InferNexService{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("interrupted deployment still exists: %v", err)
 	}
+}
+
+func TestDeployPersistsCreatedUID(t *testing.T) {
+	kubeClient := newIdentityTestClient(t)
+	kubeClient.create = func(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+		// The API server, unlike the fake client, assigns the UID on creation.
+		object.SetUID("created-service-uid")
+		return kubeClient.Client.Create(ctx, object, options...)
+	}
+	store := changesafety.NewMemoryStore()
+	domainDeployer := New(kubeClient, WithStore(store))
+	result, err := domainDeployer.Deploy(context.Background(), Request{
+		Namespace: "models", Name: "tiny", CatalogID: TinyModelCatalogID, Confirm: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := store.Latest(result.ChangeID)
+	if err != nil || record.Target.UID != "created-service-uid" {
+		t.Fatalf("created object identity not persisted: record=%#v err=%v", record, err)
+	}
+}
+
+func TestDeploymentMonitorChecksIdentityBeforeReadiness(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		mutate     func(*infernexv1alpha1.InferNexService, *changesafety.ChangeRecord)
+		wantStatus string
+		wantAbsent bool
+	}{
+		{name: "matching identity", wantStatus: changesafety.StatusCommitted},
+		{name: "legacy journal without UID", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Target.UID = ""
+		}, wantStatus: changesafety.StatusCommitted},
+		{name: "ownership transferred", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Labels[managedByLabel] = "another-controller"
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "different deployment change", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Annotations[changeIDAnnotation] = "another-change"
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "replacement with copied annotations", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.UID = "replacement-uid"
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "current Degraded takes precedence over Ready", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Status.Conditions = []metav1.Condition{{Type: "Degraded", Status: metav1.ConditionTrue, ObservedGeneration: service.Generation}}
+		}, wantStatus: changesafety.StatusRolledBack, wantAbsent: true},
+		{name: "stale Degraded cannot override current Ready", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Status.Conditions = []metav1.Condition{{Type: "Degraded", Status: metav1.ConditionTrue, ObservedGeneration: service.Generation - 1}}
+		}, wantStatus: changesafety.StatusCommitted},
+		{name: "undated Degraded cannot override current Ready", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Status.Conditions = []metav1.Condition{{Type: "Degraded", Status: metav1.ConditionTrue}}
+		}, wantStatus: changesafety.StatusCommitted},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, record := deploymentIdentityFixture()
+			service.Generation = 2
+			service.Status.Ready = true
+			service.Status.ObservedGeneration = 2
+			if test.mutate != nil {
+				test.mutate(service, &record)
+			}
+			kubeClient := newIdentityTestClient(t, service)
+			store := changesafety.NewMemoryStore()
+			if err := store.Append(record); err != nil {
+				t.Fatal(err)
+			}
+			domainDeployer := New(kubeClient, WithStore(store), WithReadiness(time.Second, time.Millisecond))
+			domainDeployer.monitorDeployment(context.Background(), record)
+			latest, err := store.Latest(record.ID)
+			if err != nil || latest.Status != test.wantStatus {
+				t.Fatalf("monitor status: record=%#v err=%v, want %s", latest, err, test.wantStatus)
+			}
+			err = kubeClient.Get(context.Background(), client.ObjectKeyFromObject(service), &infernexv1alpha1.InferNexService{})
+			if test.wantAbsent && !apierrors.IsNotFound(err) {
+				t.Fatalf("failed deployment was not rolled back: %v", err)
+			}
+			if !test.wantAbsent && err != nil {
+				t.Fatalf("monitor removed a deployment that must be preserved: %v", err)
+			}
+		})
+	}
+}
+
+func TestRollbackPreservesReplacementWithCopiedOwnership(t *testing.T) {
+	service, record := deploymentIdentityFixture()
+	service.UID = "replacement-uid"
+	kubeClient := newIdentityTestClient(t, service)
+	store := changesafety.NewMemoryStore()
+	domainDeployer := New(kubeClient, WithStore(store))
+	domainDeployer.rollbackDeployment(context.Background(), record, "readiness deadline expired")
+	latest, err := store.Latest(record.ID)
+	if err != nil || latest.Status != changesafety.StatusRollbackFailed || !strings.Contains(latest.Message, "UID changed") {
+		t.Fatalf("replacement must fail rollback: record=%#v err=%v", latest, err)
+	}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(service), &infernexv1alpha1.InferNexService{}); err != nil {
+		t.Fatalf("replacement was not preserved: %v", err)
+	}
+}
+
+func TestDeploymentDeletionRejectsConcurrentIdentityChanges(t *testing.T) {
+	for _, action := range []string{"explicit deletion", "automatic rollback"} {
+		for _, race := range []string{"replacement", "ownership update"} {
+			t.Run(action+"/"+race, func(t *testing.T) {
+				service, record := deploymentIdentityFixture()
+				kubeClient := newIdentityTestClient(t, service)
+				deleteCalls := 0
+				kubeClient.delete = func(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+					deleteCalls++
+					var deleteOptions client.DeleteOptions
+					for _, option := range options {
+						option.ApplyToDelete(&deleteOptions)
+					}
+					preconditions := deleteOptions.Preconditions
+					if preconditions == nil || preconditions.UID == nil || preconditions.ResourceVersion == nil ||
+						*preconditions.UID != object.GetUID() || *preconditions.ResourceVersion != object.GetResourceVersion() {
+						t.Fatal("delete must be conditional on the exact UID and resourceVersion whose ownership was checked")
+					}
+					current := &infernexv1alpha1.InferNexService{}
+					if err := kubeClient.Client.Get(ctx, client.ObjectKeyFromObject(object), current); err != nil {
+						t.Fatal(err)
+					}
+					if race == "replacement" {
+						if err := kubeClient.Client.Delete(ctx, current); err != nil {
+							t.Fatal(err)
+						}
+						current.UID = "replacement-uid"
+						current.ResourceVersion = ""
+						if err := kubeClient.Client.Create(ctx, current); err != nil {
+							t.Fatal(err)
+						}
+					} else {
+						current.Labels[managedByLabel] = "another-controller"
+						if err := kubeClient.Client.Update(ctx, current); err != nil {
+							t.Fatal(err)
+						}
+					}
+					// Model the API server's UID and resourceVersion checks explicitly:
+					// fake client versions do not all enforce UID preconditions.
+					if *preconditions.UID != current.UID || *preconditions.ResourceVersion != current.ResourceVersion {
+						return apierrors.NewConflict(infernexv1alpha1.GroupVersion.WithResource("infernexservices").GroupResource(),
+							object.GetName(), fmt.Errorf("delete preconditions no longer match"))
+					}
+					return kubeClient.Client.Delete(ctx, object, options...)
+				}
+				store := changesafety.NewMemoryStore()
+				domainDeployer := New(kubeClient, WithStore(store))
+				if action == "explicit deletion" {
+					_, err := domainDeployer.Delete(context.Background(), Request{
+						Namespace: service.Namespace, Name: service.Name, Confirm: true,
+					})
+					if !apierrors.IsConflict(err) {
+						t.Fatalf("delete must report the concurrent change: %v", err)
+					}
+				} else {
+					domainDeployer.rollbackDeployment(context.Background(), record, "readiness deadline expired")
+					latest, err := store.Latest(record.ID)
+					if err != nil || latest.Status != changesafety.StatusRollbackFailed {
+						t.Fatalf("rollback must preserve conflict state: record=%#v err=%v", latest, err)
+					}
+				}
+				if deleteCalls != 1 {
+					t.Fatalf("conditional delete must not be retried without rechecking ownership: calls=%d", deleteCalls)
+				}
+				current := &infernexv1alpha1.InferNexService{}
+				if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(service), current); err != nil {
+					t.Fatalf("concurrently changed object must be preserved: %v", err)
+				}
+				if race == "replacement" && current.UID != "replacement-uid" ||
+					race == "ownership update" && current.Labels[managedByLabel] != "another-controller" {
+					t.Fatalf("concurrently changed identity was not preserved: %#v", current.ObjectMeta)
+				}
+			})
+		}
+	}
+}
+
+func deploymentIdentityFixture() (*infernexv1alpha1.InferNexService, changesafety.ChangeRecord) {
+	const changeID = "00112233445566778899aabbccddeeff"
+	service := tinyModelService("models", "tiny")
+	service.UID = "original-service-uid"
+	service.Annotations[changeIDAnnotation] = changeID
+	record := newChangeRecord(changeID, "deploy", changesafety.StatusApplied,
+		Request{Namespace: service.Namespace, Name: service.Name}, nil, nil, "resource created")
+	record.Target.UID = service.UID
+	return service, record
+}
+
+type identityTestClient struct {
+	client.Client
+	create func(context.Context, client.Object, ...client.CreateOption) error
+	delete func(context.Context, client.Object, ...client.DeleteOption) error
+}
+
+func newIdentityTestClient(t *testing.T, objects ...client.Object) *identityTestClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := infernexv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	return &identityTestClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()}
+}
+
+func (c *identityTestClient) Create(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+	if c.create != nil {
+		return c.create(ctx, object, options...)
+	}
+	return c.Client.Create(ctx, object, options...)
+}
+
+func (c *identityTestClient) Delete(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
+	if c.delete != nil {
+		return c.delete(ctx, object, options...)
+	}
+	return c.Client.Delete(ctx, object, options...)
 }
