@@ -99,6 +99,7 @@ an optional hardened installation policy, not a separate package.
 
 ## Documentation
 
+- [自动部署与自动运维：模块边界和 PR 演进计划](component/InferNex-Agent/docs/module-boundaries-and-pr-plan-zh.md)
 - [产品使用说明、部署选型和验收](component/InferNex-Agent/docs/product-guide-zh.md)
 - [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
 - [工具集、知识库与业界方案取舍](component/InferNex-Agent/docs/toolsets-and-knowledge-zh.md)

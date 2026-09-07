@@ -18,6 +18,10 @@ InferNex Agent 是运行在 InferNex 管理节点上的本地 AI 运维 Agent。
 vLLM/vLLM-Ascend、Mooncake、Hermes、PD Orchestrator、Eagle-Eye 和
 infernex-checker；不建立第二套推理编排器。
 
+项目按**自动部署**和**自动运维（包含故障处理）**两条业务主线演进，共享发现、证据和变更基础。
+部署侧负责计划、受控执行与验收；运维侧负责持续观察、故障取证、诊断和恢复验证。
+当前能力、代码归属及分批合入顺序见[模块边界和 PR 演进计划](docs/module-boundaries-and-pr-plan-zh.md)。
+
 ## 安装：只选 CPU 架构
 
 正常用户只使用一个发行包：
