@@ -7,7 +7,7 @@
   <p><b>提供openFuyao AI推理服务化框架的端到端一键式集成部署</b></p>
 
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen)](https://gitcode.com/openFuyao/sig-ai-inference/blob/main/docs/zh/ai_inference_infernex/user_guide/ai_inference_infernex.md)
-[![License](https://img.shields.io/badge/License-Mulan_PSL_v2-blue.svg)](./LICENSE)
+[![License](https://img.shields.io/badge/License-Mulan_PSL_v2-blue.svg)](../../LICENSE)
 [![Helm](https://img.shields.io/badge/Helm-chart-00a1d6.svg)](https://gitcode.com/openFuyao/sig-ai-inference/blob/main/docs/zh/ai_inference_infernex/user_guide/ai_inference_infernex.md#%E5%BC%80%E5%A7%8B%E5%AE%89%E8%A3%85)
 [![GIE](https://img.shields.io/badge/Gateway_API_Inference_Extension-v1.1.0-orange.svg)](https://github.com/kubernetes-sigs/gateway-api-inference-extension)
 
