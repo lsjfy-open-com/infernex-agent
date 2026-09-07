@@ -1,11 +1,13 @@
+> 历史资料：不代表当前功能或排期。以[文档入口](../README.md)和当前路线图为准。
+
 # 自动部署与自动运维：模块边界和 PR 演进计划
 
 本项目按两条业务主线演进：**自动部署**和**自动运维（包含故障处理）**。两者复用同一套
 Agent Core、发现、工具、证据和变更记录。Pi/classic chat、MCP 和 Dashboard 是这些能力的入口，
 不是另一个业务模块，也不各自维护部署或恢复逻辑。
 
-本文将[服务全生命周期](deployment-lifecycle-zh.md)落实为代码归属和评审范围；具体功能状态仍见
-[工具目录](mcp-tool-catalog-zh.md)和 [v0.5 路线图](v0.5-roadmap-zh.md)。表中的“后续”均为计划，
+本文将[服务全生命周期](../architecture/deployment-lifecycle-zh.md)落实为代码归属和评审范围；具体功能状态仍见
+[工具目录](../reference/mcp-tool-catalog-zh.md)和 [v0.5 路线图](v0.5-roadmap-zh.md)。表中的“后续”均为计划，
 不代表当前已经提供相应工具或通过现场验收。
 
 ## 1. 两条主线的责任
@@ -115,7 +117,7 @@ CollectorRun、特权 helper、委派 listener 也应各自有增量权限与验
 
 每个 PR 说明改变了什么行为、依赖哪个基础 PR、增加哪些权限、怎样验证、尚未验证哪些环境。
 本地 Go 测试不能替代 Kind 的真实控制器回退，更不能替代 openEuler/Ascend A2 的 NPU、网络、
-CANN/plog 与模型服务验收。沿用现有[候选验收清单](candidate-validation-zh.md)的现场门槛。
+CANN/plog 与模型服务验收。沿用现有[候选验收清单](../development/candidate-validation-zh.md)的现场门槛。
 
 ## 7. 2026-09-07 基础修复与验证
 
@@ -151,4 +153,4 @@ CANN/plog 与模型服务验收。沿用现有[候选验收清单](candidate-val
 | `agent/rc8-candidate` | `3f39842` | `agent/pi-agent-foundation` 的祖先，并保有对应发行标签 |
 
 活跃 PR 的 `agent/standalone-candidate`、`agent/pi-agent-foundation` 继续保留。贡献范围、分支和堆叠 PR
-规则见[贡献指南](../../../CONTRIBUTING.md)。
+规则见[贡献指南](../../../../CONTRIBUTING.md)。

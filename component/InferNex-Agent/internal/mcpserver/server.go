@@ -43,14 +43,16 @@ for the actual managed workloads and pods. Use infernex_get_events for recent
 causal evidence. Do not infer a successful rollout from desired state alone.`
 
 const kubernetesInstructions = `
-General openFuyao, Kubernetes, and Helm observation is enabled. Start environment-wide
-requests with openfuyao_detect_environment because one host may point at a bootstrap K3s,
+General Kubernetes, Helm, and optional openFuyao observation is enabled. Start environment-wide
+requests with k8s_detect_environment (openfuyao_detect_environment is its compatibility alias) because one host may point at a bootstrap K3s,
 management, or business cluster and each kubeconfig represents only one API server. Use
 k8s_cluster_overview, k8s_list_workloads, k8s_get_events, and k8s_get_pod_logs for common native
 resources. For other installed APIs, call k8s_discover_api_resources and then k8s_read_resources
 with the exact groupVersion and plural resource name. Generic reads follow kubeconfig RBAC,
 paginate large lists, omit managedFields, redact credential-like values, and return Secret metadata
-without Secret payloads. Use helm_list_releases for the main-chart application lifecycle. Generic
+without Secret payloads. When available, use k8s_inspect_service_backends for native Service
+backend and traffic-policy risks; it does not measure request distribution or configure balancing.
+Use helm_list_releases for installed Helm release metadata. Generic
 API reads do not implicitly execute commands. Host evidence and active diagnostic execution are
 separate policy-controlled channels when configured. InferNex Bridge is optional; use InferNexService tools only
 when the environment evidence shows that Bridge is installed.`
@@ -654,14 +656,30 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 				return nil, newDiagnosticDelegateContract(options), nil
 			})
 		}
-		mcp.AddTool(server, &mcp.Tool{
-			Name:        "openfuyao_detect_environment",
-			Description: "Detect whether the active kubeconfig points at an openFuyao bootstrap/management control plane, an openFuyao business cluster, or a general Kubernetes cluster, and report BKE, Helm, LWS, Bridge, KServe, Gateway, scaling, and monitoring capabilities.",
-			Annotations: readOnly("Detect openFuyao and Kubernetes environment"),
-		}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, kubeops.Environment, error) {
-			output, err := options.kubernetes.DetectEnvironment(ctx)
-			return nil, output, err
-		})
+		for _, environmentTool := range []string{"k8s_detect_environment", "openfuyao_detect_environment"} {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        environmentTool,
+				Description: "Detect whether the active kubeconfig points at an openFuyao bootstrap/management control plane, an openFuyao business cluster, or a general Kubernetes cluster, and report BKE, Helm, LWS, Bridge, KServe, Gateway, scaling, and monitoring capabilities.",
+				Annotations: readOnly("Detect openFuyao and Kubernetes environment"),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, kubeops.Environment, error) {
+				output, err := options.kubernetes.DetectEnvironment(ctx)
+				return nil, output, err
+			})
+		}
+
+		if traffic, ok := options.kubernetes.(kubeops.TrafficReader); ok {
+			mcp.AddTool(server, &mcp.Tool{
+				Name:        "k8s_inspect_service_backends",
+				Description: "Inspect native Service and EndpointSlice backend readiness per port, duplicate Pod identities, session affinity and locality risks without InferNex CRDs. Configuration-only diagnosis: does not measure traffic or prove request-level balancing; requires an explicit namespace and Service name.",
+				Annotations: readOnly("Inspect Service backend and traffic policy risks"),
+			}, func(ctx context.Context, _ *mcp.CallToolRequest, input kubeops.ServiceBackendRequest) (*mcp.CallToolResult, kubeops.ServiceBackendReport, error) {
+				if err := requireScopedNamespace(options, input.Namespace); err != nil {
+					return nil, kubeops.ServiceBackendReport{}, err
+				}
+				output, err := traffic.InspectServiceBackends(ctx, input)
+				return nil, output, err
+			})
+		}
 
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "k8s_cluster_overview",

@@ -194,7 +194,7 @@ jobs:
             test -x ./install.sh
             ./install.sh --help >/dev/null
             test -x ./bin/chat.sh
-            test -f ./docs/install-and-modes-zh.md
+            test -f ./docs/guides/install-and-modes-zh.md
           )
 
       - name: Install test CRDs
@@ -434,6 +434,13 @@ jobs:
             --data '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"helm_list_releases","arguments":{}}}' \
             http://127.0.0.1:8080/mcp |
             grep -q 'releases'
+          curl --fail --silent \
+            -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -H 'MCP-Protocol-Version: 2025-06-18' \
+            --data '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"k8s_inspect_service_backends","arguments":{"namespace":"default","name":"kubernetes"}}}' \
+            http://127.0.0.1:8080/mcp |
+            jq -e '.result.structuredContent.name == "kubernetes" and .result.structuredContent.trafficVerified == false'
           kill "${occupied_dashboard_pid}" >/dev/null 2>&1 || true
           wait "${occupied_dashboard_pid}" 2>/dev/null || true
 

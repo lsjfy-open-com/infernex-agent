@@ -1,3 +1,5 @@
+> 本文保留现有实现/领域设计说明。当前跨平台架构与能力边界以 [Kubernetes 通用底座](kubernetes-first-zh.md)为准；文中的 Bridge 流程不是通用部署已完成的证明。
+
 # InferNex Agent 推理服务全生命周期
 
 本文描述 InferNex Agent 从集群接入、模型首次部署、特性实验、生产晋级、故障处置到长期运维的角色

@@ -1,3 +1,5 @@
+> 本文保留现有实现/领域设计说明。当前跨平台架构与能力边界以 [Kubernetes 通用底座](kubernetes-first-zh.md)为准；文中的 Bridge 流程不是通用部署已完成的证明。
+
 # InferNex Agent architecture
 
 ## Decision

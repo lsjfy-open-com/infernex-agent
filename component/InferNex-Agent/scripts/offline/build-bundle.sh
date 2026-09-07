@@ -242,21 +242,7 @@ install -m 0755 \
 install -m 0644 \
   "${agent_dir}/offline/values-existing-cluster.yaml" \
   "${bundle_root}/values/"
-install -m 0644 \
-  "${agent_dir}/docs/offline-install-zh.md" \
-  "${bundle_root}/README.md"
-install -m 0644 \
-  "${agent_dir}/docs/product-guide-zh.md" \
-  "${agent_dir}/docs/product-design-zh.md" \
-  "${agent_dir}/docs/candidate-validation-zh.md" \
-  "${agent_dir}/docs/install-and-modes-zh.md" \
-  "${agent_dir}/docs/model-configuration-zh.md" \
-  "${agent_dir}/docs/plog-capture-zh.md" \
-  "${agent_dir}/docs/security-boundaries-zh.md" \
-  "${agent_dir}/docs/operations-runbook-zh.md" \
-  "${agent_dir}/docs/change-safety-zh.md" \
-  "${agent_dir}/docs/progressive-experiments-zh.md" \
-  "${bundle_root}/docs/"
+bundle_copy_documentation "${agent_dir}" "${bundle_root}"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

@@ -1,3 +1,5 @@
+> 历史资料：不代表当前功能或排期。以[文档入口](../README.md)和当前路线图为准。
+
 # InferNex Agent 领域 Insight、设计原则与治理边界
 
 本文是 InferNex Agent 的统一认知入口，用来回答三个问题：
@@ -7,8 +9,8 @@
 3. 模型、工具、Subagent 和运维人员各自能做什么、不能做什么。
 
 本文是总览，不替代具体工具契约。能力现状以
-[MCP 工具目录](mcp-tool-catalog-zh.md)、[安全边界](security-boundaries-zh.md)和代码为准；
-路线图以[运行模式与配置版本设计](policy-modes-config-versions-zh.md)为准。
+[MCP 工具目录](../reference/mcp-tool-catalog-zh.md)、[安全边界](../reference/security-boundaries-zh.md)和代码为准；
+路线图以[运行模式与配置版本设计](../architecture/policy-modes-config-versions-zh.md)为准。
 
 ## 1. 一句话定位
 
@@ -134,7 +136,7 @@ Pi、OpenCode 或其他 Runtime 可以替换，但 MCP、Policy、Evidence 和�
 ## 5. 部署主闭环与诊断支线
 
 集群接入、0-day 模型部署、服务验收、特性实验、稳定晋级、故障处置和长期运维中的角色变化，详见
-[推理服务全生命周期](deployment-lifecycle-zh.md)。
+[推理服务全生命周期](../architecture/deployment-lifecycle-zh.md)。
 
 ```mermaid
 flowchart TD
@@ -220,14 +222,14 @@ Subagent 只拥有受限证据和诊断推理，不拥有修改、安装或回�
 
 ## 10. 相关详细文档
 
-- [推理服务全生命周期](deployment-lifecycle-zh.md)
-- [产品设计](product-design-zh.md)
-- [MCP 工具目录与组件映射](mcp-tool-catalog-zh.md)
-- [安全边界](security-boundaries-zh.md)
-- [Policy、模式与配置版本](policy-modes-config-versions-zh.md)
-- [渐进式实验](progressive-experiments-zh.md)
-- [变更保护与回退](change-safety-zh.md)
-- [故障诊断 Subagent 架构](diagnostic-subagent-architecture-zh.md)
-- [本地 Evidence 与报告](local-evidence-and-reports-zh.md)
-- [CANN/HiXL Skill](skills-and-cann-hixl-zh.md)
-- [openFuyao 对齐基线](openfuyao-alignment-zh.md)
+- [推理服务全生命周期](../architecture/deployment-lifecycle-zh.md)
+- [产品设计](../architecture/product-design-zh.md)
+- [MCP 工具目录与组件映射](../reference/mcp-tool-catalog-zh.md)
+- [安全边界](../reference/security-boundaries-zh.md)
+- [Policy、模式与配置版本](../architecture/policy-modes-config-versions-zh.md)
+- [渐进式实验](../guides/progressive-experiments-zh.md)
+- [变更保护与回退](../guides/change-safety-zh.md)
+- [故障诊断 Subagent 架构](../architecture/diagnostic-subagent-architecture-zh.md)
+- [本地 Evidence 与报告](../guides/local-evidence-and-reports-zh.md)
+- [CANN/HiXL Skill](../guides/skills-and-cann-hixl-zh.md)
+- [openFuyao 对齐基线](../architecture/openfuyao-alignment-zh.md)
