@@ -72,7 +72,7 @@ flowchart LR
 
 ## 4. 当前 PR 的实际关系
 
-以 2026-09-07 拉取的远端提交为基准：
+以 2026-09-07 整理前拉取的远端提交为基准：
 
 | 分支 / PR | 提交 | 与主线的关系 |
 | --- | --- | --- |
@@ -80,7 +80,7 @@ flowchart LR
 | [PR #8：standalone Agentic onboarding and guarded deployment](https://github.com/lsjfy-open-com/infernex-agent/pull/8) | `7945fd9` | 独立入口、通用发现、上下文、Bridge 部署、安装和 CI 混合变更 |
 | [PR #9：Pi-based TUI foundation](https://github.com/lsjfy-open-com/infernex-agent/pull/9) | `9e5c103` | 完整包含 #8，再增加 39 个提交；同时包含证据、记忆、探针、持续采集、诊断委派和设计文档 |
 
-两个 PR 都以 `main` 为 base，不能把它们当作独立的“部署 PR”和“运维 PR”。#9 的标题也不能完整表达
+整理前两个 PR 都以 `main` 为 base，不能把它们当作独立的“部署 PR”和“运维 PR”。#9 原标题也不能完整表达
 其实际范围。本轮工作基于 #9 的最新提交，避免遗漏未合并实现；该基线仍需现有现场验收，不等于可发布版本。
 
 整理历史建议：保留现有 Draft 作为参考，从干净 `main` 按依赖提取可评审的提交或文件块。先合共享底座，
@@ -131,3 +131,24 @@ CANN/plog 与模型服务验收。沿用现有[候选验收清单](candidate-val
 `git diff --check` 和新增文档的本地链接检查。回归覆盖正常完成、同名重建、并发接管/编辑、过期状态、
 扫描中断及恢复重新达到阈值。删除竞态用 fake client interceptor 模拟 API 前置条件冲突，
 本地未运行真实 Kind API Server 或 openEuler/Ascend A2 验收。
+
+## 8. GitHub 跟踪与分支整理
+
+- [v0.5 milestone](https://github.com/lsjfy-open-com/infernex-agent/milestone/1) 汇总两条业务主线与共享基础。
+- [共享 Core #11](https://github.com/lsjfy-open-com/infernex-agent/issues/11)、
+  [自动部署 #12](https://github.com/lsjfy-open-com/infernex-agent/issues/12)、
+  [自动运维 #13](https://github.com/lsjfy-open-com/infernex-agent/issues/13) 跟踪分批验收，勾选以增量合入为准。
+- [PR #10](https://github.com/lsjfy-open-com/infernex-agent/pull/10) 提交第 7 节基础修复与协作规范，base 为 #9 的分支。
+- #9 已改为以 `agent/standalone-candidate` 为 base，评审增量从 52 个提交收敛到其自身的 39 个提交；
+  标题更新为 `feat(agent): add Pi experience and bounded diagnostic operations`。#8 → #9 的合入顺序明确，
+  两者仍是待现场验收的 Draft。新的部署/运维改动分别提交 PR，不继续塞入旧标题。
+
+已在确认没有开放 PR、远端 tip 未变化且所有提交均有保留后清理：
+
+| 删除的远端分支 | 删除前 tip | 完整保留位置 |
+| --- | --- | --- |
+| `feat/infernex-agent-v0.1` | `958d189` | `main` 的祖先，已完整合入 |
+| `agent/rc8-candidate` | `3f39842` | `agent/pi-agent-foundation` 的祖先，并保有对应发行标签 |
+
+活跃 PR 的 `agent/standalone-candidate`、`agent/pi-agent-foundation` 继续保留。贡献范围、分支和堆叠 PR
+规则见[贡献指南](../../../CONTRIBUTING.md)。
