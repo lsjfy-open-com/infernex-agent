@@ -97,6 +97,7 @@ assert_can_i() {
 }
 
 assert_can_i yes "list Events" list events -n "${model_namespace}"
+assert_can_i yes "list EndpointSlices" list endpointslices.discovery.k8s.io -n "${model_namespace}"
 assert_can_i yes "read Pod logs" get pods --subresource=log -n "${model_namespace}"
 assert_can_i yes "create experiment candidates" create infernexservices.infernex.infernex.io -n "${model_namespace}"
 assert_can_i yes "delete experiment candidates" delete infernexservices.infernex.infernex.io -n "${model_namespace}"
@@ -166,6 +167,21 @@ mcp_call() {
       --data-binary @- \
       "http://127.0.0.1:${local_port}/mcp"
 }
+
+# Native Service inspection: real EndpointSlices are populated by Kubernetes.
+# Pause Pods exercise configuration evidence only, never serving/traffic success.
+kubectl -n "${model_namespace}" scale deployment/smoke-engine --replicas=2
+kubectl -n "${model_namespace}" rollout status deployment/smoke-engine --timeout=120s
+kubectl -n "${model_namespace}" expose deployment smoke-engine --name=backend-probe --port=80 --target-port=80
+backend_result=""
+for _ in $(seq 1 30); do
+  backend_result="$(mcp_call k8s_inspect_service_backends '{"namespace":"models","name":"backend-probe"}')"
+  if jq -e '.result.structuredContent.ports[0].readyBackends == 2 and .result.structuredContent.trafficVerified == false' <<<"${backend_result}" >/dev/null; then break; fi
+  sleep 1
+done
+jq -e '.result.structuredContent.ports[0].readyBackends == 2 and .result.structuredContent.trafficVerified == false' <<<"${backend_result}" >/dev/null
+kubectl -n "${model_namespace}" delete service backend-probe
+kubectl -n "${model_namespace}" scale deployment/smoke-engine --replicas=1
 
 list_result="$(mcp_call infernex_list_services '{"namespace":"models"}')"
 jq -e '.result.structuredContent.services[0].name == "smoke"' <<<"${list_result}" >/dev/null

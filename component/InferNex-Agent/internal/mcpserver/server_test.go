@@ -58,6 +58,10 @@ func (stubCollectorSource) Collect(context.Context, collectorrun.Target, string,
 
 type stubKubernetes struct{}
 
+func (stubKubernetes) InspectServiceBackends(_ context.Context, req kubeops.ServiceBackendRequest) (kubeops.ServiceBackendReport, error) {
+	return kubeops.ServiceBackendReport{Namespace: req.Namespace, Name: req.Name, TrafficVerified: false}, nil
+}
+
 func (stubKubernetes) DetectEnvironment(context.Context) (kubeops.Environment, error) {
 	return kubeops.Environment{
 		Platform: "openfuyao", ClusterRoles: []string{"inference-business-cluster"},
@@ -324,11 +328,13 @@ func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 8 {
-		t.Fatalf("tool count = %d, want 8", len(list.Tools))
+	if len(list.Tools) != 10 {
+		t.Fatalf("tool count = %d, want 10", len(list.Tools))
 	}
 	want := map[string]bool{
 		"openfuyao_detect_environment": false,
+		"k8s_detect_environment":       false,
+		"k8s_inspect_service_backends": false,
 		"k8s_cluster_overview":         false,
 		"k8s_list_workloads":           false,
 		"k8s_discover_api_resources":   false,
@@ -810,6 +816,15 @@ func TestDiagnosticDelegatePublishesRestrictedScopedContract(t *testing.T) {
 	}
 	if !denied.IsError {
 		t.Fatalf("out-of-scope namespace was accepted: %#v", denied)
+	}
+	for _, namespace := range []string{"", "kube-system", "models"} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_inspect_service_backends", Arguments: map[string]any{"namespace": namespace, "name": "model"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError != (namespace != "models") {
+			t.Fatalf("backend scope %q: %#v", namespace, result)
+		}
 	}
 	collectorList, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_list_collector_runs", Arguments: map[string]any{}})
 	if err != nil || collectorList.IsError {

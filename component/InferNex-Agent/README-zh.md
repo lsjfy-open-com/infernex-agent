@@ -1,3 +1,5 @@
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.13 的原生部署写路径和请求级均衡尚未实现。
+
 # InferNex Agent
 
 [English](README.md) | 简体中文
@@ -20,7 +22,7 @@ infernex-checker；不建立第二套推理编排器。
 
 项目按**自动部署**和**自动运维（包含故障处理）**两条业务主线演进，共享发现、证据和变更基础。
 部署侧负责计划、受控执行与验收；运维侧负责持续观察、故障取证、诊断和恢复验证。
-当前能力、代码归属及分批合入顺序见[模块边界和 PR 演进计划](docs/module-boundaries-and-pr-plan-zh.md)。
+当前能力、代码归属及分批合入顺序见[模块边界和 PR 演进计划](docs/architecture/kubernetes-first-zh.md)。
 
 ## 安装：只选 CPU 架构
 
@@ -37,7 +39,7 @@ Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的�
 联网安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.13/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.13 bash
 ```
 
 离线安装：
@@ -91,9 +93,9 @@ sudo infernex-agent chat --classic
 MCP 的 search/remember/forget 工具供任意 Agent runtime 使用。记忆是历史上下文，修改前仍须重新
 读取实时集群状态。
 
-用户自行保存、重启后无法重新采集的日志可登记为本地历史证据。Agent 提供受控的 glob、grep、分页读取和 Markdown 报告工具，默认过滤正常的 `/metrics`、`/health*`、`/readyz`、`/livez` 噪声并报告过滤计数；不会开放整个宿主机文件系统。详见[本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)。
+用户自行保存、重启后无法重新采集的日志可登记为本地历史证据。Agent 提供受控的 glob、grep、分页读取和 Markdown 报告工具，默认过滤正常的 `/metrics`、`/health*`、`/readyz`、`/livez` 噪声并报告过滤计数；不会开放整个宿主机文件系统。详见[本地历史日志分析与 Markdown 报告](docs/guides/local-evidence-and-reports-zh.md)。
 
-PFC、HCCN、NPU、CANN 和 HCCL 前置检查可由持久 `CollectorRun` 自动按 label selector 展开 Pod/container，周期执行固定 Profile，并把 JSONL 样本直接保存到 Agent Evidence Store，不需要运维人员逐节点执行和搬运文件。详见[节点与容器持续诊断 CollectorRun](docs/collector-runs-zh.md)。
+PFC、HCCN、NPU、CANN 和 HCCL 前置检查可由持久 `CollectorRun` 自动按 label selector 展开 Pod/container，周期执行固定 Profile，并把 JSONL 样本直接保存到 Agent Evidence Store，不需要运维人员逐节点执行和搬运文件。详见[节点与容器持续诊断 CollectorRun](docs/guides/collector-runs-zh.md)。
 
 `diagnose` 模式还可经用户批准启动外部 `PlogCapture`：按 workload label selector 监听 Pod，通过只读
 exec 从容器挂载与 CANN/NPU 兼容根发现日志，保存 Pod 元信息、current/previous logs 和 plog，并按
@@ -102,9 +104,9 @@ Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 
 `agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
-[Pi TUI 使用与边界](docs/pi-tui-zh.md)。
+[Pi TUI 使用与边界](docs/guides/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.12`，同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
+当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.13`（继承 alpha.12 功能并整合部署/恢复保护），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 
@@ -141,27 +143,27 @@ ssh -L 8081:127.0.0.1:8081 <管理节点>
 
 ## 文档
 
-- [领域 Insight、设计原则与治理边界](docs/domain-insights-and-governance-zh.md)
-- [推理服务全生命周期](docs/deployment-lifecycle-zh.md)
-- [社区介绍提纲](docs/community-introduction-zh.md)
-- [产品使用指南](docs/product-guide-zh.md)
-- [离线安装](docs/offline-install-zh.md)
-- [工具集与知识库设计](docs/toolsets-and-knowledge-zh.md)
-- [MCP 工具目录与组件映射](docs/mcp-tool-catalog-zh.md)
-- [运行模式、Policy、配置版本与 Dashboard 路由](docs/policy-modes-config-versions-zh.md)
-- [v0.5 可执行路线图](docs/v0.5-roadmap-zh.md)
-- [v0.5 产品与工程提案](docs/proposals/infernex-agent-v0.5-proposal-zh.md)
-- [上下文预算与自动压缩](docs/context-management-zh.md)
-- [本地历史日志分析与 Markdown 报告](docs/local-evidence-and-reports-zh.md)
-- [CANN plog 外部持续采集](docs/plog-capture-zh.md)
-- [节点与容器持续诊断 CollectorRun](docs/collector-runs-zh.md)
-- [CANN/HiXL 诊断 Skill 与用户扩展](docs/skills-and-cann-hixl-zh.md)
-- [Linux 终端编辑、历史与撤回](docs/terminal-interaction-zh.md)
-- [openFuyao v26.06 对齐基线](docs/openfuyao-alignment-zh.md)
-- [产品设计与边界](docs/product-design-zh.md)
-- [变更保护与回退](docs/change-safety-zh.md)
-- [安全边界](docs/security-boundaries-zh.md)
-- [候选版本验证](docs/candidate-validation-zh.md)
+- [领域 Insight、设计原则与治理边界](docs/archive/domain-insights-and-governance-zh.md)
+- [推理服务全生命周期](docs/architecture/deployment-lifecycle-zh.md)
+- [社区介绍提纲](docs/archive/community-introduction-zh.md)
+- [产品使用指南](docs/guides/product-guide-zh.md)
+- [离线安装](docs/guides/offline-install-zh.md)
+- [工具集与知识库设计](docs/reference/toolsets-and-knowledge-zh.md)
+- [MCP 工具目录与组件映射](docs/reference/mcp-tool-catalog-zh.md)
+- [运行模式、Policy、配置版本与 Dashboard 路由](docs/architecture/policy-modes-config-versions-zh.md)
+- [v0.5 可执行路线图](docs/archive/v0.5-roadmap-zh.md)
+- [v0.5 产品与工程提案](docs/archive/proposals/infernex-agent-v0.5-proposal-zh.md)
+- [上下文预算与自动压缩](docs/guides/context-management-zh.md)
+- [本地历史日志分析与 Markdown 报告](docs/guides/local-evidence-and-reports-zh.md)
+- [CANN plog 外部持续采集](docs/guides/plog-capture-zh.md)
+- [节点与容器持续诊断 CollectorRun](docs/guides/collector-runs-zh.md)
+- [CANN/HiXL 诊断 Skill 与用户扩展](docs/guides/skills-and-cann-hixl-zh.md)
+- [Linux 终端编辑、历史与撤回](docs/guides/terminal-interaction-zh.md)
+- [openFuyao v26.06 对齐基线](docs/architecture/openfuyao-alignment-zh.md)
+- [产品设计与边界](docs/architecture/product-design-zh.md)
+- [变更保护与回退](docs/guides/change-safety-zh.md)
+- [安全边界](docs/reference/security-boundaries-zh.md)
+- [候选版本验证](docs/development/candidate-validation-zh.md)
 
 Helm/Pod 安装保留给确实需要 Kubernetes 原生托管 Agent 的团队，属于高级模式，
 不出现在 V1 默认 Release 下载项中。

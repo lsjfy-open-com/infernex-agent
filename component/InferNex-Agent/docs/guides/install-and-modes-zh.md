@@ -97,7 +97,7 @@ SSH 参数不接受 IP、用户名或密钥；这些只存在于 OpenSSH config 
 当发现至少一个业务 namespace 时，`diagnose` 及以上还会默认启用本机受限诊断 Subagent MCP：
 `127.0.0.1:18082/mcp`。独立 bearer token 位于
 `/etc/infernex-agent/diagnostic-subagent-token`，不与主 Agent 模型 API key 共用；完整对接方式见
-[故障诊断 Subagent 开发与联调指南](diagnostic-subagent-development-guide-zh.md)。
+[故障诊断 Subagent 开发与联调指南](../development/diagnostic-subagent-development-guide-zh.md)。
 
 `create-kubeconfig.sh`、`install-host.sh` 等底层脚本仅用于审计、CI、恢复或精细定制，
 普通用户无需逐项填写其中参数。
@@ -138,4 +138,4 @@ sudo /opt/infernex-agent/bin/restore-host-install.sh \
 默认路径参考了 kubectl-ai、K8sGPT 和 HolmesGPT 的共同做法：本地 CLI 使用现有
 kubeconfig，通过工具集和 runbook 驱动 Agentic 探索；kagent 这类 Controller/CRD
 方案只作为更复杂的集群内形态参考。来源和取舍见
-[工具集与知识库设计](toolsets-and-knowledge-zh.md)。
+[工具集与知识库设计](../reference/toolsets-and-knowledge-zh.md)。

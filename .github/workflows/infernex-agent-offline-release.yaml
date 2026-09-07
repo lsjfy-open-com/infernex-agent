@@ -262,8 +262,8 @@ jobs:
               test -x ./bin/configure-skills.sh
               test -f ./skills/cann-runtime-diagnosis/SKILL.md
               test -f ./skills/hixl-communication-diagnosis/SKILL.md
-              test -f ./docs/local-evidence-and-reports-zh.md
-              test -f ./docs/skills-and-cann-hixl-zh.md
+              test -f ./docs/guides/local-evidence-and-reports-zh.md
+              test -f ./docs/guides/skills-and-cann-hixl-zh.md
             ./install.sh --help >/dev/null
             if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
               test -x ./payload/pi-runtime/pi

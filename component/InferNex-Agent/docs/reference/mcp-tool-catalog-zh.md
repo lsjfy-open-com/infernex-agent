@@ -1,3 +1,5 @@
+> 本开发增量新增通用工具：`k8s_detect_environment`（保留 `openfuyao_detect_environment` 兼容名）和 `k8s_inspect_service_backends`。后者只读 Service/EndpointSlice，报告逐端口后端和 ClientIP/Local 等风险，**不证明真实流量均衡**。需要显式 namespace/name 及 EndpointSlice list 权限；诊断委派受 namespace scope 限制。alpha.13 不包含这两个新增入口。
+
 # InferNex Agent MCP 工具目录与组件映射
 
 本文区分“当前已经发布给模型的工具”和“v0.5 计划工具”。表格是工具契约清单，不是愿望清单；
@@ -71,7 +73,7 @@ bearer token、安装发现 namespace allow-list 和并发预算，不是主 `/m
 | 明确不发布 | deploy、configuration mutation、recover、experiment、semantic-memory write、任意 shell |
 
 它服务于模型部署失败和性能回归诊断。诊断结论返回主部署 Agent 后，修改、下一阶段实验和回退仍走
-主 Agent Policy。接口与联调规则见[故障诊断 Subagent 开发指南](diagnostic-subagent-development-guide-zh.md)。
+主 Agent Policy。接口与联调规则见[故障诊断 Subagent 开发指南](../development/diagnostic-subagent-development-guide-zh.md)。
 
 ### InferNex Bridge、服务拓扑和专项诊断
 

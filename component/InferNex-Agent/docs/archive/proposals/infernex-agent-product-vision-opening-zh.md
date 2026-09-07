@@ -1,3 +1,5 @@
+> 历史资料：不代表当前功能或排期。以[文档入口](../../README.md)和当前路线图为准。
+
 # InferNex Agent 产品理念开场提案
 
 状态：Draft  
@@ -16,9 +18,9 @@ InferNex Agent 不只是一个执行 Kubernetes 命令的聊天工具。它希�
 
 ## 2. 公开版视频
 
-[下载或播放 InferNex Agent 产品理念开场 V1](./assets/infernex-agent-vision-opening-v1.mp4)
+[下载或播放 InferNex Agent 产品理念开场 V1](assets/infernex-agent-vision-opening-v1.mp4)
 
-![InferNex Agent 产品理念开场封面](./assets/infernex-agent-vision-opening-v1-cover.png)
+![InferNex Agent 产品理念开场封面](assets/infernex-agent-vision-opening-v1-cover.png)
 
 视频规格：
 

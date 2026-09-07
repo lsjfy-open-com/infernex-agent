@@ -1,9 +1,9 @@
 # InferNex Agent 产品使用指南
 
-[English README](../README.md) | 简体中文
+[English README](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/README.md) | 简体中文
 
 > v0.5 的产品目标、架构、阶段验收和项目推进机制见
-> [InferNex Agent v0.5 产品与工程推进提案](proposals/infernex-agent-v0.5-proposal-zh.md)。
+> [InferNex Agent v0.5 产品与工程推进提案](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/archive/proposals/infernex-agent-v0.5-proposal-zh.md)。
 > Pi TUI foundation 分支的安装、使用和安全边界见 [Pi TUI 使用与边界](pi-tui-zh.md)。
 
 ## 一句话定位
@@ -109,8 +109,8 @@ sudo ./install.sh
 InferNex Agent仍以部署为主线。独立开发的 vLLM-Ascend/NPU 故障 Subagent 可通过受 token、namespace、
 并发和证据预算约束的专用 MCP 接入，但不能获得部署、修改或回退权限。默认按部署失败、验证回归或
 非计划 Pod replacement 触发短时留证，不默认持续抓取全部底层日志。参见
-[接入需求](diagnostic-subagent-requirements-zh.md)、[架构设计](diagnostic-subagent-architecture-zh.md)和
-[开发联调指南](diagnostic-subagent-development-guide-zh.md)。
+[接入需求](../architecture/diagnostic-subagent-requirements-zh.md)、[架构设计](../architecture/diagnostic-subagent-architecture-zh.md)和
+[开发联调指南](../development/diagnostic-subagent-development-guide-zh.md)。
 
 针对昇腾推理故障，离线包内置 CANN Runtime 和 HiXL/LLM DataDist 两个诊断 Skill，能够按症状渐进读取 plog、异步错误、HCCL、LocalCommRes、HCCS/RoCE/UB、建链和 KV 传输知识。运维人员也可以安装只包含 Markdown 的内部 Skill；详见[CANN/HiXL 诊断 Skill 与用户扩展](skills-and-cann-hixl-zh.md)。Skill 不增加 shell、文件或集群权限，所有结论仍须由当前环境证据验证。
 
@@ -184,8 +184,8 @@ V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具�
 - 把 vLLM-Ascend、PD、Mooncake、HCCL/RDMA 等排障知识作为可迭代知识库和 runbook；
 - 模型依据实时证据选择工具、关联多节点日志，并输出结论和建议。
 
-参见[工具集与知识库设计](toolsets-and-knowledge-zh.md)、[MCP 工具目录](mcp-tool-catalog-zh.md)和
-[运行模式、Policy 与配置版本设计](policy-modes-config-versions-zh.md)。
+参见[工具集与知识库设计](../reference/toolsets-and-knowledge-zh.md)、[MCP 工具目录](../reference/mcp-tool-catalog-zh.md)和
+[运行模式、Policy 与配置版本设计](../architecture/policy-modes-config-versions-zh.md)。
 
 ## 回退和边界
 
@@ -196,7 +196,7 @@ V1 采用业界常见的“本地 CLI Agent + 当前 kubeconfig + 受限工具�
 - 模型接口不可用时，对话暂停，但确定性扫描、Dashboard、变更记录和回退仍可工作。
 
 更完整的保证见[变更保护与回退](change-safety-zh.md)和
-[安全与能力边界](security-boundaries-zh.md)。
+[安全与能力边界](../reference/security-boundaries-zh.md)。
 
 ## 高级选项
 

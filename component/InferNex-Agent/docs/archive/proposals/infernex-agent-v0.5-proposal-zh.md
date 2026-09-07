@@ -1,3 +1,5 @@
+> 历史资料：不代表当前功能或排期。以[文档入口](../../README.md)和当前路线图为准。
+
 # InferNex Agent v0.5 产品与工程推进提案
 
 状态：Draft for review（2026-08-16 更新：明确差异化价值、MCP 契约、长期记忆、Policy mode、配置版本与外部路由）
@@ -36,7 +38,7 @@ Skill；这些通用能力应直接复用，不应由本项目重写。
 Skill + 通用 Kubernetes MCP，就会重新丢失 InferNex 的状态模型、变更事务、配置版本、专项验证和
 故障知识。这正是本项目相对通用 Agent 的持续价值，也是合入主仓而非维护一个提示词仓库的依据。
 
-完整当前/计划工具契约见 [MCP 工具目录与组件映射](../mcp-tool-catalog-zh.md)，可执行里程碑见
+完整当前/计划工具契约见 [MCP 工具目录与组件映射](../../reference/mcp-tool-catalog-zh.md)，可执行里程碑见
 [v0.5 路线图](../v0.5-roadmap-zh.md)。
 
 业界基线也支持这个边界判断：[OpenCode Tools](https://dev.opencode.ai/docs/tools/) 已提供 builtin/custom/MCP
@@ -112,9 +114,9 @@ vLLM-Ascend/NPU 故障团队通过独立受限 MCP 接入。主 Agent在部署�
 失败时创建诊断委派；Subagent在 namespace、时间、容量和并发预算内读取跨 Node/Pod/container 证据、
 调用固定探针和领域 Skill，并返回报告。它不获得 deploy/change/recover/experiment、任意 shell 或
 kubeconfig。详细需求、架构和接口分别见
-[故障诊断 Subagent 接入需求](../diagnostic-subagent-requirements-zh.md)、
-[架构设计](../diagnostic-subagent-architecture-zh.md)和
-[开发联调指南](../diagnostic-subagent-development-guide-zh.md)。
+[故障诊断 Subagent 接入需求](../../architecture/diagnostic-subagent-requirements-zh.md)、
+[架构设计](../../architecture/diagnostic-subagent-architecture-zh.md)和
+[开发联调指南](../../development/diagnostic-subagent-development-guide-zh.md)。
 
 默认采集策略是事件触发的短时 burst，而不是安装后持续全量抓日志。计划 rollout 只收集验收必需
 证据；非计划 Pod replacement、异常重启和性能回归才触发 plog/底层 profile。持续 CollectorRun 是
@@ -310,7 +312,7 @@ OpenAI-compatible 模型矩阵、工具审批和 Session 恢复回归。若 Pi �
 当前 MCP 已覆盖 8 个 openFuyao/Kubernetes/Helm 通用只读工具、5 个 Bridge 服务观察工具、1 个
 跨组件诊断工具、4 个受控部署/变更工具、3 个渐进实验工具，以及 3 个跨 Session semantic memory
 工具；`diagnose` 及以上模式新增固定 Pod exec/宿主机/SSH 主动诊断探针目录与执行工具。Pi extension 另提供 Artifact 分页工具。每个工具的组件映射、输入、发布条件和边界见
-[MCP 工具目录](../mcp-tool-catalog-zh.md)。
+[MCP 工具目录](../../reference/mcp-tool-catalog-zh.md)。
 
 下一阶段不会增加一个可切换 verb 的万能 Kubernetes 工具，而是补齐以下领域 toolset：主 Chart 的
 values/history/render/diff/upgrade/rollback、Configuration Version capture/diff/restore、Gateway
@@ -333,7 +335,7 @@ Dashboard 后续可复用现有 Istio/Gateway：创建 selector-less Service、�
 EndpointSlice 和 HTTPRoute/VirtualService。但自动发布前必须补齐 token/OIDC/mesh authentication、
 TLS、Gateway 到节点连通性、主机防火墙、Route Accepted 验证和配置版本回退。当前 Dashboard 无内建
 认证，因此不能把匿名暴露包装成“自动化”。详细设计见
-[运行模式、Policy、配置版本与 Dashboard 路由](../policy-modes-config-versions-zh.md)。
+[运行模式、Policy、配置版本与 Dashboard 路由](../../architecture/policy-modes-config-versions-zh.md)。
 
 ## 5. 迭代计划
 

@@ -1,3 +1,5 @@
+> 历史资料：不代表当前功能或排期。以[文档入口](../../README.md)和当前路线图为准。
+
 # oFEP 草案：InferNex 智能部署、故障诊断与长期运维 Agent
 
 > 状态：Draft for author review，尚未提交 openFuyao 社区。

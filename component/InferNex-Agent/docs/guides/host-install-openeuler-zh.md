@@ -78,4 +78,4 @@ ssh -L 8081:127.0.0.1:8081 <A2管理节点>
 浏览器访问 `http://127.0.0.1:8081/`。
 
 更新、恢复、卸载和安全边界分别见[安装模式](install-and-modes-zh.md)、
-[变更保护与回退](change-safety-zh.md)和[安全边界](security-boundaries-zh.md)。
+[变更保护与回退](change-safety-zh.md)和[安全边界](../reference/security-boundaries-zh.md)。

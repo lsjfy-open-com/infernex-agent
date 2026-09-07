@@ -33,7 +33,7 @@ InferNex 主 Chart 部署权威；只有实际使用 Bridge 时，InferNexServic
 该入口的部署与状态权威。
 
 离线包内置 CANN Runtime 与 HiXL/LLM DataDist 诊断 Skill；详细使用与用户扩展格式见
-[CANN/HiXL 诊断 Skill 与用户扩展](skills-and-cann-hixl-zh.md)。Skill 负责领域诊断流程和版本化知识，
+[CANN/HiXL 诊断 Skill 与用户扩展](../guides/skills-and-cann-hixl-zh.md)。Skill 负责领域诊断流程和版本化知识，
 typed MCP tool 负责实时证据与权限边界，两者不能互相替代。
 
 ## Toolsets

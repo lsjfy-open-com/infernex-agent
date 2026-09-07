@@ -1,3 +1,5 @@
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.13 的原生部署写路径和请求级均衡尚未实现。
+
 # InferNex Agent
 
 [English](README.md) | [简体中文](README-zh.md)
@@ -13,7 +15,7 @@ images, or shell commands.
 The intended management-node installation is one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.13/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.13 bash
 ```
 
 The installer discovers the current kubeconfig, CPU architecture, and whether
@@ -30,13 +32,13 @@ Events, and bounded redacted logs. API discovery plus paginated GET/LIST also
 covers native resources and CRDs visible to the active kubeconfig/RBAC, while
 Secret payloads remain excluded. Node, Pod, and Service summaries include
 network addresses; Bridge is not a prerequisite. See the
-[Chinese product guide](docs/product-guide-zh.md) for online, offline, XShell,
+[Chinese product guide](docs/guides/product-guide-zh.md) for online, offline, XShell,
 Dashboard, safety, and current candidate-validation instructions.
 
 The offline host bundle includes progressively loaded CANN Runtime and
 HiXL/LLM DataDist diagnostic Skills. Operators can install additional
 Markdown-only Skills without granting shell or cluster permissions; see the
-[Chinese Skill guide](docs/skills-and-cann-hixl-zh.md).
+[Chinese Skill guide](docs/guides/skills-and-cann-hixl-zh.md).
 
 The current public candidate is
 [v0.4.0-rc.8](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.4.0-rc.8).
@@ -135,10 +137,10 @@ The management-node installer also creates a checksummed pre-install recovery po
 installation or verification fails, it restores the previous host files,
 systemd state, and Agent-managed cluster source resources automatically.
 
-See [change safety, backup, and rollback](docs/change-safety-zh.md) for the
+See [change safety, backup, and rollback](docs/guides/change-safety-zh.md) for the
 restore CLI, persistence requirements, guarantees, and boundaries.
 
-The [openFuyao v26.06 alignment baseline](docs/openfuyao-alignment-zh.md)
+The [openFuyao v26.06 alignment baseline](docs/architecture/openfuyao-alignment-zh.md)
 records the official deployment sources, authority boundaries, implemented
 adapters, and deliberately unfinished integrations used by this design.
 
@@ -190,7 +192,7 @@ It publishes `infernex_start_experiment`, `infernex_get_experiment`, and
 `infernex_list_experiments`, plus `/api/v1/experiments` on the dashboard. It
 does not generate profiles, replay inference traffic, switch production
 traffic, or delete passed candidates. See the
-[progressive experiment and cross-node diagnostics guide](docs/progressive-experiments-zh.md).
+[progressive experiment and cross-node diagnostics guide](docs/guides/progressive-experiments-zh.md).
 
 ### Guarded automatic recovery service
 
@@ -330,7 +332,7 @@ round budget is exhausted. Use `/context` to inspect the estimate and
 `--context-compaction-threshold`, `--context-keep-recent-turns`, and
 `--tool-result-max-tokens`. `infernex-agent chat --artifact-dir=...` changes
 the artifact root; an empty value disables artifact storage. See the
-[Chinese context management guide](docs/context-management-zh.md).
+[Chinese context management guide](docs/guides/context-management-zh.md).
 
 New host installs reserve up to 8192 output tokens by default, reduced to one
 quarter of smaller context windows. Interactive model setup asks for the real
@@ -345,11 +347,11 @@ Operator-collected logs that can no longer be fetched from Kubernetes can be
 registered as read-only local evidence roots. Controlled glob, grep, bounded
 line reads, default metrics/health-probe noise filtering, and persistent
 Markdown reports are provided without enabling arbitrary host filesystem
-tools. See the [Chinese local evidence guide](docs/local-evidence-and-reports-zh.md).
+tools. See the [Chinese local evidence guide](docs/guides/local-evidence-and-reports-zh.md).
 
-Durable CollectorRuns can automatically expand a Pod label selector, sample fixed PFC/HCCN/NPU/CANN/HCCL-preflight profiles, and retain JSONL evidence without asking operators to copy per-node command output. See the [Chinese CollectorRun guide](docs/collector-runs-zh.md).
+Durable CollectorRuns can automatically expand a Pod label selector, sample fixed PFC/HCCN/NPU/CANN/HCCL-preflight profiles, and retain JSONL evidence without asking operators to copy per-node command output. See the [Chinese CollectorRun guide](docs/guides/collector-runs-zh.md).
 
-The deployment Agent can delegate vLLM-Ascend/NPU fault analysis to an independently developed specialist through a separate bearer-protected, namespace-scoped MCP endpoint. That endpoint exposes observation, bounded active-read, Evidence, Skill, and report tools but no deployment, configuration mutation, recovery, experiment, memory-write, arbitrary-resource, or shell capability. Collection defaults to a short event-triggered burst rather than continuous logging. See the Chinese [requirements](docs/diagnostic-subagent-requirements-zh.md), [architecture](docs/diagnostic-subagent-architecture-zh.md), and [integration guide](docs/diagnostic-subagent-development-guide-zh.md).
+The deployment Agent can delegate vLLM-Ascend/NPU fault analysis to an independently developed specialist through a separate bearer-protected, namespace-scoped MCP endpoint. That endpoint exposes observation, bounded active-read, Evidence, Skill, and report tools but no deployment, configuration mutation, recovery, experiment, memory-write, arbitrary-resource, or shell capability. Collection defaults to a short event-triggered burst rather than continuous logging. See the Chinese [requirements](docs/architecture/diagnostic-subagent-requirements-zh.md), [architecture](docs/architecture/diagnostic-subagent-architecture-zh.md), and [integration guide](docs/development/diagnostic-subagent-development-guide-zh.md).
 
 Pi reasoning blocks are hidden by default without disabling model reasoning or
 tool-call parsing. Use `configure-model.sh --reasoning-display visible`, pass
@@ -362,7 +364,7 @@ word/line deletion, in-process history, command completion, and safe Ctrl+C/
 Ctrl+D behavior. `/undo` removes the latest user turn and its assistant/tool
 messages from model context so it can be recalled with Up, edited, and resent;
 it never rolls back an already approved cluster mutation. See the
-[Chinese terminal interaction guide](docs/terminal-interaction-zh.md).
+[Chinese terminal interaction guide](docs/guides/terminal-interaction-zh.md).
 
 For a production deployment, run kubectl-ai and InferNex Agent in the same
 restricted management namespace, keep the Agent Service internal, and enable
@@ -432,7 +434,7 @@ cd infernex-agent-offline-0.3.0-linux-amd64
 ```
 
 See the complete Chinese guide:
-[offline build and existing-cluster installation](docs/offline-install-zh.md).
+[offline build and existing-cluster installation](docs/guides/offline-install-zh.md).
 
 For an Agent that runs directly on an openEuler master/bootstrap host rather
 than in Kubernetes, build the static-binary bundle:
@@ -447,7 +449,7 @@ than in Kubernetes, build the static-binary bundle:
 The host mode uses the existing `--kubeconfig` support, a dedicated
 namespace-scoped identity, a non-root hardened systemd unit, loopback-only
 MCP/dashboard defaults, and an API-key credential file. See the
-[openEuler host installation guide](docs/host-install-openeuler-zh.md).
+[openEuler host installation guide](docs/guides/host-install-openeuler-zh.md).
 
 Model analysis is optional in both deployment modes. A host installation can
 start without a model and configure one later without reinstalling:
@@ -467,16 +469,16 @@ Non-secret effective arguments are stored in
 
 Product documentation:
 
-- [Installation and operating-mode guide (Chinese)](docs/install-and-modes-zh.md)
-- [Product guide and acceptance](docs/product-guide-zh.md)
-- [Product design and failure semantics](docs/product-design-zh.md)
-- [Progressive experiments and cross-node diagnostics](docs/progressive-experiments-zh.md)
-- [Change safety, backup, and rollback](docs/change-safety-zh.md)
-- [Model configuration lifecycle](docs/model-configuration-zh.md)
-- [Context budget and automatic compaction](docs/context-management-zh.md)
-- [Linux terminal editing and undo](docs/terminal-interaction-zh.md)
-- [Security and capability boundaries](docs/security-boundaries-zh.md)
-- [Operations runbook](docs/operations-runbook-zh.md)
+- [Installation and operating-mode guide (Chinese)](docs/guides/install-and-modes-zh.md)
+- [Product guide and acceptance](docs/guides/product-guide-zh.md)
+- [Product design and failure semantics](docs/architecture/product-design-zh.md)
+- [Progressive experiments and cross-node diagnostics](docs/guides/progressive-experiments-zh.md)
+- [Change safety, backup, and rollback](docs/guides/change-safety-zh.md)
+- [Model configuration lifecycle](docs/guides/model-configuration-zh.md)
+- [Context budget and automatic compaction](docs/guides/context-management-zh.md)
+- [Linux terminal editing and undo](docs/guides/terminal-interaction-zh.md)
+- [Security and capability boundaries](docs/reference/security-boundaries-zh.md)
+- [Operations runbook](docs/guides/operations-runbook-zh.md)
 
 ## Deployment
 
@@ -633,8 +635,8 @@ The binary provides `version`, `serve --config`, `doctor`, `chat`, and guarded
 installed configuration, backs up the current binary, restarts systemd, waits
 for the health endpoint, and automatically restores the previous binary if the
 new process does not become healthy. See the
-[Chinese candidate validation guide](docs/candidate-validation-zh.md) for the
+[Chinese candidate validation guide](docs/development/candidate-validation-zh.md) for the
 operator workflow and acceptance gates.
 
-See [docs/architecture.md](docs/architecture.md) for component boundaries and
+See [docs/architecture.md](docs/architecture/architecture.md) for component boundaries and
 the broader mutation roadmap.

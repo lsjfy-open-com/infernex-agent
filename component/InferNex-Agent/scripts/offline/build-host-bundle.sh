@@ -192,31 +192,7 @@ fi
 install -m 0755 \
   "${agent_dir}/scripts/host/quick-install.sh" \
   "${bundle_root}/install.sh"
-install -m 0644 \
-  "${agent_dir}/docs/host-install-openeuler-zh.md" \
-  "${bundle_root}/README.md"
-install -m 0644 \
-  "${agent_dir}/docs/product-guide-zh.md" \
-  "${agent_dir}/docs/product-design-zh.md" \
-  "${agent_dir}/docs/toolsets-and-knowledge-zh.md" \
-  "${agent_dir}/docs/candidate-validation-zh.md" \
-  "${agent_dir}/docs/install-and-modes-zh.md" \
-  "${agent_dir}/docs/model-configuration-zh.md" \
-  "${agent_dir}/docs/context-management-zh.md" \
-  "${agent_dir}/docs/local-evidence-and-reports-zh.md" \
-  "${agent_dir}/docs/plog-capture-zh.md" \
-  "${agent_dir}/docs/collector-runs-zh.md" \
-  "${agent_dir}/docs/diagnostic-subagent-requirements-zh.md" \
-  "${agent_dir}/docs/diagnostic-subagent-architecture-zh.md" \
-  "${agent_dir}/docs/diagnostic-subagent-development-guide-zh.md" \
-  "${agent_dir}/docs/skills-and-cann-hixl-zh.md" \
-  "${agent_dir}/docs/terminal-interaction-zh.md" \
-  "${agent_dir}/docs/pi-tui-zh.md" \
-  "${agent_dir}/docs/security-boundaries-zh.md" \
-  "${agent_dir}/docs/operations-runbook-zh.md" \
-  "${agent_dir}/docs/change-safety-zh.md" \
-  "${agent_dir}/docs/progressive-experiments-zh.md" \
-  "${bundle_root}/docs/"
+bundle_copy_documentation "${agent_dir}" "${bundle_root}"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"

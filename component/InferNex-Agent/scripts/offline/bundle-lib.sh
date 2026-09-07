@@ -16,6 +16,33 @@ bundle_warn() {
   printf 'WARN: %s\n' "$*" >&2
 }
 
+# Keep the source documentation hierarchy in both distributions. Historical
+# proposals and videos stay in the repository rather than normal user bundles.
+bundle_copy_documentation() {
+  local agent_dir="$1" root="$2" file relative
+  while IFS= read -r file; do
+    relative="${file#"${agent_dir}/docs/"}"
+    mkdir -p "${root}/docs/$(dirname -- "$relative")"
+    install -m 0644 "$file" "${root}/docs/${relative}"
+  done < <(find "${agent_dir}/docs" -type f -name '*.md' ! -path '*/archive/*' | LC_ALL=C sort)
+  cat >"${root}/README.md" <<'DOC'
+# InferNex Agent installation bundle
+
+For the standard management-node package, verify the adjacent archive SHA256,
+extract it and run `sudo ./install.sh`. Existing model configuration is preserved
+on upgrade. Choose the package for the management node's CPU architecture.
+
+See [installation](docs/guides/offline-install-zh.md),
+[model configuration](docs/guides/model-configuration-zh.md),
+[Pi TUI](docs/guides/pi-tui-zh.md), and
+[current capability boundaries](docs/architecture/kubernetes-first-zh.md).
+
+The advanced Kubernetes bundle uses its bin/install-agent.sh entrypoint as
+documented in the installation guide. Historical proposals remain in the source
+repository and are not evidence of implemented capabilities.
+DOC
+}
+
 bundle_require_command() {
   command -v "$1" >/dev/null 2>&1 ||
     bundle_die "required command not found: $1"
