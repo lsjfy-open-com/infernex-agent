@@ -269,7 +269,8 @@ assert_mcp_result "idempotent deployment" '
 
 # Exercise the real automatic rollback path without waiting for a deadline.
 # Pause Bridge so it cannot overwrite the injected status, create a separate
-# catalog object, then report Degraded for its observed generation.
+# catalog object, then bind both status and Degraded to its actual generation.
+# An undated or stale Degraded condition must not trigger early rollback.
 rollback_name="${model_name}-rollback-probe"
 rollback_request="$(
   jq -nc \
@@ -308,6 +309,7 @@ kubectl -n "${model_namespace}" patch \
           conditions:[{
             type:"Degraded",
             status:"True",
+            observedGeneration:$generation,
             reason:"KindRollbackInjection",
             message:"Intentional CI rollback verification",
             lastTransitionTime:(now | todate)
