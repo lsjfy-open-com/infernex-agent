@@ -15,6 +15,7 @@ package supervisor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -67,7 +68,9 @@ type fakeAnalyzer struct {
 }
 
 type fakeRemediator struct {
-	calls int
+	calls   int
+	request remediator.Request
+	err     error
 }
 
 type fakeDiagnoser struct {
@@ -128,6 +131,10 @@ func (f *fakeRemediator) EnsureRecovery(
 	request remediator.Request,
 ) (remediator.Result, error) {
 	f.calls++
+	f.request = request
+	if f.err != nil {
+		return remediator.Result{}, f.err
+	}
 	return remediator.Result{
 		Namespace: request.Namespace,
 		Name:      request.SourceName + "-recovery",
@@ -529,5 +536,31 @@ func TestScannerRestartsCriticalSequenceAfterDiagnosticBudgetDeferral(t *testing
 	requireRemediation(t, scanner.ScanOnce(context.Background()), "created", 2)
 	if domainRemediator.calls != 1 {
 		t.Fatalf("recovery calls = %d, want 1", domainRemediator.calls)
+	}
+}
+
+func TestScannerPassesObservedIdentityAndRestartsAfterPreconditionRejection(t *testing.T) {
+	scanner, domainObserver, domainRemediator := newRecoveryScanner(t)
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+	domainRemediator.err = fmt.Errorf("source changed: %w", remediator.ErrRecoveryPrecondition)
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "watching", 0)
+	request := domainRemediator.request
+	if request.ExpectedSource == nil || string(request.ExpectedSource.UID) != domainObserver.summary.UID ||
+		request.ExpectedSource.Generation != domainObserver.summary.Generation ||
+		request.Profile != domainObserver.summary.Recovery.Profile || request.Name != domainObserver.summary.Recovery.Name {
+		t.Fatalf("recovery request lost observed identity or policy: %#v", request)
+	}
+	if domainRemediator.calls != 1 || len(scanner.failures) != 0 {
+		t.Fatalf("precondition rejection retained failure sequence: calls=%d failures=%#v", domainRemediator.calls, scanner.failures)
+	}
+
+	domainRemediator.err = nil
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+	if domainRemediator.calls != 1 {
+		t.Fatalf("recovery retried before a new complete sequence: calls=%d", domainRemediator.calls)
+	}
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "created", 2)
+	if domainRemediator.calls != 2 {
+		t.Fatalf("recovery calls = %d, want 2", domainRemediator.calls)
 	}
 }

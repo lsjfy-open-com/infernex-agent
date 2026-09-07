@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -34,19 +35,33 @@ import (
 
 const (
 	ApprovedProfileLabel      = "agent.infernex.io/approved-recovery-profile"
+	autoRecoveryAnnotation    = "agent.infernex.io/auto-recovery"
 	managedLabel              = "agent.infernex.io/managed"
 	recoveryProfileAnnotation = "agent.infernex.io/recovery-profile"
+	recoveryNameAnnotation    = "agent.infernex.io/recovery-name"
 	recoverySourceAnnotation  = "agent.infernex.io/recovery-source"
 	changeIDAnnotation        = "agent.infernex.io/change-id"
 	managedByLabel            = "app.kubernetes.io/managed-by"
 	maxNameLength             = 253
 )
 
+// ErrRecoveryPrecondition means fresh source or profile evidence no longer
+// authorizes recovery. Callers must restart any consecutive-failure sequence.
+var ErrRecoveryPrecondition = errors.New("recovery precondition failed")
+
+type SourceIdentity struct {
+	UID        types.UID
+	Generation int64
+}
+
 type Request struct {
 	Namespace  string
 	SourceName string
 	Profile    string
 	Name       string
+	// ExpectedSource binds an observed failure to its source incarnation and
+	// generation. Omitting it does not bypass current source/profile opt-in.
+	ExpectedSource *SourceIdentity
 }
 
 type Result struct {
@@ -155,21 +170,16 @@ func (r *ProfileRemediator) EnsureRecovery(ctx context.Context, request Request)
 		return Result{}, err
 	}
 
-	config := &infernexv1alpha1.InferNexServiceConfig{}
-	configKey := types.NamespacedName{Namespace: r.templateNamespace, Name: profile}
-	if err := r.client.Get(ctx, configKey, config); err != nil {
-		return Result{}, fmt.Errorf("get recovery profile %s: %w", configKey, err)
+	request.Namespace, request.SourceName, request.Profile, request.Name = namespace, sourceName, profile, name
+	if request.ExpectedSource != nil && (request.ExpectedSource.UID == "" || request.ExpectedSource.Generation <= 0) {
+		return Result{}, fmt.Errorf("%w: expected source requires a UID and positive generation", ErrRecoveryPrecondition)
 	}
-	if !strings.EqualFold(
-		strings.TrimSpace(config.Labels[ApprovedProfileLabel]),
-		"true",
-	) {
-		return Result{}, fmt.Errorf(
-			"InferNexServiceConfig %s is not approved by label %s=true",
-			configKey,
-			ApprovedProfileLabel,
-		)
+	identity, err := r.verifyPreconditions(ctx, request)
+	if err != nil {
+		return Result{}, err
 	}
+	// Also bind direct callers to the source read at the start of this attempt.
+	request.ExpectedSource = &identity
 
 	desired := recoveryService(namespace, name, sourceName, profile)
 	key := types.NamespacedName{Namespace: namespace, Name: name}
@@ -212,6 +222,17 @@ func (r *ProfileRemediator) EnsureRecovery(ctx context.Context, request Request)
 	if err := r.store.Append(record); err != nil {
 		return Result{}, fmt.Errorf("persist pre-recovery change record: %w", err)
 	}
+	// Recheck after persisting the plan, immediately before creating the target.
+	// Kubernetes cannot make this read and a different CR's Create atomic.
+	if _, err := r.verifyPreconditions(ctx, request); err != nil {
+		record.Status = changesafety.StatusApplyFailed
+		record.OccurredAt = time.Now().UTC()
+		record.Message = err.Error()
+		if storeErr := r.store.Append(record); storeErr != nil {
+			return Result{}, fmt.Errorf("%w; persist rejected recovery: %w", err, storeErr)
+		}
+		return Result{}, err
+	}
 	if err := r.client.Create(ctx, desired); err != nil {
 		record.Status = changesafety.StatusApplyFailed
 		record.OccurredAt = time.Now().UTC()
@@ -242,6 +263,50 @@ func (r *ProfileRemediator) EnsureRecovery(ctx context.Context, request Request)
 	result := resultFor(desired, profile, "created")
 	result.ChangeID = changeID
 	return result, nil
+}
+
+func (r *ProfileRemediator) verifyPreconditions(ctx context.Context, request Request) (SourceIdentity, error) {
+	sourceKey := types.NamespacedName{Namespace: request.Namespace, Name: request.SourceName}
+	source := &infernexv1alpha1.InferNexService{}
+	if err := r.client.Get(ctx, sourceKey, source); err != nil {
+		return SourceIdentity{}, fmt.Errorf("%w: get source InferNexService %s: %w", ErrRecoveryPrecondition, sourceKey, err)
+	}
+	identity := SourceIdentity{UID: source.UID, Generation: source.Generation}
+	if identity.UID == "" || identity.Generation <= 0 {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s has no complete identity", ErrRecoveryPrecondition, sourceKey)
+	}
+	if request.ExpectedSource != nil && identity != *request.ExpectedSource {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s UID or generation changed", ErrRecoveryPrecondition, sourceKey)
+	}
+	if !source.DeletionTimestamp.IsZero() || source.Status.ObservedGeneration < source.Generation {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s is terminating or its current generation is not observed", ErrRecoveryPrecondition, sourceKey)
+	}
+	if !strings.EqualFold(strings.TrimSpace(source.Annotations[autoRecoveryAnnotation]), "true") {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s has not opted in to automatic recovery", ErrRecoveryPrecondition, sourceKey)
+	}
+	if strings.TrimSpace(source.Annotations[recoveryProfileAnnotation]) != request.Profile {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s recovery profile does not match the request", ErrRecoveryPrecondition, sourceKey)
+	}
+	recoveryName := strings.TrimSpace(source.Annotations[recoveryNameAnnotation])
+	if recoveryName == "" {
+		recoveryName = defaultRecoveryName(source.Name)
+	}
+	if recoveryName != request.Name {
+		return SourceIdentity{}, fmt.Errorf("%w: source InferNexService %s recovery name does not match the request", ErrRecoveryPrecondition, sourceKey)
+	}
+	configKey := types.NamespacedName{Namespace: r.templateNamespace, Name: request.Profile}
+	config := &infernexv1alpha1.InferNexServiceConfig{}
+	if err := r.client.Get(ctx, configKey, config); err != nil {
+		return SourceIdentity{}, fmt.Errorf("%w: get recovery profile %s: %w", ErrRecoveryPrecondition, configKey, err)
+	}
+	if !config.DeletionTimestamp.IsZero() {
+		return SourceIdentity{}, fmt.Errorf("%w: recovery profile %s is terminating", ErrRecoveryPrecondition, configKey)
+	}
+	if !strings.EqualFold(strings.TrimSpace(config.Labels[ApprovedProfileLabel]), "true") {
+		return SourceIdentity{}, fmt.Errorf("%w: InferNexServiceConfig %s is not approved by label %s=true",
+			ErrRecoveryPrecondition, configKey, ApprovedProfileLabel)
+	}
+	return identity, nil
 }
 
 func recoveryService(
