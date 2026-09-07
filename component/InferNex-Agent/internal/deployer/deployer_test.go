@@ -14,11 +14,14 @@ package deployer
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -301,7 +304,7 @@ func TestRestartResumesPlannedDeploymentCreatedBeforeEventFlush(t *testing.T) {
 		changesafety.StatusPlanned,
 		request,
 		nil,
-		nil,
+		serviceJSON(t, service),
 		"test interrupted create",
 	)
 	if err := store.Append(record); err != nil {
@@ -383,6 +386,18 @@ func TestDeploymentMonitorChecksIdentityBeforeReadiness(t *testing.T) {
 		{name: "replacement with copied annotations", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
 			service.UID = "replacement-uid"
 		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "edited spec with same UID", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Spec.Model.Name = "operator-edit"
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "missing desired snapshot", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Desired = nil
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "invalid desired snapshot", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Desired = json.RawMessage(`{"spec": "invalid"}`)
+		}, wantStatus: changesafety.StatusRollbackFailed},
+		{name: "desired snapshot without spec", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Desired = json.RawMessage(`{}`)
+		}, wantStatus: changesafety.StatusRollbackFailed},
 		{name: "current Degraded takes precedence over Ready", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
 			service.Status.Conditions = []metav1.Condition{{Type: "Degraded", Status: metav1.ConditionTrue, ObservedGeneration: service.Generation}}
 		}, wantStatus: changesafety.StatusRolledBack, wantAbsent: true},
@@ -394,7 +409,7 @@ func TestDeploymentMonitorChecksIdentityBeforeReadiness(t *testing.T) {
 		}, wantStatus: changesafety.StatusCommitted},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			service, record := deploymentIdentityFixture()
+			service, record := deploymentIdentityFixture(t)
 			service.Generation = 2
 			service.Status.Ready = true
 			service.Status.ObservedGeneration = 2
@@ -424,7 +439,7 @@ func TestDeploymentMonitorChecksIdentityBeforeReadiness(t *testing.T) {
 }
 
 func TestRollbackPreservesReplacementWithCopiedOwnership(t *testing.T) {
-	service, record := deploymentIdentityFixture()
+	service, record := deploymentIdentityFixture(t)
 	service.UID = "replacement-uid"
 	kubeClient := newIdentityTestClient(t, service)
 	store := changesafety.NewMemoryStore()
@@ -443,7 +458,7 @@ func TestDeploymentDeletionRejectsConcurrentIdentityChanges(t *testing.T) {
 	for _, action := range []string{"explicit deletion", "automatic rollback"} {
 		for _, race := range []string{"replacement", "ownership update"} {
 			t.Run(action+"/"+race, func(t *testing.T) {
-				service, record := deploymentIdentityFixture()
+				service, record := deploymentIdentityFixture(t)
 				kubeClient := newIdentityTestClient(t, service)
 				deleteCalls := 0
 				kubeClient.delete = func(ctx context.Context, object client.Object, options ...client.DeleteOption) error {
@@ -516,21 +531,273 @@ func TestDeploymentDeletionRejectsConcurrentIdentityChanges(t *testing.T) {
 	}
 }
 
-func deploymentIdentityFixture() (*infernexv1alpha1.InferNexService, changesafety.ChangeRecord) {
+func TestDeployUsesAPIAcceptedSpecForMonitoringAndRollback(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ready=%t", ready), func(t *testing.T) {
+			kubeClient := newIdentityTestClient(t)
+			kubeClient.create = func(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+				service := object.(*infernexv1alpha1.InferNexService)
+				service.UID = "admitted-service-uid"
+				service.Generation = 1
+				// Simulate an API default or admission change that is only present
+				// in the Create response, not the previously persisted request.
+				service.Spec.Engine.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
+				return kubeClient.Client.Create(ctx, object, options...)
+			}
+			store := changesafety.NewMemoryStore()
+			domainDeployer := New(kubeClient, WithStore(store), WithReadiness(time.Second, time.Millisecond))
+			if !ready {
+				domainDeployer.readinessTimeout = 25 * time.Millisecond
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := domainDeployer.Start(ctx); err != nil {
+				t.Fatal(err)
+			}
+			result, err := domainDeployer.Deploy(ctx, Request{
+				Namespace: "models", Name: "tiny", CatalogID: TinyModelCatalogID, Confirm: true,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			key := types.NamespacedName{Namespace: "models", Name: "tiny"}
+			if ready {
+				service := &infernexv1alpha1.InferNexService{}
+				if err := kubeClient.Get(ctx, key, service); err != nil {
+					t.Fatal(err)
+				}
+				service.Status.Ready = true
+				service.Status.ObservedGeneration = service.Generation
+				if err := kubeClient.Update(ctx, service); err != nil {
+					t.Fatal(err)
+				}
+			}
+			wantStatus := changesafety.StatusRolledBack
+			if ready {
+				wantStatus = changesafety.StatusCommitted
+			}
+			record := waitForDeploymentStatus(t, store, result.ChangeID, wantStatus)
+			var accepted infernexv1alpha1.InferNexService
+			if err := json.Unmarshal(record.Desired, &accepted); err != nil {
+				t.Fatal(err)
+			}
+			if accepted.Spec.Engine.Template.Spec.DNSPolicy != corev1.DNSClusterFirst {
+				t.Fatal("journal did not preserve the API-accepted spec")
+			}
+			err = kubeClient.Get(ctx, key, &infernexv1alpha1.InferNexService{})
+			if ready && err != nil || !ready && !apierrors.IsNotFound(err) {
+				t.Fatalf("unexpected deployment existence after %s: %v", wantStatus, err)
+			}
+		})
+	}
+}
+
+func TestRollbackRejectsSpecEditedAfterMonitorRead(t *testing.T) {
+	service, record := deploymentIdentityFixture(t)
+	service.Generation = 2
+	service.Status.ObservedGeneration = 2
+	service.Status.Conditions = []metav1.Condition{{Type: "Degraded", Status: metav1.ConditionTrue, ObservedGeneration: 2}}
+	kubeClient := newIdentityTestClient(t, service)
+	reads := 0
+	kubeClient.get = func(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+		if err := kubeClient.Client.Get(ctx, key, object, options...); err != nil {
+			return err
+		}
+		reads++
+		if reads == 1 {
+			// The monitor receives the original spec; rollback's fresh Get will
+			// see the operator edit with the same UID and ownership annotations.
+			edited := object.(*infernexv1alpha1.InferNexService).DeepCopy()
+			edited.Spec.Model.Name = "operator-edit"
+			if err := kubeClient.Client.Update(ctx, edited); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return nil
+	}
+	store := changesafety.NewMemoryStore()
+	domainDeployer := New(kubeClient, WithStore(store), WithReadiness(time.Second, time.Millisecond))
+	domainDeployer.monitorDeployment(context.Background(), record)
+	latest, err := store.Latest(record.ID)
+	if err != nil || latest.Status != changesafety.StatusRollbackFailed || !strings.Contains(latest.Message, "spec drift") {
+		t.Fatalf("rollback must reject a spec edited after monitoring: record=%#v err=%v", latest, err)
+	}
+	current := &infernexv1alpha1.InferNexService{}
+	if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(service), current); err != nil ||
+		current.UID != service.UID || current.Spec.Model.Name != "operator-edit" {
+		t.Fatalf("operator edit was not preserved: service=%#v err=%v", current, err)
+	}
+}
+
+func TestPlannedRecoveryDoesNotAdoptUnverifiableSpec(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*infernexv1alpha1.InferNexService, *changesafety.ChangeRecord)
+	}{
+		{name: "edited spec", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Spec.Model.Name = "operator-edit"
+		}},
+		{name: "defaulting without an applied snapshot", mutate: func(service *infernexv1alpha1.InferNexService, _ *changesafety.ChangeRecord) {
+			service.Spec.Engine.Template.Spec.DNSPolicy = corev1.DNSClusterFirst
+		}},
+		{name: "missing desired snapshot", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Desired = nil
+		}},
+		{name: "invalid desired snapshot", mutate: func(_ *infernexv1alpha1.InferNexService, record *changesafety.ChangeRecord) {
+			record.Desired = json.RawMessage(`{"spec": "invalid"}`)
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, record := deploymentIdentityFixture(t)
+			record.Status = changesafety.StatusPlanned
+			record.Target.UID = ""
+			test.mutate(service, &record)
+			kubeClient := newIdentityTestClient(t, service)
+			store := changesafety.NewMemoryStore()
+			if err := store.Append(record); err != nil {
+				t.Fatal(err)
+			}
+			domainDeployer := New(kubeClient, WithStore(store), WithReadiness(time.Second, time.Millisecond))
+			if err := domainDeployer.Start(context.Background()); err == nil {
+				t.Fatal("restart adopted an unverifiable spec")
+			}
+			latest, err := store.Latest(record.ID)
+			if err != nil || latest.Status != changesafety.StatusRollbackFailed || latest.Target.UID != "" ||
+				string(latest.Desired) != string(record.Desired) {
+				t.Fatalf("restart must retain the original baseline and record failure: record=%#v err=%v", latest, err)
+			}
+			current := &infernexv1alpha1.InferNexService{}
+			if err := kubeClient.Get(context.Background(), client.ObjectKeyFromObject(service), current); err != nil ||
+				!equality.Semantic.DeepEqual(service.Spec, current.Spec) {
+				t.Fatalf("restart changed an unverifiable object: service=%#v err=%v", current, err)
+			}
+		})
+	}
+}
+
+func TestAppliedJournalFailureRollbackPreservesEditedSpec(t *testing.T) {
+	for _, edited := range []bool{false, true} {
+		t.Run(fmt.Sprintf("edited=%t", edited), func(t *testing.T) {
+			kubeClient := newIdentityTestClient(t)
+			kubeClient.create = func(ctx context.Context, object client.Object, options ...client.CreateOption) error {
+				object.SetUID("created-service-uid")
+				return kubeClient.Client.Create(ctx, object, options...)
+			}
+			memory := changesafety.NewMemoryStore()
+			var changeID string
+			store := &deploymentTestStore{Store: memory}
+			store.append = func(record changesafety.ChangeRecord) error {
+				if record.Status != changesafety.StatusApplied {
+					return memory.Append(record)
+				}
+				changeID = record.ID
+				if edited {
+					current := &infernexv1alpha1.InferNexService{}
+					key := types.NamespacedName{Namespace: record.Target.Namespace, Name: record.Target.Name}
+					if err := kubeClient.Get(context.Background(), key, current); err != nil {
+						t.Fatal(err)
+					}
+					current.Spec.Model.Name = "operator-edit"
+					if err := kubeClient.Update(context.Background(), current); err != nil {
+						t.Fatal(err)
+					}
+				}
+				return errors.New("injected applied journal failure")
+			}
+			domainDeployer := New(kubeClient, WithStore(store))
+			_, err := domainDeployer.Deploy(context.Background(), Request{
+				Namespace: "models", Name: "tiny", CatalogID: TinyModelCatalogID, Confirm: true,
+			})
+			if err == nil || !strings.Contains(err.Error(), "injected applied journal failure") {
+				t.Fatalf("deployment must report journal failure: %v", err)
+			}
+			if edited && !strings.Contains(err.Error(), "spec drift") {
+				t.Fatalf("deployment must report the refused rollback: %v", err)
+			}
+			current := &infernexv1alpha1.InferNexService{}
+			getErr := kubeClient.Get(context.Background(), types.NamespacedName{Namespace: "models", Name: "tiny"}, current)
+			if !edited && !apierrors.IsNotFound(getErr) {
+				t.Fatalf("unchanged deployment must be rolled back: %v", getErr)
+			}
+			if edited && (getErr != nil || current.UID != "created-service-uid" || current.Spec.Model.Name != "operator-edit") {
+				t.Fatalf("emergency rollback deleted the operator edit: service=%#v err=%v", current, getErr)
+			}
+			if edited {
+				// Only the original planned snapshot survived. Restart must not
+				// adopt the live edit as a new baseline or delete it later.
+				restarted := New(kubeClient, WithStore(memory), WithReadiness(time.Second, time.Millisecond))
+				if err := restarted.Start(context.Background()); err == nil {
+					t.Fatal("restart accepted the edit after an applied journal failure")
+				}
+				latest, err := memory.Latest(changeID)
+				if err != nil || latest.Status != changesafety.StatusRollbackFailed {
+					t.Fatalf("restart must retain conflict state: record=%#v err=%v", latest, err)
+				}
+			}
+		})
+	}
+}
+
+func waitForDeploymentStatus(t *testing.T, store changesafety.Store, id, status string) changesafety.ChangeRecord {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		record, err := store.Latest(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if record.Status == status {
+			return record
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deployment did not reach %s: %#v", status, record)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+type deploymentTestStore struct {
+	changesafety.Store
+	append func(changesafety.ChangeRecord) error
+}
+
+func (s *deploymentTestStore) Append(record changesafety.ChangeRecord) error {
+	return s.append(record)
+}
+
+func deploymentIdentityFixture(t *testing.T) (*infernexv1alpha1.InferNexService, changesafety.ChangeRecord) {
+	t.Helper()
 	const changeID = "00112233445566778899aabbccddeeff"
 	service := tinyModelService("models", "tiny")
 	service.UID = "original-service-uid"
 	service.Annotations[changeIDAnnotation] = changeID
 	record := newChangeRecord(changeID, "deploy", changesafety.StatusApplied,
-		Request{Namespace: service.Namespace, Name: service.Name}, nil, nil, "resource created")
+		Request{Namespace: service.Namespace, Name: service.Name}, nil, serviceJSON(t, service), "resource created")
 	record.Target.UID = service.UID
 	return service, record
 }
 
+func serviceJSON(t *testing.T, service *infernexv1alpha1.InferNexService) json.RawMessage {
+	t.Helper()
+	encoded, err := json.Marshal(service)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
 type identityTestClient struct {
 	client.Client
+	get    func(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error
 	create func(context.Context, client.Object, ...client.CreateOption) error
 	delete func(context.Context, client.Object, ...client.DeleteOption) error
+}
+
+func (c *identityTestClient) Get(ctx context.Context, key client.ObjectKey, object client.Object, options ...client.GetOption) error {
+	if c.get != nil {
+		return c.get(ctx, key, object, options...)
+	}
+	return c.Client.Get(ctx, key, object, options...)
 }
 
 func newIdentityTestClient(t *testing.T, objects ...client.Object) *identityTestClient {

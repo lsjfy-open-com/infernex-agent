@@ -118,18 +118,14 @@ func (d *KubernetesDeployer) recoverPlanned(
 		}
 		return nil
 	}
-	if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
+	if err := verifyChangeTarget(service, record); err != nil {
 		record.Status = changesafety.StatusRollbackFailed
 		record.OccurredAt = time.Now().UTC()
-		record.Message = "resource exists but change identity cannot be proven: " + err.Error()
+		record.Message = "resource exists but deployment identity or spec cannot be proven: " + err.Error()
 		if err := d.store.Append(record); err != nil {
 			return fmt.Errorf("record unsafe planned deployment %s: %w", record.ID, err)
 		}
-		return fmt.Errorf(
-			"planned deployment %s target %s exists without matching ownership",
-			record.ID,
-			key,
-		)
+		return fmt.Errorf("planned deployment %s target %s cannot be safely recovered: %w", record.ID, key, err)
 	}
 	record.Target.UID = service.UID
 	record.Status = changesafety.StatusApplied
@@ -274,11 +270,17 @@ func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Resul
 			return Result{}, fmt.Errorf("create catalog InferNexService %s: %w", key, err)
 		}
 		record.Target.UID = desired.UID
+		// The Create response includes API defaulting and admission changes.
+		// Keep that accepted spec as the baseline, never a later live read.
+		record.Desired, err = json.Marshal(desired)
+		if err != nil {
+			return Result{}, fmt.Errorf("encode created InferNexService %s; resource retained: %w", key, err)
+		}
 		record.Status = changesafety.StatusApplied
 		record.OccurredAt = time.Now().UTC()
 		record.Message = "resource created; readiness monitoring started"
 		if err := d.store.Append(record); err != nil {
-			rollbackErr := d.deleteOwnedChange(ctx, key, changeID, record.Target.UID)
+			rollbackErr := d.deleteOwnedChange(ctx, record)
 			if rollbackErr != nil {
 				return Result{}, fmt.Errorf(
 					"persist applied deployment: %v; emergency rollback: %w",
@@ -465,9 +467,9 @@ func (d *KubernetesDeployer) monitorDeployment(
 		service := &infernexv1alpha1.InferNexService{}
 		err := d.client.Get(ctx, key, service)
 		if err == nil {
-			if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
+			if err := verifyChangeTarget(service, record); err != nil {
 				d.finishRecord(record, changesafety.StatusRollbackFailed,
-					"deployment identity changed; automatic rollback refused: "+err.Error())
+					"deployment identity or spec cannot be verified; automatic rollback refused: "+err.Error())
 				return
 			}
 			if terminalDegraded(service) {
@@ -525,7 +527,7 @@ func (d *KubernetesDeployer) rollbackDeployment(
 	}
 	rollbackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := d.deleteOwnedChange(rollbackCtx, key, record.ID, record.Target.UID); err != nil {
+	if err := d.deleteOwnedChange(rollbackCtx, record); err != nil {
 		d.finishRecord(
 			record,
 			changesafety.StatusRollbackFailed,
@@ -550,10 +552,9 @@ func (d *KubernetesDeployer) rollbackDeployment(
 
 func (d *KubernetesDeployer) deleteOwnedChange(
 	ctx context.Context,
-	key types.NamespacedName,
-	changeID string,
-	uid types.UID,
+	record changesafety.ChangeRecord,
 ) error {
+	key := types.NamespacedName{Namespace: record.Target.Namespace, Name: record.Target.Name}
 	service := &infernexv1alpha1.InferNexService{}
 	if err := d.client.Get(ctx, key, service); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -561,7 +562,7 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		}
 		return fmt.Errorf("get rollback target: %w", err)
 	}
-	if err := verifyChangeIdentity(service, changeID, uid); err != nil {
+	if err := verifyChangeTarget(service, record); err != nil {
 		return fmt.Errorf("refusing to delete rollback target: %w", err)
 	}
 	if err := d.client.Delete(ctx, service, deletePreconditions(service)); err != nil && !apierrors.IsNotFound(err) {
@@ -581,6 +582,29 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func verifyChangeTarget(service *infernexv1alpha1.InferNexService, record changesafety.ChangeRecord) error {
+	if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
+		return err
+	}
+	var desired struct {
+		Spec *infernexv1alpha1.InferNexServiceSpec `json:"spec"`
+	}
+	if err := json.Unmarshal(record.Desired, &desired); err != nil {
+		return fmt.Errorf("cannot verify deployment spec: desired snapshot is missing or invalid: %w", err)
+	}
+	if desired.Spec == nil {
+		return fmt.Errorf("cannot verify deployment spec: desired snapshot does not contain a spec")
+	}
+	// Older journals and planned-only crash recovery may contain the request
+	// before API defaulting. A mismatch is still unsafe: retaining that object
+	// is preferable to adopting a possibly edited live spec as the baseline.
+	if !equality.Semantic.DeepEqual(service.Spec, *desired.Spec) {
+		return fmt.Errorf("InferNexService %s/%s spec differs from the recorded desired snapshot; possible spec drift or pre-admission snapshot",
+			service.Namespace, service.Name)
+	}
+	return nil
 }
 
 func verifyChangeIdentity(service *infernexv1alpha1.InferNexService, changeID string, uid types.UID) error {

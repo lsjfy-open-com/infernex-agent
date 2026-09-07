@@ -106,7 +106,7 @@ sudo /opt/infernex-agent/bin/restore-host-install.sh \
       ├─ 对象身份/所有权不匹配 → rollback-failed，保留现场
       ├─ Ready 且 observedGeneration >= generation，且无当前 Degraded → committed
       └─ 超时/当前 generation Degraded
-           → 校验所有权、change-id 和已记录 UID
+           → 校验所有权、change-id、已记录 UID 和已接受 spec
            → 带 UID/resourceVersion 前置条件删除本次新建资源
            → 确认资源不存在
            → rolled-back
@@ -147,10 +147,18 @@ sudo ./bin/install-host.sh \
 `/var/lib/infernex-agent/changes/<change-id>/`。Agent 在创建后崩溃、重启，
 仍会从 `planned` 或 `applied` 记录恢复监控；不会因为进程重启放弃回退。
 
-新部署在创建响应后将 API Server 分配的 UID 保存到 change target；Ready 成功判定和自动回退均
-核验该身份。旧版本的记录没有 UID 时仍校验 Agent ownership 与 change-id；恢复只有 `planned`
-的记录时，在确认这两项匹配后补录当前 UID。这是旧日志及创建后尚未落盘窗口的兼容边界，不能据此
-证明一个复制了全部 ownership 标记的对象就是原对象。
+新部署在创建响应后将 API Server 分配的 UID 保存到 change target，并用该响应更新 `Desired`，
+保存经过默认化和 admission 后已接受的 spec。Ready 成功判定、重启恢复与自动回退同时核验对象身份
+和该 spec；不能把后续 GET 返回的人工修改当作新的回退基线。即使 UID 未变，spec 漂移也会进入
+`rollback-failed` 并保留现场。
+
+旧版本记录没有 UID 时仍校验 Agent ownership、change-id 和记录中的 spec；恢复只有 `planned`
+的记录时，也须确认 spec 匹配后才补录 UID。旧/仅 planned 的 Desired 缺失、损坏或因 API 默认化而
+与当前 spec 不一致时，保守失败并保留对象，不以当前 spec 覆盖历史记录。这是兼容性限制，需要人工
+核对该对象；一个复制了全部 ownership 标记和 spec 的同名对象，仍无法由无 UID 的旧记录证明身份。
+
+如果创建已成功但 applied 事件写入失败，应急清理也使用内存中 Create 响应对应的 spec。对象此后被
+人工修改时保留对象并报告清理冲突，重启后不会通过采纳当前配置绕过该保护。
 
 显式删除、部署回退、实验候选回退、快照恢复清理和恢复候选的应急清理，均将本次读取或创建响应中的
 UID 与 resourceVersion 作为 Delete 前置条件。读取后同名重建或发生并发编辑时，删除冲突会保留对象并
