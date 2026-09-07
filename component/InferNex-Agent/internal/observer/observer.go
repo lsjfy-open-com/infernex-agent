@@ -370,6 +370,7 @@ func summarizeService(service *infernexv1alpha1.InferNexService) ServiceSummary 
 	summary := ServiceSummary{
 		Namespace:          service.Namespace,
 		Name:               service.Name,
+		UID:                string(service.UID),
 		Mode:               service.Status.Mode,
 		Ready:              service.Status.Ready,
 		Generation:         service.Generation,

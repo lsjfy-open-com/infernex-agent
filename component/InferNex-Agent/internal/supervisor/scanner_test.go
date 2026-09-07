@@ -14,6 +14,7 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -23,13 +24,22 @@ import (
 )
 
 type fakeObserver struct {
-	summary  observer.ServiceSummary
-	detail   observer.ServiceDetail
-	topology observer.Topology
-	events   observer.EventEvidence
+	summary     observer.ServiceSummary
+	detail      observer.ServiceDetail
+	topology    observer.Topology
+	events      observer.EventEvidence
+	empty       bool
+	listErr     error
+	inspectErr  error
+	topologyErr error
+	eventsErr   error
+	onTopology  func()
 }
 
 func (f *fakeObserver) ListServices(context.Context, string) (observer.ServiceList, error) {
+	if f.empty || f.listErr != nil {
+		return observer.ServiceList{}, f.listErr
+	}
 	return observer.ServiceList{
 		Namespace:     f.summary.Namespace,
 		TotalServices: 1,
@@ -38,15 +48,18 @@ func (f *fakeObserver) ListServices(context.Context, string) (observer.ServiceLi
 }
 
 func (f *fakeObserver) InspectService(context.Context, string, string) (observer.ServiceDetail, error) {
-	return f.detail, nil
+	return f.detail, f.inspectErr
 }
 
 func (f *fakeObserver) GetTopology(context.Context, string, string) (observer.Topology, error) {
-	return f.topology, nil
+	if f.onTopology != nil {
+		f.onTopology()
+	}
+	return f.topology, f.topologyErr
 }
 
 func (f *fakeObserver) GetEvents(context.Context, string, string, int, int) (observer.EventEvidence, error) {
-	return f.events, nil
+	return f.events, f.eventsErr
 }
 
 type fakeAnalyzer struct {
@@ -59,6 +72,7 @@ type fakeRemediator struct {
 
 type fakeDiagnoser struct {
 	calls int
+	err   error
 }
 
 type budgetObserver struct{}
@@ -95,6 +109,9 @@ func (budgetObserver) GetEvents(_ context.Context, namespace, name string, since
 
 func (f *fakeDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (diagnostics.Report, error) {
 	f.calls++
+	if f.err != nil {
+		return diagnostics.Report{}, f.err
+	}
 	return diagnostics.Report{
 		Service: diagnostics.ServiceReference{Namespace: request.Namespace, Name: request.Name},
 		Incidents: []diagnostics.Incident{{
@@ -285,5 +302,232 @@ func TestScannerBoundsLogDiagnosticsPerScan(t *testing.T) {
 	}
 	if !deferred {
 		t.Fatalf("second service was not deferred: %#v", snapshot.Namespaces[0].Services[1].Issues)
+	}
+}
+
+func newRecoveryScanner(t *testing.T) (*Scanner, *fakeObserver, *fakeRemediator) {
+	t.Helper()
+	service := observer.ServiceSummary{
+		Namespace: "models", Name: "qwen", UID: "qwen-uid", Generation: 4, ObservedGeneration: 4,
+		Recovery: &observer.RecoverySummary{Enabled: true, Profile: "approved", Name: "qwen-recovery"},
+	}
+	domainObserver := &fakeObserver{}
+	domainObserver.setService(service)
+	domainRemediator := &fakeRemediator{}
+	scanner, err := New(domainObserver, nil, domainRemediator, NewSnapshotStore("test", time.Minute, true), Config{
+		Namespaces: []string{"models"}, Interval: time.Minute, MinCriticalScans: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scanner, domainObserver, domainRemediator
+}
+
+func (f *fakeObserver) setService(service observer.ServiceSummary) {
+	f.summary = service
+	f.detail.Service = service
+	f.topology.Service = service
+}
+
+func requireRemediation(t *testing.T, snapshot Snapshot, status string, scans int) {
+	t.Helper()
+	if len(snapshot.Namespaces) != 1 || len(snapshot.Namespaces[0].Services) != 1 {
+		t.Fatalf("unexpected snapshot: %#v", snapshot)
+	}
+	remediation := snapshot.Namespaces[0].Services[0].Remediation
+	if remediation == nil || remediation.Status != status || remediation.FailureScans != scans {
+		t.Fatalf("remediation = %#v, want status %q with %d scans", remediation, status, scans)
+	}
+}
+
+func TestScannerRestartsCriticalSequenceAfterInterruptedObservation(t *testing.T) {
+	tests := []struct {
+		name      string
+		interrupt func(*Scanner, *fakeObserver, context.CancelFunc)
+	}{
+		{"service disappeared", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			observer.empty = true
+		}},
+		{"list failed", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			observer.listErr = errors.New("list unavailable")
+		}},
+		{"inspect failed", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			observer.inspectErr = errors.New("inspect unavailable")
+		}},
+		{"topology failed", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			observer.topologyErr = errors.New("topology unavailable")
+		}},
+		{"events failed", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			observer.eventsErr = errors.New("events unavailable")
+		}},
+		{"diagnostics failed", func(scanner *Scanner, _ *fakeObserver, _ context.CancelFunc) {
+			scanner.diagnoser = &fakeDiagnoser{err: errors.New("diagnostics unavailable")}
+		}},
+		{"cancelled before collection", func(_ *Scanner, _ *fakeObserver, cancel context.CancelFunc) {
+			cancel()
+		}},
+		{"cancelled during collection", func(_ *Scanner, observer *fakeObserver, cancel context.CancelFunc) {
+			observer.onTopology = cancel
+		}},
+		{"healthy", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			service := observer.summary
+			service.Ready = true
+			observer.setService(service)
+		}},
+		{"reconciliation pending", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			service := observer.summary
+			service.ObservedGeneration--
+			observer.setService(service)
+		}},
+		{"recovery disabled", func(_ *Scanner, observer *fakeObserver, _ context.CancelFunc) {
+			service := observer.summary
+			service.Recovery = nil
+			observer.setService(service)
+		}},
+		{"invalid recovery policy", func(_ *Scanner, domainObserver *fakeObserver, _ context.CancelFunc) {
+			service := domainObserver.summary
+			service.Recovery = &observer.RecoverySummary{Enabled: true}
+			domainObserver.setService(service)
+		}},
+		{"supervisor remediation disabled", func(scanner *Scanner, _ *fakeObserver, _ context.CancelFunc) {
+			scanner.remediator = nil
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scanner, domainObserver, domainRemediator := newRecoveryScanner(t)
+			original := *domainObserver
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			test.interrupt(scanner, domainObserver, cancel)
+			scanner.ScanOnce(ctx)
+			if domainRemediator.calls != 0 || len(scanner.failures) != 0 {
+				t.Fatalf("interrupted observation retained failures: calls=%d failures=%#v", domainRemediator.calls, scanner.failures)
+			}
+
+			*domainObserver = original
+			scanner.remediator = domainRemediator
+			scanner.diagnoser = nil
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+			if domainRemediator.calls != 0 {
+				t.Fatalf("recovery triggered before a new consecutive sequence: calls=%d", domainRemediator.calls)
+			}
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "created", 2)
+			if domainRemediator.calls != 1 {
+				t.Fatalf("recovery calls = %d, want 1", domainRemediator.calls)
+			}
+		})
+	}
+}
+
+func TestScannerBindsCriticalSequenceToRecoveryIdentity(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*observer.ServiceSummary)
+	}{
+		{"new UID", func(service *observer.ServiceSummary) { service.UID = "replacement-uid" }},
+		{"new generation already reconciled", func(service *observer.ServiceSummary) {
+			service.Generation++
+			service.ObservedGeneration = service.Generation
+		}},
+		{"new profile", func(service *observer.ServiceSummary) { service.Recovery.Profile = "approved-v2" }},
+		{"new recovery name", func(service *observer.ServiceSummary) { service.Recovery.Name = "qwen-recovery-v2" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scanner, domainObserver, domainRemediator := newRecoveryScanner(t)
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+			service := domainObserver.summary
+			test.change(&service)
+			domainObserver.setService(service)
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+			if domainRemediator.calls != 0 {
+				t.Fatalf("new identity inherited previous failures: calls=%d", domainRemediator.calls)
+			}
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "created", 2)
+			if domainRemediator.calls != 1 {
+				t.Fatalf("recovery calls = %d, want 1", domainRemediator.calls)
+			}
+		})
+	}
+}
+
+func TestScannerRejectsMixedServiceObservations(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(*fakeObserver)
+	}{
+		{"replaced after listing", func(observer *fakeObserver) { observer.summary.UID = "previous-uid" }},
+		{"replaced after inspection", func(observer *fakeObserver) { observer.topology.Service.UID = "replacement-uid" }},
+		{"generation changed after inspection", func(observer *fakeObserver) { observer.topology.Service.Generation++ }},
+		{"policy changed after inspection", func(observer *fakeObserver) {
+			policy := *observer.topology.Service.Recovery
+			policy.Profile = "approved-v2"
+			observer.topology.Service.Recovery = &policy
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scanner, domainObserver, domainRemediator := newRecoveryScanner(t)
+			requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+			test.change(domainObserver)
+			snapshot := scanner.ScanOnce(context.Background())
+			requireRemediation(t, snapshot, "watching", 0)
+			if domainRemediator.calls != 0 || len(scanner.failures) != 0 {
+				t.Fatalf("mixed observation retained failures: calls=%d failures=%#v", domainRemediator.calls, scanner.failures)
+			}
+			found := false
+			for _, issue := range snapshot.Namespaces[0].Services[0].Issues {
+				found = found || issue.Code == "OBSERVATION_CHANGED"
+			}
+			if !found {
+				t.Fatal("missing changed observation issue")
+			}
+		})
+	}
+}
+
+func TestScannerDoesNotReuseAnalysisForReplacementService(t *testing.T) {
+	scanner, domainObserver, _ := newRecoveryScanner(t)
+	analyzer := &fakeAnalyzer{}
+	scanner.analyzer = analyzer
+	scanner.ScanOnce(context.Background())
+	service := domainObserver.summary
+	service.UID = "replacement-uid"
+	domainObserver.setService(service)
+	snapshot := scanner.ScanOnce(context.Background())
+	analysis := snapshot.Namespaces[0].Services[0].Analysis
+	if analyzer.calls != 2 || analysis == nil || analysis.Cached {
+		t.Fatalf("replacement service reused analysis: calls=%d analysis=%#v", analyzer.calls, analysis)
+	}
+}
+
+func TestScannerRestartsCriticalSequenceAfterDiagnosticBudgetDeferral(t *testing.T) {
+	scanner, domainObserver, domainRemediator := newRecoveryScanner(t)
+	diagnoser := &fakeDiagnoser{}
+	scanner.diagnoser = diagnoser
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+
+	// Model this service being reached after earlier services consumed the
+	// per-scan diagnostic budget.
+	service, attempted := scanner.collectService(context.Background(), domainObserver.summary, false)
+	scanner.evaluateRemediation(context.Background(), domainObserver.summary.Namespace+"/"+domainObserver.summary.Name, &service)
+	if attempted || diagnoser.calls != 1 {
+		t.Fatalf("deferred service unexpectedly collected diagnostics: attempted=%v calls=%d", attempted, diagnoser.calls)
+	}
+	if service.Remediation == nil || service.Remediation.Status != "watching" || service.Remediation.FailureScans != 0 ||
+		domainRemediator.calls != 0 || len(scanner.failures) != 0 {
+		t.Fatalf("diagnostic deferral did not interrupt recovery: remediation=%#v calls=%d failures=%#v",
+			service.Remediation, domainRemediator.calls, scanner.failures)
+	}
+
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "waiting", 1)
+	if domainRemediator.calls != 0 {
+		t.Fatalf("recovery triggered before a new complete sequence: calls=%d", domainRemediator.calls)
+	}
+	requireRemediation(t, scanner.ScanOnce(context.Background()), "created", 2)
+	if domainRemediator.calls != 1 {
+		t.Fatalf("recovery calls = %d, want 1", domainRemediator.calls)
 	}
 }
