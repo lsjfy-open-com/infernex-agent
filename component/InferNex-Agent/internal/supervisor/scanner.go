@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -25,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
@@ -422,8 +424,20 @@ func (s *Scanner) evaluateRemediation(
 		SourceName: service.Detail.Service.Name,
 		Profile:    policy.Profile,
 		Name:       policy.Name,
+		ExpectedSource: &remediator.SourceIdentity{
+			UID:        types.UID(service.Detail.Service.UID),
+			Generation: service.Detail.Service.Generation,
+		},
 	})
 	if err != nil {
+		if errors.Is(err, remediator.ErrRecoveryPrecondition) {
+			delete(s.failures, key)
+			service.Remediation.Status = "watching"
+			service.Remediation.FailureScans = 0
+			service.Remediation.Error = boundedMessage(err.Error())
+			service.Remediation.Message = "recovery preconditions changed; waiting for new consecutive critical scans"
+			return
+		}
 		service.Remediation.Status = "error"
 		service.Remediation.Error = boundedMessage(err.Error())
 		service.Remediation.Message = "failed to ensure recovery InferNexService"

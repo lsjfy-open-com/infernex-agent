@@ -101,6 +101,14 @@ Bridge 和 Kubernetes 仍继续维护现有工作负载。
 Topology 的对象身份不一致时，也不能把混合证据用于恢复门禁。这里的自动恢复仍是创建批准 profile
 对应的新候选，不代表已经切换业务流量或完成服务恢复验收。
 
+达到扫描阈值后，Supervisor 将采样时的源 UID/generation 交给 Remediator。执行器在首次检查及写入
+planned 后、Create 前分别重读源服务和恢复 profile：源身份与恢复 profile/name 必须仍匹配，源仍需
+启用 auto-recovery、当前 generation 已观察，且源和批准 profile 均不能处于删除中。已有恢复对象的
+幂等查询也先检查当前授权；直接调用执行器同样不能跳过源 opt-in 和 profile 批准。
+
+前置条件失效会关闭尚未应用的 planned 记录，并让 Supervisor 清零计数、等待新的完整故障序列。
+这提供执行前复核，不能把跨两个 Kubernetes 资源的 GET 与 Create 变为原子事务。
+
 ## 6. 运行与交付设计
 
 ### 6.1 默认：管理节点 systemd
