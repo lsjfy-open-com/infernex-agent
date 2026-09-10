@@ -131,6 +131,7 @@ export function readOnlyHostCommand(command: string, depth = 0): boolean {
   case "id": return args.length === 0 || (args.length === 1 && /^-[ugGn]$/.test(args[0]));
   case "uname": return flags(/^-[asnrvmop]+$/);
   case "hostname": case "uptime": case "whoami": return args.length === 0;
+  case "sleep": return args.length === 1 && /^[0-9]+(?:\.[0-9]+)?$/.test(args[0]) && Number(args[0]) > 0 && Number(args[0]) <= 60;
   case "date": return args.length === 0 || (args.length === 1 && args[0] === "-u");
   case "ls": return flags(/^(?:--|-[lahndtSr]+|--color=never)$/);
   case "cat": return args.length > 0 && flags(/^(?:--|-[nbsETv]+)$/);
