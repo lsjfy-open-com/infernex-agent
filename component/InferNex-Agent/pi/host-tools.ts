@@ -107,30 +107,115 @@ export function hcclCommand(input: { executable: string; ranks: number; devicesP
 	return (input.setupScript ? `source ${quote(absolutePath(input.setupScript))} && ` : "") + "exec " + args.map(quote).join(" ");
 }
 
-export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string) => Promise<{ text: string }> = async text => ({ text }), renderer?: (label: string) => Pick<ToolDefinition, "renderShell" | "renderCall" | "renderResult">) {
-	let mode: HostMode = "normal", busy = 0;
+export type AccessMode = "manual" | "full";
+
+// Deliberately parse a single simple command, not the shell language. Unknown
+// syntax, scripts, redirects and compound commands keep the operator gate.
+export function readOnlyHostCommand(command: string, depth = 0): boolean {
+ if (depth > 2 || /[\x00-\x1f\x7f$`;|&<>\\*?{}\[\]!~]/.test(command)) return false;
+ const words: string[] = [];
+ let previous = 0;
+ for (const match of command.matchAll(/'[^']*'|"[^"]*"|[^\s'"]+/g)) {
+  if (match.index! > previous && !/^\s+$/.test(command.slice(previous, match.index))) return false;
+  if (match.index === previous && previous !== 0) return false;
+  words.push(match[0].replace(/^(['"])(.*)\1$/, "$2"));
+  previous = match.index! + match[0].length;
+ }
+ if (!/^\s*$/.test(command.slice(previous)) || !words.length) return false;
+ const [raw, ...args] = words;
+ if (raw.includes("/") && !/^\/(?:usr\/)?bin\/[a-z0-9_-]+$/.test(raw)) return false;
+ const executable = raw.split("/").at(-1)!;
+ if (args.some(a => a.startsWith("/dev/") || a === "/proc/kcore")) return false;
+ const flags = (allowed: RegExp) => args.every(a => !a.startsWith("-") || allowed.test(a));
+ switch (executable) {
+  case "id": return args.length === 0 || (args.length === 1 && /^-[ugGn]$/.test(args[0]));
+  case "uname": return flags(/^-[asnrvmop]+$/);
+  case "hostname": case "uptime": case "whoami": return args.length === 0;
+  case "sleep": return args.length === 1 && /^[0-9]+(?:\.[0-9]+)?$/.test(args[0]) && Number(args[0]) > 0 && Number(args[0]) <= 60;
+  case "date": return args.length === 0 || (args.length === 1 && args[0] === "-u");
+  case "ls": return flags(/^(?:--|-[lahndtSr]+|--color=never)$/);
+  case "cat": return args.length > 0 && flags(/^(?:--|-[nbsETv]+)$/);
+  case "head": case "tail": return flags(/^(?:--|-[nc]|-[nc]?[0-9]+)$/);
+  case "grep": return flags(/^(?:--|-[nEiFHv]+|-[ABC][0-9]+)$/);
+  case "ps": return args.length === 0 || (args.length === 1 && ["aux", "-ef", "-e"].includes(args[0]));
+  case "ip": return ["-brief address", "address show", "addr show", "route show", "route show table all", "link show"].includes(args.join(" "));
+  case "ss": return args.length === 1 && /^-[santulp]+$/.test(args[0]);
+  case "nstat": return args.join(" ") === "-az";
+  case "rdma": return ["link show", "statistic show"].includes(args.join(" "));
+  case "ethtool": return args.length === 2 && args[0] === "-S" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,14}$/.test(args[1]);
+  case "ssh": {
+   // No caller-supplied SSH options (ProxyCommand, forwarding, config files).
+   if (!/^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,252}$/.test(args[0] || "") || args.length < 2) return false;
+   return readOnlyHostCommand(args.slice(1).join(" "), depth + 1);
+  }
+  case "kubectl": {
+   let index = 0;
+   while (["-n", "--namespace", "--context"].includes(args[index])) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(args[index+1] || "")) return false;
+    index += 2;
+   }
+   const verb = args[index++], rest = args.slice(index);
+   if (verb === "exec") {
+    const separator = rest.indexOf("--");
+    if (separator < 1) return false;
+    const prefix = rest.slice(0,separator);
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(prefix[0])) return false;
+    if (prefix.length !== 1 && !(prefix.length === 3 && prefix[1] === "-c" && /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(prefix[2]))) return false;
+    return readOnlyHostCommand(rest.slice(separator+1).join(" "), depth+1);
+   }
+   if (!["get", "describe", "logs", "top", "version", "api-resources"].includes(verb)) return false;
+   return rest.every(a => !a.startsWith("-") || /^(?:-A|--all-namespaces|--previous|-p|--timestamps|--all-containers|--no-headers|-n|--namespace|-c|--container|-l|--selector|-o|--output|--tail|--since|--limit-bytes|--field-selector)(?:=[a-zA-Z0-9_.,:/=-]+)?$/.test(a));
+  }
+  default: return false;
+ }
+}
+
+// Explicit local-only mutations. Unknown MCP writes always retain approval;
+// model-supplied risk labels or confirm=true cannot bypass this policy.
+const autonomousLocalTools = new Set([
+ "infernex_create_markdown_report", "infernex_remember", "infernex_forget_memory",
+ "infernex_start_plog_capture", "infernex_stop_plog_capture",
+ "infernex_start_collector_run", "infernex_stop_collector_run",
+]);
+export function needsMCPApproval(access: AccessMode, name: string, readOnly: boolean): boolean {
+ if (["infernex_deploy_model", "infernex_delete_model", "infernex_start_experiment"].includes(name)) return true;
+ if (readOnly) return false;
+ return access !== "full" || !autonomousLocalTools.has(name);
+}
+export function needsHostApproval(access: AccessMode, name: string, input: any): boolean {
+ if (access !== "full") return true;
+ if (name === "infernex_sample_pfc") return false;
+ if (name === "infernex_network_probe") return !["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats"].includes(input.probe);
+ if (name === "infernex_host_exec") return !readOnlyHostCommand(input.command);
+ return true; // HCCL benchmarks, future tools, and unknown commands.
+}
+
+export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string) => Promise<{ text: string }> = async text => ({ text }), renderer?: (label: string) => Pick<ToolDefinition, "renderShell" | "renderCall" | "renderResult">, executeCommand: typeof runHostCommand = runHostCommand) {
+	let mode: HostMode = "normal", access: AccessMode = "manual", busy = 0, denied = false;
 	const normalUser = process.env.INFERNEX_HOST_USER || "infernex-agent";
 	const rootWorkspace = process.env.INFERNEX_WORKSPACE_ROOT || process.cwd();
-	const modeLabel = () => `${mode} · local commands as ${mode === "root" ? "root" : normalUser}`;
+	const modeLabel = () => `${mode} · ${access === "full" ? "完全访问（集群影响需批准）" : "逐次批准"} · local commands as ${mode === "root" ? "root" : normalUser}`;
 	pi.registerCommand("mode_change", {
-		description: "Switch local command identity: /mode_change root | normal | status",
+		description: "Set identity and access: /mode_change [root|normal] [full|manual] | status",
 		handler: async (args, ctx) => {
-			const next = args.trim().toLowerCase();
-			if (!next || next === "status") { ctx.ui.notify(`${modeLabel()}; background MCP and Pod/SSH remote identity are separate`, "info"); return; }
-			if (next !== "normal" && next !== "root") { ctx.ui.notify("Usage: /mode_change root | normal | status", "error"); return; }
-			if (!ctx.hasUI || busy) { ctx.ui.notify("Wait for active host commands to finish; mode changes require an interactive terminal", "error"); return; }
+   const tokens = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
+   if (!tokens.length || tokens.join(" ") === "status") { ctx.ui.notify(`${modeLabel()}; background MCP and Pod/SSH remote identity are separate`, "info"); return; }
+   if (tokens.length > 2 || new Set(tokens).size !== tokens.length || tokens.some(t => !["normal", "root", "full", "manual"].includes(t)) || (tokens.includes("root") && tokens.includes("normal")) || (tokens.includes("full") && tokens.includes("manual"))) { ctx.ui.notify("Usage: /mode_change [root|normal] [full|manual] | status", "error"); return; }
+   if (!ctx.hasUI || busy || (ctx.isIdle && !ctx.isIdle())) { ctx.ui.notify("Wait for active operations to finish; mode changes require an idle interactive terminal", "error"); return; }
+   const next = (tokens.find(t => t === "root" || t === "normal") || mode) as HostMode;
+   const nextAccess = (tokens.find(t => t === "full" || t === "manual") || access) as AccessMode;
 			try {
 				busy++;
-				const check = await runHostCommand(next, "/usr/bin/id -u", 5, undefined, normalUser, rootWorkspace);
-				if (check.exitCode !== 0 || !/^\d+\n$/.test(check.stdout) || Number(check.stdout.trim()) !== check.uid) throw new Error(check.stderr || "UID check failed");
-				mode = next;
+				const check = next === mode ? undefined : await executeCommand(next, "/usr/bin/id -u", 5, undefined, normalUser, rootWorkspace);
+				if (check && (check.exitCode !== 0 || !/^\d+\n$/.test(check.stdout) || Number(check.stdout.trim()) !== check.uid)) throw new Error(check.stderr || "UID check failed");
+				mode = next; access = nextAccess;
 				ctx.ui.setStatus("host-mode", modeLabel());
-				ctx.ui.notify(`${modeLabel()}; verified uid=${check.uid}. Existing collectors are not stopped by a mode switch.`, "info");
+				ctx.ui.notify(`${modeLabel()}; uid=${check?.uid ?? "unchanged"}. Existing collectors are not stopped by a mode switch.`, "info");
 			} catch (error) { ctx.ui.notify(`Mode unchanged: ${String(error)}`, "error"); }
 			finally { busy--; }
 		},
 	});
-	pi.on("session_start", (_event, ctx) => { mode = "normal"; ctx.ui.setStatus("host-mode", modeLabel()); });
+	pi.on("session_start", (_event, ctx) => { mode = "normal"; access = "manual"; denied = false; ctx.ui.setStatus("host-mode", modeLabel()); });
 	// All local execution goes through the credential-aware tool, including
 	// filesystem inspection; root-owned builtins cannot bypass normal mode.
 	pi.on("tool_call", async (event) => {
@@ -145,10 +230,11 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 				const selected = mode;
 				try {
 					const command = build(params, selected);
-					if (!await ctx.ui.confirm(`Run ${name} · ${modeLabel()}`, command)) throw new Error("Operator denied host command");
-					const output = await runHostCommand(selected, command, (params as any).timeoutSeconds ?? defaultTimeout, signal, normalUser, rootWorkspace);
+					const requiresApproval = needsHostApproval(access, name, params);
+ if (requiresApproval && !await ctx.ui.confirm(`Run ${name} · ${modeLabel()}`, `${command}\n\n人工判定：此操作可能改变运行状态、产生压测负载，或无法可靠判定影响。`)) { denied = true; throw new Error("Operator denied host command; do not retry or bypass this decision"); }
+					const output = await executeCommand(selected, command, (params as any).timeoutSeconds ?? defaultTimeout, signal, normalUser, rootWorkspace);
 					const formatted = await formatResult(JSON.stringify(output));
-					return { content: [{ type: "text", text: formatted.text }], details: { mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
+					return { content: [{ type: "text", text: formatted.text }], details: { access, approval: requiresApproval ? "operator" : "automatic", mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
 				} finally { busy--; }
 			},
 		});
@@ -158,5 +244,11 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 	register("infernex_network_probe", "Inspect addresses, routes, sockets, TCP/RDMA counters, DNS, ping, traceroute, TCP connectivity or ethtool statistics locally or via SSH. iperf-client generates 10 seconds of traffic. Tools must be installed on the execution target.", { probe: { enum: ["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats", "iperf-client"] }, target: string, port: number, iface: string, sshTarget: string }, ["probe"], networkCommand, 60);
 	register("infernex_sample_pfc", "Collect timestamped hccn_tool -stat -g snapshots for selected devices locally or over SSH. Compare counter deltas; a nonzero lifetime counter alone does not prove current backpressure. Raw fields vary by driver. Long Pod collection remains available through CollectorRun.", { deviceIds: { type: "array", items: number, minItems: 1, maxItems: 64 }, samples: number, intervalSeconds: number, sshTarget: string }, ["deviceIds"], pfcCommand, 600);
 	register("infernex_run_hccl_test", "Run an approved HCCL collective benchmark using installed mpirun and an explicit test binary. Consumes NPU/network resources. Optional hostfile enables multi-node execution; optional CANN setupScript prepares libraries. Timeout stops the local process group; verify remote MPI ranks have exited before retrying. Exit success alone is not a performance acceptance result.", { executable: string, ranks: number, devicesPerNode: number, minBytes: number, maxBytes: number, hostfile: string, setupScript: string }, ["executable", "ranks", "devicesPerNode"], hcclCommand, 300);
-	return { mode: () => mode, label: modeLabel };
+	return { mode: () => mode, access: () => access, label: modeLabel, wasDenied: () => denied, resetDenied: () => { denied = false; },
+  async operation<T>(action: () => Promise<T>): Promise<T> {
+   if (busy) throw new Error("Another host command or mode transition is active");
+   busy++;
+   try { return await action(); } finally { busy--; }
+  },
+ };
 }
