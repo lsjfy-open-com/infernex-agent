@@ -597,6 +597,7 @@ installed_tui="${install_root}/bin/tui.sh"
 installed_pi_runtime="${install_root}/pi-runtime"
 installed_pi="${installed_pi_runtime}/pi"
 installed_pi_extension="${install_root}/pi/infernex.ts"
+installed_pi_host_tools="${install_root}/pi/host-tools.ts"
 installed_pi_license="${install_root}/pi/LICENSE.pi.txt"
 installed_tool_runtime="${install_root}/tools"
 installed_cli="/usr/local/bin/infernex-agent"
@@ -678,6 +679,7 @@ host_backup_targets=(
   "$installed_builtin_skills"
   "$installed_delegate_token"
   "$installed_tool_runtime"
+  "$installed_pi_host_tools"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -832,12 +834,17 @@ if [[ -n "$bundle_root" && -x "${bundle_root}/payload/pi-runtime/pi" &&
   chown -R root:root "$installed_pi_runtime"
   chmod 0755 "$installed_pi"
   install -m 0644 -o root -g root "${bundle_root}/pi/infernex.ts" "$installed_pi_extension"
+  if [[ -f "${bundle_root}/pi/host-tools.ts" ]]; then
+    install -m 0644 -o root -g root "${bundle_root}/pi/host-tools.ts" "$installed_pi_host_tools"
+  else
+    rm -f -- "$installed_pi_host_tools"
+  fi
   install -m 0644 -o root -g root "${bundle_root}/pi/LICENSE.pi.txt" "$installed_pi_license"
 else
   if [[ -d "$installed_pi_runtime" ]]; then
     rm -rf -- "$installed_pi_runtime"
   fi
-  rm -f -- "$installed_pi_extension" "$installed_pi_license"
+  rm -f -- "$installed_pi_extension" "$installed_pi_host_tools" "$installed_pi_license"
 fi
 
 if [[ -n "$bundle_root" &&
@@ -1277,7 +1284,7 @@ ProtectKernelModules=true
 ProtectKernelTunables=true
 ProtectSystem=strict
 ReadWritePaths=/run/infernex-agent
-RestrictAddressFamilies=AF_UNIX
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -1328,7 +1335,7 @@ ProtectKernelTunables=true
 ProtectSystem=strict
 ReadOnlyPaths=${config_root}
 ReadWritePaths=${state_root}
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true

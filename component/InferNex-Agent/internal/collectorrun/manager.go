@@ -36,6 +36,7 @@ const (
 var profiles = map[string]bool{
 	"hccn-pfc-stats": true, "hccn-device": true, "npu-inventory": false,
 	"cann-version": false, "hccl-root-info": false, "hccl-test-layout": false,
+	"network-tcp-counters": false, "network-sockets": false, "rdma-counters": false,
 }
 
 type StartRequest struct {

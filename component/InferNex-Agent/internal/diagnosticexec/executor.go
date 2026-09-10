@@ -47,18 +47,26 @@ type Request struct {
 
 // Result is bounded evidence from an active-read diagnostic probe.
 type Result struct {
-	Status      string `json:"status"`
-	Channel     string `json:"channel"`
-	Probe       string `json:"probe"`
-	Target      string `json:"target"`
-	ActionClass string `json:"actionClass"`
-	Command     string `json:"command"`
-	Output      string `json:"output,omitempty"`
-	Stderr      string `json:"stderr,omitempty"`
-	ExitCode    int    `json:"exitCode"`
-	Truncated   bool   `json:"truncated"`
-	DurationMS  int64  `json:"durationMs"`
-	Error       string `json:"error,omitempty"`
+	Status      string    `json:"status"`
+	Channel     string    `json:"channel"`
+	Probe       string    `json:"probe"`
+	Target      string    `json:"target"`
+	ActionClass string    `json:"actionClass"`
+	Command     string    `json:"command"`
+	Output      string    `json:"output,omitempty"`
+	Stderr      string    `json:"stderr,omitempty"`
+	ExitCode    int       `json:"exitCode"`
+	Truncated   bool      `json:"truncated"`
+	DurationMS  int64     `json:"durationMs"`
+	Error       string    `json:"error,omitempty"`
+	Attempts    []Attempt `json:"attempts,omitempty"`
+}
+
+type Attempt struct {
+	Command  string `json:"command"`
+	ExitCode int    `json:"exitCode"`
+	Stderr   string `json:"stderr,omitempty"`
+	Error    string `json:"error,omitempty"`
 }
 
 // Runner runs only the probes compiled into this package. SSH destinations are
@@ -111,13 +119,17 @@ func (r *Runner) Probes() []string {
 	return []string{
 		"system-summary", "filesystem-usage", "network-links", "npu-inventory", "cann-version",
 		"hccn-device", "hccn-pfc-stats", "hccl-root-info", "hccl-test-layout",
+		"network-addresses", "network-routes", "network-sockets", "network-tcp-counters", "rdma-links", "rdma-counters",
 	}
 }
 
 func (r *Runner) SSHTargets() []string { return append([]string(nil), r.sshTargets...) }
 
 func (r *Runner) Channels() []string {
-	channels := []string{"local", "pod", "ssh"}
+	channels := []string{"local", "pod"}
+	if r.sshConfigPath != "" && len(r.sshTargets) > 0 {
+		channels = append(channels, "ssh")
+	}
 	if r.rootSocket != "" {
 		channels = append(channels, "host-root")
 	}
@@ -142,8 +154,12 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 	if channel == "host-root" && r.rootSocket == "" {
 		return Result{}, fmt.Errorf("root host diagnostics are not configured")
 	}
+	if channel == "host-root" {
+		return callRootHelper(ctx, r.rootSocket, probe, request.DeviceID)
+	}
 	var last Result
 	var lastErr error
+	var attempts []Attempt
 	for _, command := range commands {
 		switch channel {
 		case "local":
@@ -152,15 +168,16 @@ func (r *Runner) Run(ctx context.Context, request Request) (Result, error) {
 			last, lastErr = r.runPod(ctx, probe, request, command)
 		case "ssh":
 			last, lastErr = r.runSSH(ctx, probe, request.SSHTarget, command)
-		case "host-root":
-			last, lastErr = callRootHelper(ctx, r.rootSocket, probe, request.DeviceID)
 		default:
 			return Result{}, fmt.Errorf("channel must be one of local, pod, ssh, or host-root")
 		}
+		attempts = append(attempts, Attempt{Command: displayCommand(command), ExitCode: last.ExitCode, Stderr: last.Stderr, Error: last.Error})
 		if lastErr == nil {
+			last.Attempts = attempts
 			return last, nil
 		}
 	}
+	last.Attempts = attempts
 	return last, lastErr
 }
 
@@ -177,6 +194,18 @@ func probeCommands(probe string, deviceID int) ([]commandSpec, error) {
 		return []commandSpec{{name: "df", args: []string{"-h"}}}, nil
 	case "network-links":
 		return []commandSpec{{name: "ip", args: []string{"-brief", "link"}}}, nil
+	case "network-addresses":
+		return []commandSpec{{name: "ip", args: []string{"-brief", "address"}}}, nil
+	case "network-routes":
+		return []commandSpec{{name: "ip", args: []string{"route", "show", "table", "all"}}}, nil
+	case "network-sockets":
+		return []commandSpec{{name: "ss", args: []string{"-s"}}}, nil
+	case "network-tcp-counters":
+		return []commandSpec{{name: "nstat", args: []string{"-az"}}}, nil
+	case "rdma-links":
+		return []commandSpec{{name: "rdma", args: []string{"link", "show"}}}, nil
+	case "rdma-counters":
+		return []commandSpec{{name: "rdma", args: []string{"statistic", "show"}}}, nil
 	case "npu-inventory":
 		return []commandSpec{
 			{name: "npu-smi", args: []string{"info"}},

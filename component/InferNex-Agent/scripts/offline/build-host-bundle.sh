@@ -177,7 +177,7 @@ if [[ -n "$pi_runtime_source" ]]; then
   cp -a -- "${pi_runtime_source}/." "${bundle_root}/payload/pi-runtime/"
   chmod 0755 "${bundle_root}/payload/pi-runtime/pi"
   install -d -m 0755 "${bundle_root}/pi"
-  install -m 0644 "${agent_dir}/pi/infernex.ts" "${bundle_root}/pi/infernex.ts"
+  install -m 0644 "${agent_dir}/pi/infernex.ts" "${agent_dir}/pi/host-tools.ts" "${bundle_root}/pi/"
   install -m 0644 "${agent_dir}/pi/LICENSE.pi.txt" "${bundle_root}/pi/LICENSE.pi.txt"
 fi
 if [[ -n "$tool_runtime_source" ]]; then
