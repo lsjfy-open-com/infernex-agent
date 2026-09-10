@@ -68,6 +68,7 @@ jobs:
           bash test/scripts/download-bundle.sh
           bash test/scripts/bundle-path-safety.sh
           bash test/scripts/cli-routing.sh
+          bash test/scripts/host-backup-schema.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
