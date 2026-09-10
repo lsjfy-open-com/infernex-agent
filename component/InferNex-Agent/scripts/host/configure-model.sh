@@ -18,14 +18,26 @@ Usage:
   sudo configure-model.sh [options]
 
 Actions:
+  --interactive           Prompt only for the Agent model interface
   --base-url URL          Set or replace the OpenAI-compatible base URL
   --model MODEL           Set or replace the diagnostic model
   --api-key-file FILE     Install or rotate the protected API key
   --clear-api-key         Remove the installed API key
-  --timeout DURATION      Set request timeout, for example 60s or 2m
+  --timeout DURATION      Per-attempt timeout, for example 3m or 300s
+  --context-window-tokens N
+                         Model context window (default: 32768)
+  --max-output-tokens N  Output reservation and per-call maximum
+  --reasoning-display MODE
+                         TUI reasoning blocks: hidden (default) or visible
+  --context-compaction-threshold PERCENT
+                         Compact at this context usage (default: 80)
+  --context-keep-recent-turns N
+                         Recent user turns kept verbatim (default: 4)
+  --tool-result-max-tokens N
+                         Approximate cap for one tool result
   --disable               Disable model analysis and remove its API key
   --test                  Send a small chat-completions request before applying
-  --test-tools            Force a harmless function call for terminal compatibility
+  --test-tools            Verify harmless auto tool calling used by the terminal
   --show                  Print effective non-secret model configuration
 
 Control:
@@ -48,10 +60,22 @@ service_user="infernex-agent"
 base_url=""
 model=""
 request_timeout=""
+context_window_tokens=""
+max_output_tokens=""
+context_compaction_threshold=""
+context_keep_recent_turns=""
+tool_result_max_tokens=""
+reasoning_display=""
 api_key_source=""
 base_url_set="false"
 model_set="false"
 timeout_set="false"
+context_window_set="false"
+max_output_set="false"
+context_threshold_set="false"
+keep_recent_set="false"
+tool_result_max_set="false"
+reasoning_display_set="false"
 api_key_set="false"
 clear_api_key="false"
 disable_model="false"
@@ -59,9 +83,15 @@ test_model="false"
 test_tools="false"
 show_model="false"
 restart_service="true"
+interactive="false"
+interactive_key_file=""
 
 while (($#)); do
   case "$1" in
+    --interactive)
+      interactive="true"
+      shift
+      ;;
     --base-url)
       [[ $# -ge 2 ]] || bundle_die "--base-url requires a value"
       base_url="$2"
@@ -88,6 +118,42 @@ while (($#)); do
       [[ $# -ge 2 ]] || bundle_die "--timeout requires a value"
       request_timeout="$2"
       timeout_set="true"
+      shift 2
+      ;;
+    --context-window-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--context-window-tokens requires a value"
+      context_window_tokens="$2"
+      context_window_set="true"
+      shift 2
+      ;;
+    --max-output-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--max-output-tokens requires a value"
+      max_output_tokens="$2"
+      max_output_set="true"
+      shift 2
+      ;;
+    --reasoning-display)
+      [[ $# -ge 2 ]] || bundle_die "--reasoning-display requires a value"
+      reasoning_display="$2"
+      reasoning_display_set="true"
+      shift 2
+      ;;
+    --context-compaction-threshold)
+      [[ $# -ge 2 ]] || bundle_die "--context-compaction-threshold requires a value"
+      context_compaction_threshold="$2"
+      context_threshold_set="true"
+      shift 2
+      ;;
+    --context-keep-recent-turns)
+      [[ $# -ge 2 ]] || bundle_die "--context-keep-recent-turns requires a value"
+      context_keep_recent_turns="$2"
+      keep_recent_set="true"
+      shift 2
+      ;;
+    --tool-result-max-tokens)
+      [[ $# -ge 2 ]] || bundle_die "--tool-result-max-tokens requires a value"
+      tool_result_max_tokens="$2"
+      tool_result_max_set="true"
       shift 2
       ;;
     --disable)
@@ -123,6 +189,63 @@ done
 
 [[ ${EUID} -eq 0 ]] ||
   bundle_die "configure-model.sh must run as root"
+
+cleanup_interactive_key() {
+  [[ -z "$interactive_key_file" ]] || rm -f -- "$interactive_key_file"
+}
+trap cleanup_interactive_key EXIT
+
+if [[ "$interactive" == "true" ]]; then
+  [[ "$disable_model" == "false" && "$show_model" == "false" ]] ||
+    bundle_die "--interactive cannot be combined with --disable or --show"
+  printf 'OpenAI 兼容接口地址（例如以 /v1 结尾；请填写真实地址）: '
+  IFS= read -r base_url
+  base_url="${base_url%/}"
+  [[ -n "$base_url" ]] || bundle_die "model interface URL cannot be empty"
+  printf '接口中的真实模型名（不是示例名称）: '
+  IFS= read -r model
+  [[ -n "$model" ]] || bundle_die "model name cannot be empty"
+  printf 'API Key（无鉴权直接回车）: '
+  IFS= read -r -s interactive_key
+  printf '\n'
+  base_url_set="true"
+  model_set="true"
+  test_model="true"
+  test_tools="true"
+  interactive_context_default="32768"
+	interactive_max_output_default=""
+  if [[ "$context_window_set" == "true" ]]; then
+    interactive_context_default="$context_window_tokens"
+  elif [[ -r "$config_file" ]]; then
+    while IFS= read -r existing_argument; do
+      case "$existing_argument" in
+		--context-window-tokens=*) interactive_context_default="${existing_argument#*=}" ;;
+		--max-output-tokens=*) interactive_max_output_default="${existing_argument#*=}" ;;
+      esac
+    done <"$config_file"
+  fi
+  printf '模型上下文窗口 token 数 [%s]: ' "$interactive_context_default"
+  IFS= read -r context_window_tokens
+  context_window_tokens="${context_window_tokens:-$interactive_context_default}"
+  context_window_set="true"
+	if [[ -z "$interactive_max_output_default" ]]; then
+		interactive_max_output_default=$((context_window_tokens / 4))
+		((interactive_max_output_default <= 8192)) || interactive_max_output_default=8192
+	fi
+	printf '单次模型最大输出 token 数（长报告建议 8192 或更高） [%s]: ' "$interactive_max_output_default"
+	IFS= read -r max_output_tokens
+	max_output_tokens="${max_output_tokens:-$interactive_max_output_default}"
+	max_output_set="true"
+  if [[ -n "$interactive_key" ]]; then
+    interactive_key_file="$(mktemp /tmp/infernex-agent-model-key.XXXXXX)"
+    chmod 0600 "$interactive_key_file"
+    printf '%s\n' "$interactive_key" >"$interactive_key_file"
+    unset interactive_key
+    api_key_source="$interactive_key_file"
+    api_key_set="true"
+  fi
+fi
+
 [[ -r "$config_file" ]] ||
   bundle_die "${config_file} is missing; install the host Agent first"
 id "$service_user" >/dev/null 2>&1 ||
@@ -148,7 +271,13 @@ mapfile -t current_args <"$config_file"
 
 current_base_url=""
 current_model=""
-current_timeout="60s"
+current_timeout="3m"
+current_context_window="32768"
+current_max_output=""
+current_context_threshold="80"
+current_keep_recent="4"
+current_tool_result_max=""
+current_reasoning_display="hidden"
 for argument in "${current_args[@]}"; do
   [[ -n "$argument" && "$argument" == --* ]] ||
     bundle_die "${config_file} contains an invalid argument"
@@ -156,6 +285,12 @@ for argument in "${current_args[@]}"; do
     --openai-base-url=*) current_base_url="${argument#*=}" ;;
     --openai-model=*) current_model="${argument#*=}" ;;
     --openai-timeout=*) current_timeout="${argument#*=}" ;;
+    --context-window-tokens=*) current_context_window="${argument#*=}" ;;
+    --max-output-tokens=*) current_max_output="${argument#*=}" ;;
+    --context-compaction-threshold=*) current_context_threshold="${argument#*=}" ;;
+    --context-keep-recent-turns=*) current_keep_recent="${argument#*=}" ;;
+    --tool-result-max-tokens=*) current_tool_result_max="${argument#*=}" ;;
+    --reasoning-display=*) current_reasoning_display="${argument#*=}" ;;
   esac
 done
 [[ -z "$current_base_url" && -z "$current_model" ||
@@ -165,14 +300,54 @@ done
 candidate_base_url="$current_base_url"
 candidate_model="$current_model"
 candidate_timeout="$current_timeout"
+candidate_context_window="$current_context_window"
+candidate_max_output="$current_max_output"
+candidate_context_threshold="$current_context_threshold"
+candidate_keep_recent="$current_keep_recent"
+candidate_tool_result_max="$current_tool_result_max"
+candidate_reasoning_display="$current_reasoning_display"
 [[ "$base_url_set" == "false" ]] || candidate_base_url="$base_url"
 [[ "$model_set" == "false" ]] || candidate_model="$model"
 [[ "$timeout_set" == "false" ]] || candidate_timeout="$request_timeout"
+[[ "$context_window_set" == "false" ]] || candidate_context_window="$context_window_tokens"
+[[ "$max_output_set" == "false" ]] || candidate_max_output="$max_output_tokens"
+[[ "$context_threshold_set" == "false" ]] || candidate_context_threshold="$context_compaction_threshold"
+[[ "$keep_recent_set" == "false" ]] || candidate_keep_recent="$context_keep_recent_turns"
+[[ "$tool_result_max_set" == "false" ]] || candidate_tool_result_max="$tool_result_max_tokens"
+[[ "$reasoning_display_set" == "false" ]] || candidate_reasoning_display="$reasoning_display"
+
+# Recalculate safe derived defaults when an operator changes only the window.
+[[ "$candidate_context_window" =~ ^[0-9]+$ ]] ||
+  bundle_die "context window tokens must be a positive integer"
+((candidate_context_window >= 2048 && candidate_context_window <= 4000000)) ||
+  bundle_die "context window tokens must be between 2048 and 4000000"
+if [[ "$context_window_set" == "true" && "$max_output_set" == "false" ]]; then
+	candidate_max_output=$((candidate_context_window / 4))
+	((candidate_max_output <= 8192)) || candidate_max_output=8192
+fi
+if [[ "$context_window_set" == "true" && "$tool_result_max_set" == "false" ]]; then
+  candidate_tool_result_max=$((candidate_context_window * 15 / 100))
+  ((candidate_tool_result_max <= 4096)) || candidate_tool_result_max=4096
+fi
+if [[ -z "$candidate_max_output" ]]; then
+	candidate_max_output=$((candidate_context_window / 4))
+	((candidate_max_output <= 8192)) || candidate_max_output=8192
+fi
+if [[ -z "$candidate_tool_result_max" ]]; then
+  candidate_tool_result_max=$((candidate_context_window * 15 / 100))
+  ((candidate_tool_result_max <= 4096)) || candidate_tool_result_max=4096
+fi
 
 modify_requested="false"
 if [[ "$base_url_set" == "true" ||
   "$model_set" == "true" ||
   "$timeout_set" == "true" ||
+  "$context_window_set" == "true" ||
+  "$max_output_set" == "true" ||
+  "$context_threshold_set" == "true" ||
+  "$keep_recent_set" == "true" ||
+  "$tool_result_max_set" == "true" ||
+  "$reasoning_display_set" == "true" ||
   "$api_key_set" == "true" ||
   "$clear_api_key" == "true" ||
   "$disable_model" == "true" ]]; then
@@ -182,7 +357,7 @@ fi
 if [[ "$disable_model" == "true" ]]; then
   candidate_base_url=""
   candidate_model=""
-  candidate_timeout="60s"
+  candidate_timeout="3m"
 elif [[ "$modify_requested" == "true" ]]; then
   [[ -n "$candidate_base_url" && -n "$candidate_model" ]] ||
     bundle_die "an enabled model requires both --base-url and --model"
@@ -210,6 +385,31 @@ validate_model_config \
   "$candidate_base_url" \
   "$candidate_model" \
   "$candidate_timeout"
+
+validate_context_config() {
+  local window="$1" output="$2" threshold="$3" keep_recent="$4" tool_max="$5"
+  for value in "$window" "$output" "$threshold" "$keep_recent" "$tool_max"; do
+    [[ "$value" =~ ^[0-9]+$ ]] || bundle_die "context values must be positive integers"
+  done
+  ((window >= 2048 && window <= 4000000)) ||
+    bundle_die "context window tokens must be between 2048 and 4000000"
+  ((output >= 128 && output < window)) ||
+    bundle_die "max output tokens must be at least 128 and smaller than the context window"
+  ((threshold >= 50 && threshold <= 95)) ||
+    bundle_die "context compaction threshold must be between 50 and 95 percent"
+  ((keep_recent >= 1 && keep_recent <= 32)) ||
+    bundle_die "recent turns to keep must be between 1 and 32"
+  ((tool_max >= 128 && tool_max < window)) ||
+    bundle_die "tool result token limit must be at least 128 and smaller than the context window"
+  ((output < window * threshold / 100)) ||
+    bundle_die "max output tokens must be smaller than the compaction threshold budget"
+}
+validate_context_config \
+  "$candidate_context_window" "$candidate_max_output" \
+  "$candidate_context_threshold" "$candidate_keep_recent" \
+  "$candidate_tool_result_max"
+[[ "$candidate_reasoning_display" == "hidden" || "$candidate_reasoning_display" == "visible" ]] ||
+  bundle_die "reasoning display must be hidden or visible"
 
 validate_api_key_file() {
   local source_file="$1"
@@ -254,7 +454,10 @@ test_endpoint() (
   local value_model="$2"
   local key_file="$3"
   local test_tools="$4"
+  local value_timeout="$5"
+  local value_max_output_tokens="$6"
   local endpoint response_file header_file http_code escaped_model payload
+  local request_timeout_seconds retry_max_seconds probe_attempt probe_attempts
 
   [[ -n "$value_base_url" && -n "$value_model" ]] ||
     bundle_die "model analysis is disabled; there is no endpoint to test"
@@ -268,8 +471,8 @@ test_endpoint() (
   escaped_model="${escaped_model//\"/\\\"}"
   if [[ "$test_tools" == "true" ]]; then
     payload="$(
-      printf '{"model":"%s","messages":[{"role":"user","content":"Call the supplied test tool."}],"tools":[{"type":"function","function":{"name":"infernex_test_tool","description":"Harmless compatibility test","parameters":{"type":"object","properties":{},"additionalProperties":false}}}],"tool_choice":{"type":"function","function":{"name":"infernex_test_tool"}},"temperature":0,"stream":false,"max_tokens":32}' \
-        "$escaped_model"
+      printf '{"model":"%s","messages":[{"role":"system","content":"You are testing OpenAI-compatible automatic tool calling. Follow the user request by calling the supplied tool and return no prose."},{"role":"user","content":"Use infernex_test_tool to inspect scope cluster now."}],"tools":[{"type":"function","function":{"name":"infernex_test_tool","description":"Harmless compatibility test that reports the requested scope","parameters":{"type":"object","properties":{"scope":{"type":"string","enum":["cluster"]}},"required":["scope"],"additionalProperties":false}}}],"tool_choice":"auto","temperature":0,"stream":false,"max_tokens":%s}' \
+        "$escaped_model" "$value_max_output_tokens"
     )"
   else
     payload="$(
@@ -281,13 +484,33 @@ test_endpoint() (
   declare -a curl_args=(
     --silent
     --show-error
-    --connect-timeout 5
-    --max-time 60
+    --fail
+    --connect-timeout 15
+    --retry 3
+    --retry-delay 2
+    --retry-connrefused
     --output "$response_file"
     --write-out '%{http_code}'
     --header 'Accept: application/json'
     --header 'Content-Type: application/json'
     --data-binary "$payload"
+  )
+  case "$value_timeout" in
+    *ms)
+      request_timeout_seconds=$((
+        (${value_timeout%ms} + 999) / 1000
+      ))
+      ;;
+    *s) request_timeout_seconds="${value_timeout%s}" ;;
+    *m) request_timeout_seconds=$((${value_timeout%m} * 60)) ;;
+    *h) request_timeout_seconds=$((${value_timeout%h} * 3600)) ;;
+    *) bundle_die "unsupported model timeout: ${value_timeout}" ;;
+  esac
+  ((request_timeout_seconds >= 1)) || request_timeout_seconds=1
+  retry_max_seconds=$((request_timeout_seconds * 4 + 10))
+  curl_args+=(
+    --max-time "$request_timeout_seconds"
+    --retry-max-time "$retry_max_seconds"
   )
   if [[ -n "$key_file" ]]; then
     validate_api_key_file "$key_file"
@@ -302,25 +525,53 @@ test_endpoint() (
   fi
 
   endpoint="$(chat_completions_endpoint "$value_base_url")"
-  if ! http_code="$(curl "${curl_args[@]}" "$endpoint")"; then
-    bundle_die "model endpoint request failed: ${endpoint}"
-  fi
-  [[ "$http_code" =~ ^2[0-9][0-9]$ ]] ||
-    bundle_die "model endpoint returned HTTP ${http_code}"
-  grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
-    bundle_die "model endpoint response does not contain choices"
+  probe_attempts=1
+  [[ "$test_tools" != "true" ]] || probe_attempts=3
+  for ((probe_attempt = 1; probe_attempt <= probe_attempts; probe_attempt++)); do
+    : >"$response_file"
+    if ! http_code="$(curl "${curl_args[@]}" "$endpoint")"; then
+      bundle_die "model endpoint request failed: ${endpoint}"
+    fi
+    [[ "$http_code" =~ ^2[0-9][0-9]$ ]] ||
+      bundle_die "model endpoint returned HTTP ${http_code}"
+    grep -Eq '"choices"[[:space:]]*:' "$response_file" ||
+      bundle_die "model endpoint response does not contain choices"
+    if [[ "$test_tools" != "true" ]] || {
+      grep -Eq '"tool_calls"[[:space:]]*:[[:space:]]*\[' "$response_file" &&
+        grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file"
+    }; then
+      break
+    fi
+    if ((probe_attempt < probe_attempts)); then
+      bundle_warn "auto tool-call probe ${probe_attempt}/${probe_attempts} returned no message.tool_calls; retrying because model generation and parser output may be non-deterministic"
+    fi
+  done
   if [[ "$test_tools" == "true" ]]; then
-    grep -Eq '"tool_calls"[[:space:]]*:' "$response_file" ||
-      bundle_die "model endpoint does not return OpenAI-compatible tool_calls"
+    if ! grep -Eq '"tool_calls"[[:space:]]*:[[:space:]]*\[' "$response_file"; then
+      bundle_warn "the endpoint accepted an auto-tools request but returned no message.tool_calls"
+      if grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"length"' "$response_file"; then
+        bundle_warn "the compatibility response ended with finish_reason=length even with max_tokens=${value_max_output_tokens}"
+      fi
+      if grep -Eq '(<tool_call>|&lt;tool_call&gt;)' "$response_file"; then
+        bundle_warn "raw tool-call markup was left in content/reasoning; the serving parser did not convert it to message.tool_calls"
+      fi
+      bundle_warn "bounded response follows (credentials and request headers are not included)"
+      head -c 4096 "$response_file" >&2 || true
+      printf '\n' >&2
+      bundle_die "model endpoint did not return OpenAI-compatible message.tool_calls in ${probe_attempts} attempts using the same tool_choice=auto mode as infernex-agent; verify the live model ID, gateway passthrough, reasoning/chat template, --enable-auto-tool-choice, and the model-specific --tool-call-parser"
+    fi
     grep -Eq '"name"[[:space:]]*:[[:space:]]*"infernex_test_tool"' "$response_file" ||
-      bundle_die "model endpoint returned an unexpected tool call"
+      bundle_die "model endpoint returned tool_calls in ${probe_attempts} attempts, but never called infernex_test_tool"
+    grep -Eq 'scope.{0,32}cluster' "$response_file" ||
+      bundle_warn "tool call was parsed, but its arguments did not contain the expected scope=cluster; runtime validation may reject malformed arguments"
   fi
   bundle_info "model endpoint test succeeded: ${endpoint}"
 )
 
 if [[ "$test_model" == "true" ]]; then
   test_endpoint \
-    "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools"
+    "$candidate_base_url" "$candidate_model" "$effective_key_file" "$test_tools" \
+    "$candidate_timeout" "$candidate_max_output"
 fi
 
 show_configuration() {
@@ -337,6 +588,12 @@ show_configuration() {
   printf 'base_url=%s\n' "${candidate_base_url:--}"
   printf 'model=%s\n' "${candidate_model:--}"
   printf 'timeout=%s\n' "$candidate_timeout"
+  printf 'context_window_tokens=%s\n' "$candidate_context_window"
+  printf 'max_output_tokens=%s\n' "$candidate_max_output"
+  printf 'context_compaction_threshold_percent=%s\n' "$candidate_context_threshold"
+  printf 'context_keep_recent_turns=%s\n' "$candidate_keep_recent"
+  printf 'tool_result_max_tokens=%s\n' "$candidate_tool_result_max"
+  printf 'reasoning_display=%s\n' "$candidate_reasoning_display"
   printf 'api_key=%s\n' "$credential"
 }
 
@@ -345,7 +602,10 @@ if [[ "$modify_requested" == "true" ]]; then
   declare -a updated_args=()
   for argument in "${current_args[@]}"; do
     case "$argument" in
-      --openai-base-url=* | --openai-model=* | --openai-api-key-file=* | --openai-timeout=*)
+      --openai-base-url=* | --openai-model=* | --openai-api-key-file=* | --openai-timeout=* | \
+        --context-window-tokens=* | --max-output-tokens=* | \
+        --context-compaction-threshold=* | --context-keep-recent-turns=* | \
+        --tool-result-max-tokens=* | --reasoning-display=*)
         ;;
       *) updated_args+=("$argument") ;;
     esac
@@ -361,6 +621,14 @@ if [[ "$modify_requested" == "true" ]]; then
       updated_args+=("--openai-api-key-file=${credential_file}")
     fi
   fi
+  updated_args+=(
+    "--context-window-tokens=${candidate_context_window}"
+    "--max-output-tokens=${candidate_max_output}"
+    "--context-compaction-threshold=${candidate_context_threshold}"
+    "--context-keep-recent-turns=${candidate_keep_recent}"
+    "--tool-result-max-tokens=${candidate_tool_result_max}"
+    "--reasoning-display=${candidate_reasoning_display}"
+  )
 
   config_backup="$(mktemp /etc/infernex-agent/.agent.conf.backup.XXXXXX)"
   cp --preserve=mode,ownership,timestamps -- "$config_file" "$config_backup"
@@ -424,7 +692,12 @@ if [[ "$show_model" == "true" || "$modify_requested" == "true" ]]; then
 fi
 
 if [[ -n "$candidate_base_url" && -x /opt/infernex-agent/bin/chat.sh ]]; then
-  bundle_info "interactive terminal: sudo /opt/infernex-agent/bin/chat.sh"
+  if [[ -x /opt/infernex-agent/pi-runtime/pi && -x /opt/infernex-agent/bin/tui.sh ]]; then
+    bundle_info "Agentic TUI: sudo infernex-agent chat"
+    bundle_info "legacy line terminal: sudo infernex-agent chat --classic"
+  else
+    bundle_info "interactive terminal: sudo /opt/infernex-agent/bin/chat.sh"
+  fi
 fi
 
 if [[ "$modify_requested" == "false" &&

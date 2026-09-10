@@ -1,86 +1,23 @@
 # InferNex Agent
 
-[English](README-en.md) | [简体中文](README-zh.md)
+[简体中文](README-zh.md) · [Documentation](component/InferNex-Agent/docs/README.md)
 
-[![InferNex Agent CI](https://github.com/lsjfy-open-com/infernex-agent/actions/workflows/infernex-agent.yaml/badge.svg)](https://github.com/lsjfy-open-com/infernex-agent/actions/workflows/infernex-agent.yaml)
-[![License](https://img.shields.io/badge/License-Mulan_PSL_v2-blue.svg)](LICENSE)
+A Kubernetes-first agent for inference deployment and operations, with optional InferNex, Helm and customer-platform adapters. It runs on a Linux management host using the active kubeconfig. InferNex CRDs are not required for native discovery, logs and diagnosis.
 
-This repository keeps the InferNex project structure intact and adds
-**InferNex Agent** as a management-plane component. The Agent exposes typed
-InferNex domain tools to MCP-compatible runtimes while reusing the existing
-`InferNexService` API and InferNex Bridge status.
+**Current boundary:** alpha.14 provides the full Pi TUI, evidence/diagnostic tools and guarded Bridge deployment/recovery. Native resource-aware deployment and request-level load balancing are planned, not yet implemented. See the [capability matrix and architecture](component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md).
 
-## Agent v0.3
+alpha.14 adds `/mode_change normal|root`, SSH/network probes, timestamped PFC sampling and MPI HCCL tests. See the [host diagnostics guide](component/InferNex-Agent/docs/guides/host-network-diagnostics-zh.md).
 
-The Agent can now run continuously on an InferNex management or Kubernetes
-control-plane node. Its supervisor scans explicit namespaces, correlates
-InferNex status, managed topology, Pod evidence, and recent Events, and serves
-a read-only dashboard and JSON snapshot API on a separate port. An optional
-OpenAI-compatible endpoint adds cached diagnostic advice without receiving
-Kubernetes credentials.
+## Install the experimental release
 
-The MCP boundary remains deliberately narrow and publishes four observation
-tools:
+Download the archive and matching SHA256 for your management host's CPU architecture from [v0.5.0-alpha.14](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.14). Extract it and run `sudo ./install.sh`, then `sudo infernex-agent chat`. The full package includes Pi, rg and fd; no Node or Go installation is needed.
 
-- `infernex_list_services`
-- `infernex_inspect_service`
-- `infernex_get_topology`
-- `infernex_get_events`
+Use the [installation guide](component/InferNex-Agent/docs/guides/offline-install-zh.md) for exact verification and upgrade steps. A release tag identifies an immutable experimental package, not a main-branch merge or hardware certification.
 
-An explicit, namespace-scoped deployment mode adds two catalog tools:
+## Development
 
-- `infernex_deploy_model`
-- `infernex_delete_model`
+`develop` is the active development baseline; `main` retains the historical merged baseline pending explicit promotion. Start short-lived feature branches from develop. See [branch policy](component/InferNex-Agent/docs/development/branches-and-releases-zh.md), [current roadmap](component/InferNex-Agent/docs/development/roadmap-zh.md) and [CONTRIBUTING](CONTRIBUTING.md).
 
-The deployment input is limited to a namespace, instance name, fixed catalog
-ID, and explicit confirmation. It cannot accept arbitrary images, commands,
-URLs, YAML, shell, or `kubectl`. The first catalog entry is a CPU-only
-SmolLM2-135M Q4 model for free Kind testing. The Agent creates only the
-canonical `InferNexService`; InferNex Bridge remains responsible for the
-Deployment, Service, status, and garbage collection.
+The repository retains upstream InferNex components for compatibility; their [original platform documentation](docs/upstream/README-en.md) is separate from Agent prerequisites. Source code lives in `component/InferNex-Agent/`.
 
-The default Helm configuration has deployment mode disabled, uses
-namespace-scoped read-only RBAC, and has no permission to read Secrets or
-mutate workloads.
-
-An additional double-opt-in recovery mode can create a new
-`InferNexService` after repeated critical scans. The source service must name
-an operator-approved `InferNexServiceConfig`; the Agent cannot create the
-profile, overwrite the source, switch traffic, or submit arbitrary workload
-fields.
-
-The management-node profile schedules the Agent on a control-plane/master node
-and exposes only the dashboard as NodePort `30081`; the MCP Service remains
-internal. See
-[`values-master-node.yaml`](component/InferNex-Agent/chart/infernex-agent/values-master-node.yaml).
-
-The same static Agent can run outside Kubernetes as a hardened, non-root
-systemd service on an openEuler master/bootstrap host. This mode uses a
-dedicated namespace-scoped kubeconfig, keeps MCP and the dashboard on loopback
-by default, and does not require a container or NPU runtime.
-
-## Documentation
-
-- [产品使用说明、部署选型和验收](component/InferNex-Agent/docs/product-guide-zh.md)
-- [产品设计和故障语义](component/InferNex-Agent/docs/product-design-zh.md)
-- [模型配置、换模、测试和密钥轮换](component/InferNex-Agent/docs/model-configuration-zh.md)
-- [安全、数据和写能力边界](component/InferNex-Agent/docs/security-boundaries-zh.md)
-- [生产运维手册](component/InferNex-Agent/docs/operations-runbook-zh.md)
-- [变更保护、备份与回退](component/InferNex-Agent/docs/change-safety-zh.md)
-- [Agent overview, local development, and deployment](component/InferNex-Agent/README.md)
-- [Architecture and component boundaries](component/InferNex-Agent/docs/architecture.md)
-- [Agent offline bundle and existing-cluster installation (Chinese)](component/InferNex-Agent/docs/offline-install-zh.md)
-- [Agent openEuler host/systemd installation (Chinese)](component/InferNex-Agent/docs/host-install-openeuler-zh.md)
-- [InferNex English documentation](README-en.md)
-- [InferNex 中文文档](README-zh.md)
-
-## Validation
-
-The repository workflow runs Go race tests and vet, Helm lint/render checks,
-builds the Agent and InferNex Bridge images, creates a real Kind cluster, and
-exercises all six MCP tools. It also asks the Agent to deploy the catalog model,
-waits for Bridge reconciliation, sends an OpenAI-compatible chat-completion
-request to llama.cpp, observes the resulting topology through the Agent, and
-deletes the service through the guarded tool.
-
-No external Kubernetes environment is required for the repository CI.
+License: [Mulan PSL v2](LICENSE).

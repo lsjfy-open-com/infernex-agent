@@ -1,56 +1,122 @@
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.13 的原生部署写路径和请求级均衡尚未实现。
+
 # InferNex Agent
 
 [English](README.md) | [简体中文](README-zh.md)
 
-InferNex Agent is the domain tool boundary between an agent runtime and the
-InferNex control plane. It reuses the existing `InferNexService` API and
-Bridge-generated status instead of reimplementing serving lifecycle or
-readiness logic.
+InferNex Agent is an agentic operations runtime for an existing openFuyao
+Kubernetes and AI inference environment. A user describes an outcome in
+natural language; the Agent discovers whether the active kubeconfig points at
+a bootstrap/management control plane or a business cluster, plans with bounded
+domain tools, diagnoses native Kubernetes/Helm or optional Bridge workloads,
+and reports evidence. It does not ask normal users to assemble raw YAML,
+images, or shell commands.
 
-Published `linux-amd64` and `linux-arm64` bundles for both in-cluster and
-host/systemd installation are available on the
-[0.3.0-rc.6 release](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.3.0-rc.6).
-The repository's `scripts/download-bundle.sh` downloads the matching archive
-and checksum, verifies it, and extracts it without changing the cluster.
-
-Host installations also provide an interactive terminal:
+The intended management-node installation is one command:
 
 ```bash
-sudo /opt/infernex-agent/bin/configure-model.sh \
-  --base-url http://model.internal:8000/v1 \
-  --model ops-model --api-key-file /secure/model.key --test-tools
-sudo /opt/infernex-agent/bin/chat.sh
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.13/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.13 bash
+```
+
+The installer discovers the current kubeconfig, CPU architecture, and whether
+the cluster uses InferNex Bridge CRDs or the openFuyao Helm/BKE deployment
+shape. It installs one
+static binary/systemd service, then prompts only for the OpenAI-compatible
+model interface. By default it creates no Agent Pod, controller, CRD,
+ServiceAccount, or RBAC. A Bridge cluster receives an empty Agent workspace
+Namespace for future approved model deployments. A cluster without Bridge
+enters a no-mutation base Kubernetes/Helm compatibility mode instead of
+failing installation. That mode can inspect Helm release metadata,
+Deployments, StatefulSets, DaemonSets, LeaderWorkerSets, Pods, Services,
+Events, and bounded redacted logs. API discovery plus paginated GET/LIST also
+covers native resources and CRDs visible to the active kubeconfig/RBAC, while
+Secret payloads remain excluded. Node, Pod, and Service summaries include
+network addresses; Bridge is not a prerequisite. See the
+[Chinese product guide](docs/guides/product-guide-zh.md) for online, offline, XShell,
+Dashboard, safety, and current candidate-validation instructions.
+
+The offline host bundle includes progressively loaded CANN Runtime and
+HiXL/LLM DataDist diagnostic Skills. Operators can install additional
+Markdown-only Skills without granting shell or cluster permissions; see the
+[Chinese Skill guide](docs/guides/skills-and-cann-hixl-zh.md).
+
+The current public candidate is
+[v0.4.0-rc.8](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.4.0-rc.8).
+Generic Kubernetes reads, network fields, truncated-answer continuation, and
+the `/usage` command described on this branch are planned for the next
+candidate and must pass Kind plus an existing-cluster acceptance run.
+
+The management-node installation provides one Agentic terminal:
+
+```bash
+sudo infernex-agent setup
+sudo infernex-agent chat
 ```
 
 The model must support OpenAI-compatible function/tool calling. Read-only MCP
 tools run automatically; every mutating tool requires an exact local `yes`.
 One-shot `--ask` mode always denies writes.
 
-The default installation publishes four typed, read-only tools:
+The base Kubernetes layer publishes eight passive read tools on any
+authorized Kubernetes/openFuyao cluster:
 
+- `openfuyao_detect_environment`
+- `k8s_cluster_overview`
+- `k8s_list_workloads`
+- `k8s_get_events`
+- `k8s_get_pod_logs`
+- `helm_list_releases`
+- `k8s_discover_api_resources`
+- `k8s_read_resources`
+
+The one-command host installer selects the `diagnose` policy ceiling by
+default. It additionally publishes compiled-in active-read probes through the
+management host, an exact Pod/container exec target, or operator-configured
+OpenSSH aliases. No tool accepts arbitrary shell, paths, addresses,
+credentials, or environment reads. Use `sudo ./install.sh --execution-mode
+detect` to disable every active execution channel.
+
+Diagnose mode also provides approved external CANN plog capture tasks. They
+follow matching Pod UIDs, incrementally copy files only from fixed Ascend log
+roots into the Agent Evidence Store, and stop at a duration or byte budget.
+They do not patch the workload, inject a sidecar, write into the container, or
+delete evidence when stopped.
+
+Only when discovery confirms InferNex Bridge does the Agent publish five more
+Bridge-specific tools:
+
+- `infernex_list_all_services`
 - `infernex_list_services`
 - `infernex_inspect_service`
 - `infernex_get_topology`
 - `infernex_get_events`
 
-When catalog deployment is explicitly enabled, it also publishes:
+When conversational deployment is enabled, it also publishes:
 
+- `infernex_list_deployment_sources` (read-only)
 - `infernex_deploy_model`
 - `infernex_delete_model`
 - `infernex_get_change` (read-only change/rollback status)
 
-The output is deliberately normalized. It includes InferNex status, managed
-Deployment/DaemonSet/LeaderWorkerSet readiness, and compact Pod evidence. It
-also correlates recent Kubernetes Events only to the selected service and its
-managed objects. It does not return Secret objects, environment variables,
-full Pod specs, or a generic Kubernetes command surface.
+The output is deliberately bounded. Generic reads use exact API
+group/version/resource identifiers, selectors, limits, and continuation
+tokens; they do not expose a generic write surface. Helm inventory reads only
+Kubernetes metadata for storage objects and never returns Secret payloads,
+stored values, or manifests. Kubernetes logs require explicit Pod targets,
+cap containers/time/lines/bytes, and redact common credentials. Generic
+objects omit managed fields, redact credential-like content, cap long strings,
+and return only metadata/type for Secrets. The Agent does not expose a generic
+Kubernetes command or write surface.
 
 The deployment tools are deliberately narrower than Kubernetes write access.
-They accept only `namespace`, `name`, the fixed `catalogId`, and
-`confirm: true`. They do not accept an image, model URL, command, patch, or
+The Agent first discovers existing Ready services and administrator-created
+`InferNexServiceConfig` engine profiles. It then deploys only from the returned
+opaque source ID into its fixed workspace. The user does not provide a
+namespace. The tools do not accept an image, model URL, command, patch, or
 arbitrary object. The Agent creates only an `InferNexService`; InferNex Bridge
 continues to own workload and Service reconciliation, readiness, and garbage
-collection.
+collection. The built-in CPU catalog remains only as a Kind compatibility
+fixture and is not exposed by the conversational product API.
 
 ## Change safety and rollback
 
@@ -66,13 +132,17 @@ Use `infernex_get_change` to distinguish `committed`, `rolled-back`,
 `rollback-failed`, and `apply-failed`. Pending changes resume after an Agent
 restart.
 
-The host installer also creates a checksummed pre-install recovery point under
+The management-node installer also creates a checksummed pre-install recovery point under
 `/var/lib/infernex-agent/backups/` before replacing any Agent files. If
 installation or verification fails, it restores the previous host files,
 systemd state, and Agent-managed cluster source resources automatically.
 
-See [change safety, backup, and rollback](docs/change-safety-zh.md) for the
+See [change safety, backup, and rollback](docs/guides/change-safety-zh.md) for the
 restore CLI, persistence requirements, guarantees, and boundaries.
+
+The [openFuyao v26.06 alignment baseline](docs/architecture/openfuyao-alignment-zh.md)
+records the official deployment sources, authority boundaries, implemented
+adapters, and deliberately unfinished integrations used by this design.
 
 ## Continuous supervisor and dashboard
 
@@ -95,9 +165,9 @@ endpoint. The API key is accepted only through
 input excludes Secret objects, environment variables, Kubernetes credentials,
 node names, and Event notes.
 
-The supervisor is advisory and read-only by default. Enabling the existing
-deployment catalog does not let model output bypass its fixed catalog,
-ownership checks, namespace RBAC, or explicit confirmation contract.
+The supervisor is advisory and read-only by default. Enabling deployment does
+not let model output bypass stable-source validation, ownership checks, the
+isolated Agent workspace, namespace RBAC, or explicit confirmation.
 
 When bounded log diagnostics are explicitly enabled, degraded services also
 receive redacted current/previous container-log evidence and a cross-node
@@ -122,7 +192,7 @@ It publishes `infernex_start_experiment`, `infernex_get_experiment`, and
 `infernex_list_experiments`, plus `/api/v1/experiments` on the dashboard. It
 does not generate profiles, replay inference traffic, switch production
 traffic, or delete passed candidates. See the
-[progressive experiment and cross-node diagnostics guide](docs/progressive-experiments-zh.md).
+[progressive experiment and cross-node diagnostics guide](docs/guides/progressive-experiments-zh.md).
 
 ### Guarded automatic recovery service
 
@@ -175,7 +245,7 @@ The new service and recovery state appear in the dashboard. Traffic promotion
 should remain an operator or future approved-plan action after health and SLO
 verification.
 
-## CPU test-model catalog
+## CPU test-model catalog (Kind CI only)
 
 The first entry is `smollm2-135m-q4`:
 
@@ -231,10 +301,12 @@ Stdio is available for local MCP clients:
 go run ./cmd/infernex-agent --transport=stdio
 ```
 
-## kubectl-ai integration
+## Optional kubectl-ai integration
 
-InferNex does not vendor kubectl-ai. Configure an installed kubectl-ai runtime
-as the MCP client in `~/.config/kubectl-ai/mcp.yaml`:
+The standalone `infernex-agent chat` command is the normal product entry and
+does not require kubectl-ai. To reuse the same domain tools from an installed
+kubectl-ai runtime, configure it as the MCP client in
+`~/.config/kubectl-ai/mcp.yaml`:
 
 ```yaml
 servers:
@@ -247,6 +319,52 @@ Then start kubectl-ai with MCP client mode:
 ```bash
 kubectl-ai --mcp-client
 ```
+
+The terminal enforces a configurable model context budget. Large tool results
+are stored as permission-restricted, SHA-256-addressed local artifacts; the
+model receives a preview and can read only bounded line ranges through an
+opaque artifact ID. It reserves `max_tokens` for the answer, summarizes older
+turns before the configured threshold, keeps recent turns verbatim, blocks
+repeated identical tool calls, and requests a partial conclusion when the tool
+round budget is exhausted. Use `/context` to inspect the estimate and
+`/compact` to compact immediately. Host configuration accepts
+`--context-window-tokens`, `--max-output-tokens`,
+`--context-compaction-threshold`, `--context-keep-recent-turns`, and
+`--tool-result-max-tokens`. `infernex-agent chat --artifact-dir=...` changes
+the artifact root; an empty value disables artifact storage. See the
+[Chinese context management guide](docs/guides/context-management-zh.md).
+
+New host installs reserve up to 8192 output tokens by default, reduced to one
+quarter of smaller context windows. Interactive model setup asks for the real
+endpoint limit, and the value can be changed later; classic chat and Pi TUI
+reuse the same setting. Durable cross-session semantic memory is stored under
+the protected Agent state directory and exposed through controlled search,
+remember, and forget MCP tools. It accepts only operator-authored,
+user-confirmed, or tool-verified records and isolates cluster-scoped memory by
+a hash of the Kubernetes API server identity.
+
+Operator-collected logs that can no longer be fetched from Kubernetes can be
+registered as read-only local evidence roots. Controlled glob, grep, bounded
+line reads, default metrics/health-probe noise filtering, and persistent
+Markdown reports are provided without enabling arbitrary host filesystem
+tools. See the [Chinese local evidence guide](docs/guides/local-evidence-and-reports-zh.md).
+
+Durable CollectorRuns can automatically expand a Pod label selector, sample fixed PFC/HCCN/NPU/CANN/HCCL-preflight profiles, and retain JSONL evidence without asking operators to copy per-node command output. See the [Chinese CollectorRun guide](docs/guides/collector-runs-zh.md).
+
+The deployment Agent can delegate vLLM-Ascend/NPU fault analysis to an independently developed specialist through a separate bearer-protected, namespace-scoped MCP endpoint. That endpoint exposes observation, bounded active-read, Evidence, Skill, and report tools but no deployment, configuration mutation, recovery, experiment, memory-write, arbitrary-resource, or shell capability. Collection defaults to a short event-triggered burst rather than continuous logging. See the Chinese [requirements](docs/architecture/diagnostic-subagent-requirements-zh.md), [architecture](docs/architecture/diagnostic-subagent-architecture-zh.md), and [integration guide](docs/development/diagnostic-subagent-development-guide-zh.md).
+
+Pi reasoning blocks are hidden by default without disabling model reasoning or
+tool-call parsing. Use `configure-model.sh --reasoning-display visible`, pass
+`infernex-agent tui --reasoning-display visible`, or press `Ctrl+T` in the TUI
+to display them. Classic chat emits final `message.content`, not provider
+`reasoning_content`.
+
+On a TTY, chat uses a readline editor with cursor movement, Backspace/Delete,
+word/line deletion, in-process history, command completion, and safe Ctrl+C/
+Ctrl+D behavior. `/undo` removes the latest user turn and its assistant/tool
+messages from model context so it can be recalled with Up, edited, and resent;
+it never rolls back an already approved cluster mutation. See the
+[Chinese terminal interaction guide](docs/guides/terminal-interaction-zh.md).
 
 For a production deployment, run kubectl-ai and InferNex Agent in the same
 restricted management namespace, keep the Agent Service internal, and enable
@@ -316,7 +434,7 @@ cd infernex-agent-offline-0.3.0-linux-amd64
 ```
 
 See the complete Chinese guide:
-[offline build and existing-cluster installation](docs/offline-install-zh.md).
+[offline build and existing-cluster installation](docs/guides/offline-install-zh.md).
 
 For an Agent that runs directly on an openEuler master/bootstrap host rather
 than in Kubernetes, build the static-binary bundle:
@@ -331,7 +449,7 @@ than in Kubernetes, build the static-binary bundle:
 The host mode uses the existing `--kubeconfig` support, a dedicated
 namespace-scoped identity, a non-root hardened systemd unit, loopback-only
 MCP/dashboard defaults, and an API-key credential file. See the
-[openEuler host installation guide](docs/host-install-openeuler-zh.md).
+[openEuler host installation guide](docs/guides/host-install-openeuler-zh.md).
 
 Model analysis is optional in both deployment modes. A host installation can
 start without a model and configure one later without reinstalling:
@@ -351,14 +469,16 @@ Non-secret effective arguments are stored in
 
 Product documentation:
 
-- [Installation and operating-mode guide (Chinese)](docs/install-and-modes-zh.md)
-- [Product guide and acceptance](docs/product-guide-zh.md)
-- [Product design and failure semantics](docs/product-design-zh.md)
-- [Progressive experiments and cross-node diagnostics](docs/progressive-experiments-zh.md)
-- [Change safety, backup, and rollback](docs/change-safety-zh.md)
-- [Model configuration lifecycle](docs/model-configuration-zh.md)
-- [Security and capability boundaries](docs/security-boundaries-zh.md)
-- [Operations runbook](docs/operations-runbook-zh.md)
+- [Installation and operating-mode guide (Chinese)](docs/guides/install-and-modes-zh.md)
+- [Product guide and acceptance](docs/guides/product-guide-zh.md)
+- [Product design and failure semantics](docs/architecture/product-design-zh.md)
+- [Progressive experiments and cross-node diagnostics](docs/guides/progressive-experiments-zh.md)
+- [Change safety, backup, and rollback](docs/guides/change-safety-zh.md)
+- [Model configuration lifecycle](docs/guides/model-configuration-zh.md)
+- [Context budget and automatic compaction](docs/guides/context-management-zh.md)
+- [Linux terminal editing and undo](docs/guides/terminal-interaction-zh.md)
+- [Security and capability boundaries](docs/reference/security-boundaries-zh.md)
+- [Operations runbook](docs/guides/operations-runbook-zh.md)
 
 ## Deployment
 
@@ -449,7 +569,8 @@ rbac:
 
 Cluster-wide reads are opt-in through `rbac.clusterWide: true`.
 
-To enable the fixed catalog only in selected namespaces:
+To let the Agent discover stable deployment sources from selected namespaces
+and create new services only in its isolated workspace:
 
 ```yaml
 rbac:
@@ -460,6 +581,8 @@ rbac:
 tools:
   deployment:
     enabled: true
+    workspaceNamespace: infernex-agent-workspace
+    templateNamespace: infernex-bridge-system
 
 changeSafety:
   persistence:
@@ -475,25 +598,45 @@ helm upgrade --install infernex-agent ./chart/infernex-agent \
   --set tools.deployment.enabled=true
 ```
 
-Cluster-wide RBAC and catalog deployment cannot be enabled together. The
-resulting Role adds only `create/delete` for `InferNexService`; it still cannot
-create Deployments, read Secrets, create namespaces, or create cluster RBAC.
+Cluster-wide RBAC and Agent deployment cannot be enabled together. The
+resulting source namespace Roles remain read-only. A separate Role adds only
+`create/delete` for `InferNexService` in `infernex-agent-workspace`; it still
+cannot create Deployments, read Secrets, or create cluster RBAC.
 
 Example MCP arguments:
 
 ```json
 {
-  "namespace": "models",
   "name": "kind-smollm",
-  "catalogId": "smollm2-135m-q4",
+  "sourceId": "service:models:stable-smollm",
   "confirm": true
 }
 ```
 
 Use the returned `changeId` with `infernex_get_change` until its status is
-`committed` or `rolled-back`. Use the same deployment arguments with
-`infernex_delete_model`; deletion is refused unless the existing service
-carries the Agent catalog ownership labels.
+`committed` or `rolled-back`. Normally the conversational Agent selects a
+source returned by `infernex_list_deployment_sources`; users do not need to
+construct these arguments. Deletion is refused unless the existing service
+carries the Agent ownership metadata.
 
-See [docs/architecture.md](docs/architecture.md) for component boundaries and
+The built-in tiny CPU model catalog exists only for Kind CI and must be
+explicitly enabled with `tools.deployment.testCatalog=true`. It is not a
+production deployment source.
+
+## Tested standalone candidates
+
+Successful CI runs publish static `linux-amd64` and `linux-arm64` candidate
+binaries with SHA256 files. They are intended for validation on an existing
+management host before a formal release is assembled; the target server needs
+no Go, Python, Node.js, compiler, or source checkout.
+
+The binary provides `version`, `serve --config`, `doctor`, `chat`, and guarded
+`candidate verify|apply|rollback` commands. Candidate activation preserves the
+installed configuration, backs up the current binary, restarts systemd, waits
+for the health endpoint, and automatically restores the previous binary if the
+new process does not become healthy. See the
+[Chinese candidate validation guide](docs/development/candidate-validation-zh.md) for the
+operator workflow and acceptance gates.
+
+See [docs/architecture.md](docs/architecture/architecture.md) for component boundaries and
 the broader mutation roadmap.

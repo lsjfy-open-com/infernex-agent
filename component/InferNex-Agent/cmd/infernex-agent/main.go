@@ -14,6 +14,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,34 +30,58 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/metadata"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/analyzer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/delegation"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kube"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/mcpserver"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/plogcapture"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
+	infernexskills "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
-var version = "0.3.0-dev"
+var (
+	version = "0.3.0-dev"
+	commit  = "unknown"
+)
 
 type options struct {
 	transport                    string
 	listen                       string
 	dashboardListen              string
+	diagnosticDelegateListen     string
+	diagnosticDelegateTokenFile  string
+	diagnosticDelegateConcurrent int
 	kubeconfig                   string
 	enableDeployment             bool
+	enableTestCatalog            bool
+	deploymentNamespace          string
+	deploymentTemplateNS         string
+	deploymentSourceNamespaces   string
 	stateDir                     string
+	evidenceRoots                string
+	reportDirectory              string
+	skillDirectories             string
 	deploymentTimeout            time.Duration
 	scanNamespaces               string
 	scanInterval                 time.Duration
@@ -67,6 +93,16 @@ type options struct {
 	openAIModel                  string
 	openAIAPIKeyFile             string
 	openAITimeout                time.Duration
+	contextWindowTokens          int
+	maxOutputTokens              int
+	contextCompactionThreshold   int
+	contextKeepRecentTurns       int
+	toolResultMaxTokens          int
+	reasoningDisplay             string
+	executionMode                string
+	sshConfig                    string
+	sshTargets                   string
+	rootCollectorSocket          string
 	enableAutoRecovery           bool
 	recoveryTemplateNS           string
 	recoveryMinScans             int
@@ -80,6 +116,9 @@ type options struct {
 
 func main() {
 	if err := run(); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
 		slog.Error("infernex-agent stopped", "error", err)
 		os.Exit(1)
 	}
@@ -92,133 +131,248 @@ func run() error {
 			return runClusterState(os.Args[2:])
 		case "chat":
 			return runChat(os.Args[2:])
+		case "tui":
+			return runTUI(os.Args[2:])
+		case "serve":
+			return runServer(os.Args[2:])
+		case "doctor":
+			return runDoctor(os.Args[2:])
+		case "candidate":
+			return runCandidate(os.Args[2:])
+		case "version":
+			return runVersion(os.Args[2:])
+		case "setup":
+			return runSetup(os.Args[2:])
+		case "install-diagnose":
+			return runInstallDiagnose(os.Args[2:])
+		case "skills":
+			return runSkills(os.Args[2:])
+		case "collector-helper":
+			return runCollectorHelper(os.Args[2:])
 		}
 	}
-	return runServer()
+	return runServer(os.Args[1:])
 }
 
-func runServer() error {
+func runServer(args []string) error {
+	opts, err := parseServerOptions(args)
+	if err != nil {
+		return err
+	}
+	return serveAgent(opts)
+}
+
+func parseServerOptions(args []string) (options, error) {
 	opts := options{}
-	flag.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
-	flag.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
-	flag.StringVar(
+	mergedArgs, configPath, err := mergeServerConfigArgs(args)
+	if err != nil {
+		return options{}, err
+	}
+	flags := flag.NewFlagSet("infernex-agent serve", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	flags.String("config", configPath, "read server arguments from an Agent configuration file")
+	flags.StringVar(&opts.transport, "transport", "streamable-http", "MCP transport: streamable-http or stdio")
+	flags.StringVar(&opts.listen, "listen-address", ":8080", "HTTP listen address")
+	flags.StringVar(
 		&opts.dashboardListen,
 		"dashboard-listen-address",
 		"",
 		"Dashboard HTTP listen address; empty disables the dashboard",
 	)
-	flag.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
-	flag.BoolVar(
+	flags.StringVar(&opts.diagnosticDelegateListen, "diagnostic-subagent-listen-address", "", "Restricted diagnostic-subagent MCP listener; empty disables delegation")
+	flags.StringVar(&opts.diagnosticDelegateTokenFile, "diagnostic-subagent-token-file", "", "Protected bearer token file for the restricted diagnostic-subagent endpoint")
+	flags.IntVar(&opts.diagnosticDelegateConcurrent, "diagnostic-subagent-max-concurrency", 4, "Maximum concurrent requests accepted from diagnostic subagents")
+	flags.BoolVar(
+		&opts.enableTestCatalog,
+		"enable-test-catalog",
+		false,
+		"Expose the built-in CPU Kind fixture instead of production deployment-source tools",
+	)
+	flags.StringVar(&opts.kubeconfig, "kubeconfig", "", "Path to kubeconfig; in-cluster credentials are preferred when omitted")
+	flags.BoolVar(
 		&opts.enableDeployment,
 		"enable-deployment",
 		false,
 		"Enable constrained catalog deploy/delete tools; disabled by default",
 	)
-	flag.StringVar(
+	flags.StringVar(
+		&opts.deploymentNamespace,
+		"deployment-namespace",
+		"infernex-agent-workspace",
+		"Agent-managed namespace for conversational deployments",
+	)
+	flags.StringVar(
+		&opts.deploymentTemplateNS,
+		"deployment-template-namespace",
+		"infernex-bridge-system",
+		"Namespace containing existing InferNexServiceConfig deployment profiles",
+	)
+	flags.StringVar(
+		&opts.deploymentSourceNamespaces,
+		"deployment-source-namespaces",
+		"",
+		"Comma-separated namespaces containing stable deployment baselines; defaults to scan namespaces",
+	)
+	flags.StringVar(
 		&opts.stateDir,
 		"state-dir",
 		"/var/lib/infernex-agent",
 		"Protected persistent directory for change records and rollback state",
 	)
-	flag.DurationVar(
+	flags.StringVar(&opts.evidenceRoots, "evidence-roots", "", "Comma-separated operator-approved host directories for read-only historical log analysis; empty uses state-dir/imports")
+	flags.StringVar(&opts.reportDirectory, "report-directory", "", "Protected Markdown report directory; empty uses state-dir/reports")
+	flags.StringVar(&opts.skillDirectories, "skill-directories", "/opt/infernex-agent/skills,/etc/infernex-agent/skills.d", "Comma-separated read-only diagnostic Skill roots")
+	flags.DurationVar(
 		&opts.deploymentTimeout,
 		"deployment-readiness-timeout",
 		10*time.Minute,
 		"Rollback a newly created catalog service if it is not Ready within this duration",
 	)
-	flag.StringVar(
+	flags.IntVar(&opts.contextWindowTokens, "context-window-tokens", infernexchat.DefaultContextWindowTokens, "Interactive model context window token budget")
+	flags.IntVar(&opts.maxOutputTokens, "max-output-tokens", 0, "Interactive model output token reserve; zero derives a safe default")
+	flags.IntVar(&opts.contextCompactionThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "Context usage percent that triggers compaction")
+	flags.IntVar(&opts.contextKeepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "Recent interactive turns retained during compaction")
+	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "Approximate token cap for one interactive tool result; zero derives a safe default")
+	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "hidden", "Reasoning block display in interactive clients: hidden or visible")
+	flags.StringVar(&opts.executionMode, "execution-mode", "detect", "Policy ceiling: detect, diagnose, modify, install, or recover")
+	flags.StringVar(&opts.sshConfig, "diagnostic-ssh-config", "", "OpenSSH config containing operator-managed aliases and credentials for diagnostic probes")
+	flags.StringVar(&opts.sshTargets, "diagnostic-ssh-targets", "", "Comma-separated OpenSSH aliases allowed for fixed diagnostic probes")
+	flags.StringVar(&opts.rootCollectorSocket, "root-collector-socket", "", "Unix socket for the isolated fixed-profile root collector helper")
+	flags.StringVar(
 		&opts.scanNamespaces,
 		"scan-namespaces",
 		"",
 		"Comma-separated namespaces for continuous InferNex scans; empty disables scanning",
 	)
-	flag.DurationVar(&opts.scanInterval, "scan-interval", time.Minute, "Continuous scan interval")
-	flag.IntVar(&opts.eventSinceMinutes, "event-since-minutes", 60, "Recent event lookback for supervisor scans")
-	flag.IntVar(&opts.eventLimit, "event-limit", 25, "Maximum recent events collected for one service")
-	flag.IntVar(
+	flags.DurationVar(&opts.scanInterval, "scan-interval", time.Minute, "Continuous scan interval")
+	flags.IntVar(&opts.eventSinceMinutes, "event-since-minutes", 60, "Recent event lookback for supervisor scans")
+	flags.IntVar(&opts.eventLimit, "event-limit", 25, "Maximum recent events collected for one service")
+	flags.IntVar(
 		&opts.maxAnalysesPerScan,
 		"max-analyses-per-scan",
 		10,
 		"Maximum new OpenAI analyses in one scan; unchanged evidence is cached",
 	)
-	flag.IntVar(
+	flags.IntVar(
 		&opts.maxDiagnosticsPerScan,
 		"max-diagnostics-per-scan",
 		10,
 		"Maximum degraded services whose Pod logs are collected in one supervisor scan",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.openAIBaseURL,
 		"openai-base-url",
 		"",
 		"OpenAI-compatible base URL; requires --openai-model and enables advisory analysis",
 	)
-	flag.StringVar(&opts.openAIModel, "openai-model", "", "OpenAI-compatible model name")
-	flag.StringVar(
+	flags.StringVar(&opts.openAIModel, "openai-model", "", "OpenAI-compatible model name")
+	flags.StringVar(
 		&opts.openAIAPIKeyFile,
 		"openai-api-key-file",
 		"",
 		"Read the OpenAI-compatible API key from this file; intended for host/systemd installs",
 	)
-	flag.DurationVar(&opts.openAITimeout, "openai-timeout", time.Minute, "OpenAI-compatible request timeout")
-	flag.BoolVar(
+	flags.DurationVar(
+		&opts.openAITimeout, "openai-timeout", 3*time.Minute,
+		"OpenAI-compatible per-attempt request timeout",
+	)
+	flags.BoolVar(
 		&opts.enableAutoRecovery,
 		"enable-auto-recovery",
 		false,
 		"Create a new recovery InferNexService from an approved profile after consecutive critical scans",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.recoveryTemplateNS,
 		"recovery-template-namespace",
 		"",
 		"Namespace containing approved InferNexServiceConfig recovery profiles",
 	)
-	flag.IntVar(
+	flags.IntVar(
 		&opts.recoveryMinScans,
 		"recovery-min-critical-scans",
 		3,
 		"Consecutive critical scans required before ensuring a recovery service",
 	)
-	flag.BoolVar(
+	flags.BoolVar(
 		&opts.enableDiagnostics,
 		"enable-log-diagnostics",
 		false,
 		"Read bounded logs only from Pods owned by scanned InferNexServices and correlate cross-component incidents",
 	)
-	flag.BoolVar(
+	flags.BoolVar(
 		&opts.enableExperiments,
 		"enable-experiments",
 		false,
 		"Enable durable progressive experiments using approved sparse InferNexServiceConfig feature profiles",
 	)
-	flag.StringVar(
+	flags.StringVar(
 		&opts.experimentTemplateNS,
 		"experiment-template-namespace",
 		"infernex-bridge-system",
 		"Namespace containing approved experiment feature profiles",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentTimeout,
 		"experiment-readiness-timeout",
 		20*time.Minute,
 		"Maximum duration for one experiment stage to pass readiness, diagnostics, and soak gates",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentSoak,
 		"experiment-soak-duration",
 		5*time.Minute,
 		"Continuous healthy duration required before an experiment candidate becomes the next stable baseline",
 	)
-	flag.DurationVar(
+	flags.DurationVar(
 		&opts.experimentDiagnosticInterval,
 		"experiment-diagnostic-interval",
 		30*time.Second,
 		"Interval between candidate-versus-baseline log diagnostic comparisons during soak",
 	)
-	flag.Parse()
-	if opts.enableExperiments && !opts.enableDiagnostics {
-		return fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	if err := flags.Parse(mergedArgs); err != nil {
+		return options{}, err
 	}
+	if flags.NArg() != 0 {
+		return options{}, fmt.Errorf("unexpected positional arguments: %s", strings.Join(flags.Args(), " "))
+	}
+	if opts.enableExperiments && !opts.enableDiagnostics {
+		return options{}, fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	}
+	if opts.enableTestCatalog && !opts.enableDeployment {
+		return options{}, fmt.Errorf("--enable-test-catalog requires --enable-deployment")
+	}
+	if _, err := normalizeReasoningDisplay(opts.reasoningDisplay); err != nil {
+		return options{}, err
+	}
+	if !validExecutionMode(opts.executionMode) {
+		return options{}, fmt.Errorf("--execution-mode must be detect, diagnose, modify, install, or recover")
+	}
+	if strings.TrimSpace(opts.sshTargets) != "" && strings.TrimSpace(opts.sshConfig) == "" {
+		return options{}, fmt.Errorf("--diagnostic-ssh-targets requires --diagnostic-ssh-config")
+	}
+	if strings.TrimSpace(opts.diagnosticDelegateListen) != "" {
+		if strings.TrimSpace(opts.diagnosticDelegateTokenFile) == "" {
+			return options{}, fmt.Errorf("--diagnostic-subagent-listen-address requires --diagnostic-subagent-token-file")
+		}
+		if strings.EqualFold(strings.TrimSpace(opts.executionMode), "detect") {
+			return options{}, fmt.Errorf("diagnostic subagent delegation requires diagnose-or-higher execution mode")
+		}
+	}
+	if opts.diagnosticDelegateConcurrent < 1 || opts.diagnosticDelegateConcurrent > 64 {
+		return options{}, fmt.Errorf("--diagnostic-subagent-max-concurrency must be between 1 and 64")
+	}
+	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
+		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
+		CompactionThresholdPercent: opts.contextCompactionThreshold,
+		KeepRecentTurns:            opts.contextKeepRecentTurns, ToolResultMaxTokens: opts.toolResultMaxTokens,
+	}); err != nil {
+		return options{}, fmt.Errorf("invalid chat context configuration: %w", err)
+	}
+	return opts, nil
+}
+
+func serveAgent(opts options) error {
 
 	restConfig, err := kube.Config(opts.kubeconfig)
 	if err != nil {
@@ -240,12 +394,127 @@ func runServer() error {
 	if err != nil {
 		return fmt.Errorf("create Kubernetes client: %w", err)
 	}
+	clientset, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes clientset: %w", err)
+	}
+	metadataClient, err := metadata.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes metadata client: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return fmt.Errorf("create Kubernetes dynamic client: %w", err)
+	}
+	logReader := diagnostics.NewKubernetesLogReader(clientset)
+	platformReader, err := kubeops.New(kubeClient, clientset.Discovery(), metadataClient, dynamicClient, logReader, restConfig.Host)
+	if err != nil {
+		return fmt.Errorf("configure openFuyao and Kubernetes observation: %w", err)
+	}
 
 	domainObserver := observer.New(kubeClient)
-	serverOptions := make([]mcpserver.Option, 0, 3)
+	serverOptions := make([]mcpserver.Option, 0, 8)
+	namespaces := parseNamespaces(opts.scanNamespaces)
+	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
+	delegateEnabled := strings.TrimSpace(opts.diagnosticDelegateListen) != ""
+	delegateOptions := make([]mcpserver.Option, 0, 8)
+	if delegateEnabled {
+		if len(namespaces) == 0 {
+			return fmt.Errorf("diagnostic subagent delegation requires at least one scan namespace")
+		}
+		delegateOptions = append(delegateOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader), mcpserver.WithDiagnosticDelegate(namespaces))
+	}
+	evidenceRoots := parsePathList(opts.evidenceRoots)
+	defaultEvidenceRoot := filepath.Join(opts.stateDir, "imports")
+	if err := os.MkdirAll(defaultEvidenceRoot, 0o700); err != nil {
+		return fmt.Errorf("create default evidence root: %w", err)
+	}
+	if !containsString(evidenceRoots, defaultEvidenceRoot) {
+		evidenceRoots = append([]string{defaultEvidenceRoot}, evidenceRoots...)
+	}
+	reportDirectory := strings.TrimSpace(opts.reportDirectory)
+	if reportDirectory == "" {
+		reportDirectory = filepath.Join(opts.stateDir, "reports")
+	}
+	localWorkspace, err := localfiles.New(evidenceRoots, reportDirectory)
+	if err != nil {
+		return fmt.Errorf("configure local evidence workspace: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithLocalFiles(localWorkspace))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithLocalFiles(localWorkspace))
+	}
+	skillRegistry, err := infernexskills.NewRegistry(parsePathList(opts.skillDirectories))
+	if err != nil {
+		return fmt.Errorf("configure diagnostic Skills: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithSkills(skillRegistry))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithSkills(skillRegistry))
+	}
+	memoryStore, err := semanticmemory.NewFileStore(
+		filepath.Join(opts.stateDir, "semantic-memory"),
+		clusterIdentity(restConfig.Host),
+	)
+	if err != nil {
+		return fmt.Errorf("configure cross-session semantic memory: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithSemanticMemory(memoryStore))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	environment, err := platformReader.DetectEnvironment(ctx)
+	if err != nil {
+		return fmt.Errorf("detect openFuyao environment: %w", err)
+	}
+	serverOptions = append(serverOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
+	if delegateEnabled {
+		delegateOptions = append(delegateOptions, mcpserver.WithInferNexBridge(environment.Capabilities["infernexBridge"]))
+	}
+	if strings.ToLower(strings.TrimSpace(opts.executionMode)) != "detect" {
+		diagnosticOptions := []diagnosticexec.RunnerOption{}
+		if strings.TrimSpace(opts.rootCollectorSocket) != "" {
+			diagnosticOptions = append(diagnosticOptions, diagnosticexec.WithRootHelper(opts.rootCollectorSocket))
+		}
+		diagnosticRunner, err := diagnosticexec.New(clientset, restConfig, opts.sshConfig, parsePathList(opts.sshTargets), diagnosticOptions...)
+		if err != nil {
+			return fmt.Errorf("configure active diagnostic execution: %w", err)
+		}
+		serverOptions = append(serverOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithDiagnosticExec(diagnosticRunner))
+		}
+		plogSource, err := plogcapture.NewKubernetesSource(clientset, restConfig)
+		if err != nil {
+			return fmt.Errorf("configure CANN plog source: %w", err)
+		}
+		plogManager, err := plogcapture.NewManager(plogSource, filepath.Join(opts.stateDir, "plog-captures"), filepath.Join(defaultEvidenceRoot, "plog"))
+		if err != nil {
+			return fmt.Errorf("configure CANN plog capture: %w", err)
+		}
+		plogManager.StartBackground(ctx)
+		serverOptions = append(serverOptions, mcpserver.WithPlogCapture(plogManager))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithPlogCapture(plogManager))
+		}
+		collectorSource, err := collectorrun.NewKubernetesSource(clientset, diagnosticRunner)
+		if err != nil {
+			return fmt.Errorf("configure diagnostic collector source: %w", err)
+		}
+		collectorManager, err := collectorrun.NewManager(
+			collectorSource,
+			filepath.Join(opts.stateDir, "collector-runs"),
+			filepath.Join(defaultEvidenceRoot, "collectors"),
+		)
+		if err != nil {
+			return fmt.Errorf("configure diagnostic CollectorRuns: %w", err)
+		}
+		collectorManager.StartBackground(ctx)
+		serverOptions = append(serverOptions, mcpserver.WithCollectorRuns(collectorManager))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithCollectorRuns(collectorManager))
+		}
+	}
 
 	var changeStore changesafety.Store
 	if opts.enableDeployment || opts.enableAutoRecovery || opts.enableExperiments {
@@ -256,26 +525,36 @@ func runServer() error {
 		changeStore = fileStore
 	}
 	if opts.enableDeployment {
-		domainDeployer := deployer.New(
-			kubeClient,
+		sourceNamespaces := parseNamespaces(opts.deploymentSourceNamespaces)
+		if len(sourceNamespaces) == 0 {
+			sourceNamespaces = namespaces
+		}
+		deployerOptions := []deployer.Option{
 			deployer.WithStore(changeStore),
 			deployer.WithReadiness(opts.deploymentTimeout, 2*time.Second),
-		)
+		}
+		if !opts.enableTestCatalog {
+			deployerOptions = append(deployerOptions, deployer.WithDeploymentScope(
+				opts.deploymentNamespace,
+				opts.deploymentTemplateNS,
+				sourceNamespaces,
+			))
+		}
+		domainDeployer := deployer.New(kubeClient, deployerOptions...)
 		if err := domainDeployer.Start(ctx); err != nil {
 			return fmt.Errorf("resume deployment safety monitoring: %w", err)
 		}
 		serverOptions = append(serverOptions, mcpserver.WithDeployer(domainDeployer))
+		if opts.enableTestCatalog {
+			serverOptions = append(serverOptions, mcpserver.WithTestCatalog())
+		}
 	}
 
 	var domainDiagnoser diagnostics.Diagnoser
 	if opts.enableDiagnostics {
-		clientset, clientsetErr := kubernetes.NewForConfig(restConfig)
-		if clientsetErr != nil {
-			return fmt.Errorf("create Kubernetes log client: %w", clientsetErr)
-		}
 		collector, collectorErr := diagnostics.New(
 			kubeClient,
-			diagnostics.NewKubernetesLogReader(clientset),
+			logReader,
 			domainObserver,
 		)
 		if collectorErr != nil {
@@ -283,6 +562,9 @@ func runServer() error {
 		}
 		domainDiagnoser = collector
 		serverOptions = append(serverOptions, mcpserver.WithDiagnoser(collector))
+		if delegateEnabled {
+			delegateOptions = append(delegateOptions, mcpserver.WithDiagnoser(collector))
+		}
 	}
 
 	var domainExperiments experiment.Manager
@@ -315,6 +597,20 @@ func runServer() error {
 		serverOptions = append(serverOptions, mcpserver.WithExperiments(controller))
 	}
 	server := mcpserver.New(domainObserver, version, serverOptions...)
+	var diagnosticDelegateHandler http.Handler
+	if delegateEnabled {
+		token, tokenErr := delegation.ReadBearerToken(opts.diagnosticDelegateTokenFile)
+		if tokenErr != nil {
+			return tokenErr
+		}
+		delegateServer := mcpserver.New(domainObserver, version, delegateOptions...)
+		diagnosticDelegateHandler, tokenErr = delegation.Protect(
+			mcpserver.StreamableHTTPHandler(delegateServer), token, opts.diagnosticDelegateConcurrent,
+		)
+		if tokenErr != nil {
+			return fmt.Errorf("protect diagnostic subagent endpoint: %w", tokenErr)
+		}
+	}
 
 	domainAnalyzer, err := buildAnalyzer(opts)
 	if err != nil {
@@ -336,7 +632,6 @@ func runServer() error {
 		domainRemediator = profileRemediator
 	}
 	snapshotStore := supervisor.NewSnapshotStore(version, opts.scanInterval, domainAnalyzer != nil)
-	namespaces := parseNamespaces(opts.scanNamespaces)
 	if len(namespaces) > 0 {
 		scanner, scannerErr := supervisor.New(
 			domainObserver,
@@ -358,12 +653,26 @@ func runServer() error {
 			return fmt.Errorf("configure supervisor: %w", scannerErr)
 		}
 		go scanner.Run(ctx)
+	} else {
+		// A Bridge-less Helm installation intentionally has no InferNexService
+		// namespaces to scan. The HTTP service is nevertheless ready to serve MCP
+		// and the dashboard, so publish a valid empty snapshot instead of leaving
+		// dashboard readiness waiting forever for a scanner that was not started.
+		snapshotStore.Store(supervisor.Snapshot{
+			GeneratedAt: time.Now().UTC(),
+			Ready:       true,
+			Namespaces:  make([]supervisor.NamespaceSnapshot, 0),
+		})
+		slog.Info("running without InferNex Bridge namespace scanner")
 	}
 
 	switch opts.transport {
 	case "stdio":
 		if strings.TrimSpace(opts.dashboardListen) != "" {
 			return fmt.Errorf("dashboard HTTP listener requires streamable-http transport")
+		}
+		if diagnosticDelegateHandler != nil {
+			return fmt.Errorf("diagnostic subagent HTTP listener requires streamable-http transport")
 		}
 		return server.Run(ctx, &mcp.StdioTransport{})
 	case "streamable-http":
@@ -375,10 +684,15 @@ func runServer() error {
 			}
 			dashboardHandler = dashboard.New(snapshotStore, dashboardOptions...)
 		}
-		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler)
+		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler, opts.diagnosticDelegateListen, diagnosticDelegateHandler)
 	default:
 		return fmt.Errorf("unsupported transport %q", opts.transport)
 	}
+}
+
+func clusterIdentity(apiServer string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(apiServer)))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func buildAnalyzer(opts options) (supervisor.Analyzer, error) {
@@ -441,12 +755,46 @@ func parseNamespaces(value string) []string {
 	return strings.Split(value, ",")
 }
 
+func parsePathList(value string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+	}
+	return result
+}
+
+func validExecutionMode(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "detect", "diagnose", "modify", "install", "recover":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func serveHTTP(
 	ctx context.Context,
 	server *mcp.Server,
 	listenAddress string,
 	dashboardListenAddress string,
 	dashboardHandler http.Handler,
+	diagnosticDelegateListenAddress string,
+	diagnosticDelegateHandler http.Handler,
 ) error {
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", mcpserver.StreamableHTTPHandler(server))
@@ -461,6 +809,18 @@ func serveHTTP(
 		}
 		servers = append(servers, newHTTPServer(dashboardListenAddress, dashboardHandler))
 		names = append(names, "dashboard")
+	}
+	if diagnosticDelegateHandler != nil {
+		delegateAddress := strings.TrimSpace(diagnosticDelegateListenAddress)
+		if delegateAddress == strings.TrimSpace(listenAddress) || delegateAddress == strings.TrimSpace(dashboardListenAddress) {
+			return fmt.Errorf("diagnostic subagent, MCP, and dashboard listen addresses must differ")
+		}
+		delegateMux := http.NewServeMux()
+		delegateMux.Handle("/mcp", diagnosticDelegateHandler)
+		delegateMux.HandleFunc("/healthz", healthHandler)
+		delegateMux.HandleFunc("/readyz", healthHandler)
+		servers = append(servers, newHTTPServer(delegateAddress, delegateMux))
+		names = append(names, "diagnostic-subagent MCP")
 	}
 
 	errCh := make(chan error, len(servers))

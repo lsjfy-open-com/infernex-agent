@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
@@ -25,15 +26,15 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body.Model != "ops-model" || len(body.Tools) != 1 || body.Tools[0].Function.Name != "scan" {
+		if body.Model != "ops-model" || body.MaxTokens != 321 || len(body.Tools) != 1 || body.Tools[0].Function.Name != "scan" {
 			t.Errorf("unexpected request: %#v", body)
 		}
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}]}`))
+		_, _ = writer.Write([]byte(`{"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"scan","arguments":"{\"namespace\":\"models\"}"}}]}}],"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}}`))
 	}))
 	defer server.Close()
 
-	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model", APIKey: "secret"})
+	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model", APIKey: "secret", MaxOutputTokens: 321})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +47,12 @@ func TestOpenAICompleteSendsToolsAndParsesToolCall(t *testing.T) {
 	if len(response.ToolCalls) != 1 || response.ToolCalls[0].Name != "scan" {
 		t.Fatalf("response=%#v", response)
 	}
+	if response.Usage.PromptTokens != 42 || response.Usage.CompletionTokens != 7 || response.Usage.TotalTokens != 49 {
+		t.Fatalf("usage=%#v", response.Usage)
+	}
+	if response.FinishReason != "tool_calls" {
+		t.Fatalf("finish reason=%q", response.FinishReason)
+	}
 }
 
 func TestOpenAICompleteReturnsBoundedServerError(t *testing.T) {
@@ -54,11 +61,78 @@ func TestOpenAICompleteReturnsBoundedServerError(t *testing.T) {
 		_, _ = writer.Write([]byte(`{"error":{"message":"model unavailable","type":"upstream"}}`))
 	}))
 	defer server.Close()
-	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL + "/v1", Model: "ops-model"})
+	model, err := NewOpenAI(OpenAIConfig{
+		BaseURL: server.URL + "/v1", Model: "ops-model", MaxRetries: -1,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil); err == nil {
 		t.Fatal("expected endpoint error")
+	}
+}
+
+func TestOpenAICompleteRetriesTransientFailure(t *testing.T) {
+	attempts := 0
+	retries := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		attempts++
+		writer.Header().Set("Content-Type", "application/json")
+		if attempts < 3 {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = writer.Write([]byte(`{"error":{"message":"warming up"}}`))
+			return
+		}
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ready"}}]}`))
+	}))
+	defer server.Close()
+
+	model, err := NewOpenAI(OpenAIConfig{
+		BaseURL: server.URL, Model: "ops-model", MaxRetries: 3, RetryDelay: time.Millisecond,
+		Progress: func(event ProgressEvent) {
+			if event.Kind == "model-retry" {
+				retries++
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || retries != 2 || response.Content != "ready" {
+		t.Fatalf("attempts=%d retries=%d response=%#v", attempts, retries, response)
+	}
+}
+
+func TestOpenAICompleteOmitsToolChoiceWithoutTools(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := body["tools"]; exists {
+			t.Fatalf("tools must be omitted: %#v", body)
+		}
+		if _, exists := body["tool_choice"]; exists {
+			t.Fatalf("tool_choice must be omitted: %#v", body)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"OK"}}]}`))
+	}))
+	defer server.Close()
+
+	model, err := NewOpenAI(OpenAIConfig{BaseURL: server.URL, Model: "ops-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := model.Complete(context.Background(), []Message{{Role: "user", Content: "hello"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Content != "OK" {
+		t.Fatalf("response=%#v", response)
 	}
 }

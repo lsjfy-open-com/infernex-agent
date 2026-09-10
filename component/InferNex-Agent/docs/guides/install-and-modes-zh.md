@@ -1,0 +1,141 @@
+# InferNex Agent 安装模式与高级选项
+
+## 默认产品形态
+
+V1 只有一个默认形态：在能操作 InferNex 的 Linux 管理节点上运行静态 Agent 二进制，
+由 systemd 保持运行，使用当前 kubeconfig 调用现有 Kubernetes 和 InferNex 组件接口。
+
+```text
+用户 / SSH / Web
+       ↓
+管理节点上的 InferNex Agent
+       ↓ 当前 kubeconfig + typed tools
+Kubernetes API / InferNex Bridge / 已有组件接口
+```
+
+管理节点可以是 master、bootstrap、运维跳板机或普通集群节点；这不会产生不同安装包。
+默认安装不创建 Agent Pod、Controller、CRD、ServiceAccount 或 RBAC。
+
+## 普通安装
+
+在线：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+```
+
+离线：按 CPU 架构下载唯一的 `infernex-agent-<版本>-linux-<架构>.tar.gz`，校验、解压
+后运行 `sudo ./install.sh`。详情见[离线安装](offline-install-zh.md)。
+
+安装器发现顺序为：显式 `--admin-kubeconfig`、调用 sudo 的用户 kubeconfig、root
+kubeconfig、`/etc/kubernetes/admin.conf`、k3s kubeconfig。它会把当前上下文展开为只对
+root 可读的 systemd 运行配置。若 kubeconfig 依赖外部 `exec` 凭据插件，则使用自包含
+admin.conf，或选择下述 hardened identity。
+
+检测到 InferNex Bridge 时，安装器创建一个空的 `infernex-agent-workspace` Namespace，
+供后续被批准的新服务隔离使用；不会在安装阶段创建 Agent 或推理 Pod。未检测到
+Bridge 时自动进入 `generic-kubernetes` 模式，不创建该 Namespace，也不修改集群。
+
+一键安装默认选择 `diagnose` 权限上限：除了 Kubernetes API 和日志，还会发布固定的
+Pod exec、管理节点和可选 SSH 主动读取探针；它不开放任意 shell，也不允许修改业务配置。
+若环境要求绝对被动读取，可安装为：
+
+```bash
+sudo ./install.sh --execution-mode detect
+```
+
+当前 alpha 版本的 mode 是 systemd 持久启动参数；重新执行同一个安装包并传入新 mode 即可切换。
+带 scope/TTL 的 `mode set/show/reset` 仍在 v0.5 路线图中，不能把启动参数误称为完整 Policy Engine。
+
+`generic-kubernetes` 用于按 openFuyao 管理面/业务面文档部署、再通过 Linux 终端执行
+`helm install <实例名> <InferNex离线Chart> -n <命名空间> ...` 的集群。当前版本可通过
+只读工具识别当前 kubeconfig 指向的引导/管理/业务集群，扫描 Helm Release、原生
+Deployment/StatefulSet/DaemonSet、LWS、Pod、Service、Event 和受限日志。它不会因为
+缺少 Bridge CRD 而把业务集群误判为空，也不会自动安装 Bridge。
+
+一台宿主机可能同时存在引导 K3s 与业务 K8s。默认 kubeconfig 只代表一个 API Server；
+Agent 会报告当前视角，运维人员需要在安装时选择能够访问目标业务集群的 kubeconfig。
+引导 K3s 的明确路径通常是 `/etc/rancher/k3s/k3s.yaml`，不可据此推断业务集群内容。
+
+## Hardened identity（可选）
+
+```bash
+sudo ./install.sh --hardened-identity
+```
+
+该选项使用安装时的管理员 kubeconfig，一次性创建专用 ServiceAccount、namespace-scoped
+RBAC 和独立 kubeconfig。适用于不允许 systemd 长期保存管理员凭据的环境。新增业务
+namespace 后需要重新执行安装器以扩充 allowlist。
+
+这是一项安全部署策略，不是另一个产品模式，也不需要下载不同的包。
+
+## 其他安装参数
+
+```text
+--admin-kubeconfig FILE       指定发现用 kubeconfig
+--dashboard-listen-address A  Dashboard 地址，默认 127.0.0.1:8081
+--diagnostic-subagent-listen-address A 受限诊断 MCP，默认 127.0.0.1:18082
+--diagnostic-subagent-max-concurrency N 委派并发，默认 4
+--disable-diagnostic-subagent 关闭诊断 Subagent 接口
+--skip-model-setup            暂不配置模型接口
+--non-interactive             CI/自动化安装
+--execution-mode MODE         detect/diagnose/modify/install/recover；默认 diagnose
+--no-root-collector           不安装固定 Profile 的隔离 root helper
+--evidence-root DIR           允许读取一个宿主机历史证据目录，可重复
+--diagnostic-ssh-config FILE  运维人员维护的 OpenSSH config
+--diagnostic-ssh-target ALIAS 允许固定探针访问的 SSH alias，可重复
+```
+
+SSH 参数不接受 IP、用户名或密钥；这些只存在于 OpenSSH config 中并需由 `infernex-agent` 服务用户读取。
+未配置 SSH 时不影响本机和 Pod 探针。`modify/install/recover` 当前只是权限上限，尚未完成的写工具不会
+因为选择高模式而凭空出现。
+
+一键安装在 `diagnose` 及以上默认启动独立的 `infernex-agent-collector.service`。它以 root 运行但不
+连接模型，只接受固定 NPU/CANN/HCCN/HCCL-preflight profile；主 Agent 仍是非 root。可用
+`systemctl status infernex-agent-collector` 检查，或用 `--no-root-collector` 禁用。
+
+当发现至少一个业务 namespace 时，`diagnose` 及以上还会默认启用本机受限诊断 Subagent MCP：
+`127.0.0.1:18082/mcp`。独立 bearer token 位于
+`/etc/infernex-agent/diagnostic-subagent-token`，不与主 Agent 模型 API key 共用；完整对接方式见
+[故障诊断 Subagent 开发与联调指南](../development/diagnostic-subagent-development-guide-zh.md)。
+
+`create-kubeconfig.sh`、`install-host.sh` 等底层脚本仅用于审计、CI、恢复或精细定制，
+普通用户无需逐项填写其中参数。
+
+## 集群内 Helm（高级、非默认）
+
+仓库仍保留 Helm Chart 和带镜像归档的 Kubernetes 离线 Bundle，用于确实要求
+Kubernetes 管理 Agent 生命周期的环境。它会创建 Deployment、ServiceAccount 和 RBAC，
+安装复杂度和升级边界都不同，因此不作为普通 Release 资产，也不应让 V1 用户选择。
+
+只有满足以下明确条件时才考虑它：
+
+- 禁止在管理节点运行 systemd 服务；
+- 运维平台强制所有常驻组件使用 Helm/GitOps；
+- 已设计集群内模型接口、凭据、持久状态、Dashboard 暴露与 NetworkPolicy。
+
+高级 Bundle 可从 CI Artifact 构建或取得，入口为 `scripts/offline/build-bundle.sh` 和
+归档内 `bin/install-agent.sh`。它与默认 Linux Agent 使用同一个核心二进制和安全工具，
+但不是普通用户安装路径。
+
+## 更新、回退和卸载
+
+使用新版本包重新执行 `sudo ./install.sh` 即可升级；模型配置会保留。安装器会先在
+`/var/lib/infernex-agent/backups/install-*` 保存带校验和的恢复点，安装或健康检查失败
+时自动恢复。
+
+手工恢复：
+
+```bash
+sudo /opt/infernex-agent/bin/restore-host-install.sh \
+  --backup-dir /var/lib/infernex-agent/backups/install-<时间> --confirm
+```
+
+卸载脚本默认保留凭据、状态和恢复点；只有确认不再需要恢复时才使用 purge 参数。
+
+## 设计依据
+
+默认路径参考了 kubectl-ai、K8sGPT 和 HolmesGPT 的共同做法：本地 CLI 使用现有
+kubeconfig，通过工具集和 runbook 驱动 Agentic 探索；kagent 这类 Controller/CRD
+方案只作为更复杂的集群内形态参考。来源和取舍见
+[工具集与知识库设计](../reference/toolsets-and-knowledge-zh.md)。

@@ -1,6 +1,11 @@
 name: InferNex Agent offline bundle
 
 on:
+  push:
+    branches:
+      - agent/pi-agent-foundation
+    paths:
+      - ".github/infernex-agent-release"
   pull_request:
     paths:
       - ".github/workflows/infernex-agent-offline-release.yaml"
@@ -11,10 +16,15 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.3.0-rc.6"
+        default: "0.5.0-alpha.12"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
+        required: true
+        default: false
+        type: boolean
+      include_pi_tui:
+        description: Bundle the pinned Pi runtime and InferNex TUI extension
         required: true
         default: false
         type: boolean
@@ -32,7 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.3.0-rc.6' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
+      INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +66,9 @@ jobs:
         run: |
           bash -n scripts/*.sh scripts/offline/*.sh scripts/host/*.sh test/scripts/*.sh
           bash test/scripts/download-bundle.sh
+          bash test/scripts/bundle-path-safety.sh
+          bash test/scripts/cli-routing.sh
+          bash test/scripts/host-backup-schema.sh
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -64,6 +78,98 @@ jobs:
         with:
           version: v4.2.0
 
+      - name: Set up Node for Pi extension tests
+        if: ${{ env.INCLUDE_PI_TUI == 'true' && matrix.architecture == 'amd64' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: component/InferNex-Agent/pi/package-lock.json
+
+      - name: Test Pi extension
+        if: ${{ env.INCLUDE_PI_TUI == 'true' && matrix.architecture == 'amd64' }}
+        working-directory: component/InferNex-Agent/pi
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm test
+          sudo useradd --system --create-home --home-dir /var/lib/infernex-mode-test infernex-mode-test
+          sudo env INFERNEX_TEST_HOST_USER=infernex-mode-test "$(command -v node)" --experimental-strip-types --test host-tools.test.ts
+
+      - name: Download and verify pinned Pi runtime
+        if: ${{ env.INCLUDE_PI_TUI == 'true' }}
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          metadata="component/InferNex-Agent/pi/upstream.json"
+          pi_version="$(jq -r '.version' "${metadata}")"
+          pi_asset="$(jq -r --arg platform "linux-${ARCHITECTURE}" '.assets[$platform].name' "${metadata}")"
+          pi_sha256="$(jq -r --arg platform "linux-${ARCHITECTURE}" '.assets[$platform].sha256' "${metadata}")"
+          test -n "${pi_version}" && test "${pi_asset}" != "null" && test "${pi_sha256}" != "null"
+          mkdir -p "${RUNNER_TEMP}/pi-download" "${RUNNER_TEMP}/pi-runtime"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${RUNNER_TEMP}/pi-download/${pi_asset}" \
+            "https://github.com/earendil-works/pi/releases/download/v${pi_version}/${pi_asset}"
+          echo "${pi_sha256}  ${RUNNER_TEMP}/pi-download/${pi_asset}" | sha256sum --check -
+          tar -xzf "${RUNNER_TEMP}/pi-download/${pi_asset}" -C "${RUNNER_TEMP}/pi-runtime"
+          test -x "${RUNNER_TEMP}/pi-runtime/pi/pi"
+          test -f "${RUNNER_TEMP}/pi-runtime/pi/package.json"
+
+      - name: Smoke test official Pi runtime with InferNex extension
+        if: ${{ env.INCLUDE_PI_TUI == 'true' && matrix.architecture == 'amd64' }}
+        run: |
+          node component/InferNex-Agent/pi/smoke.mjs \
+            "${RUNNER_TEMP}/pi-runtime/pi/pi"
+
+      - name: Download and verify pinned TUI search tools
+        if: ${{ env.INCLUDE_PI_TUI == 'true' }}
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          metadata="component/InferNex-Agent/pi/tooling.json"
+          platform="linux-${ARCHITECTURE}"
+          tool_root="${RUNNER_TEMP}/tui-tools"
+          download_root="${RUNNER_TEMP}/tui-tool-download"
+          mkdir -p "${tool_root}/bin" "${tool_root}/licenses" \
+            "${download_root}/ripgrep" "${download_root}/fd"
+
+          rg_version="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].version' "${metadata}")"
+          rg_asset="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].asset' "${metadata}")"
+          rg_sha256="$(jq -r --arg platform "${platform}" '.ripgrep[$platform].sha256' "${metadata}")"
+          test "${rg_version}" != "null" && test "${rg_asset}" != "null" && test "${rg_sha256}" != "null"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${download_root}/ripgrep/${rg_asset}" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${rg_version}/${rg_asset}"
+          echo "${rg_sha256}  ${download_root}/ripgrep/${rg_asset}" | sha256sum --check -
+          tar -xzf "${download_root}/ripgrep/${rg_asset}" -C "${download_root}/ripgrep"
+          rg_dir="$(find "${download_root}/ripgrep" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          install -m 0755 "${rg_dir}/rg" "${tool_root}/bin/rg"
+          install -m 0644 "${rg_dir}/LICENSE-MIT" "${tool_root}/licenses/ripgrep-LICENSE-MIT"
+          install -m 0644 "${rg_dir}/UNLICENSE" "${tool_root}/licenses/ripgrep-UNLICENSE"
+          install -m 0644 "${rg_dir}/COPYING" "${tool_root}/licenses/ripgrep-COPYING"
+
+          fd_version="$(jq -r --arg platform "${platform}" '.fd[$platform].version' "${metadata}")"
+          fd_asset="$(jq -r --arg platform "${platform}" '.fd[$platform].asset' "${metadata}")"
+          fd_sha256="$(jq -r --arg platform "${platform}" '.fd[$platform].sha256' "${metadata}")"
+          test "${fd_version}" != "null" && test "${fd_asset}" != "null" && test "${fd_sha256}" != "null"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --output "${download_root}/fd/${fd_asset}" \
+            "https://github.com/sharkdp/fd/releases/download/v${fd_version}/${fd_asset}"
+          echo "${fd_sha256}  ${download_root}/fd/${fd_asset}" | sha256sum --check -
+          tar -xzf "${download_root}/fd/${fd_asset}" -C "${download_root}/fd"
+          fd_dir="$(find "${download_root}/fd" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          install -m 0755 "${fd_dir}/fd" "${tool_root}/bin/fd"
+          install -m 0644 "${fd_dir}/LICENSE-APACHE" "${tool_root}/licenses/fd-LICENSE-APACHE"
+          install -m 0644 "${fd_dir}/LICENSE-MIT" "${tool_root}/licenses/fd-LICENSE-MIT"
+
+          if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+            "${tool_root}/bin/rg" --version
+            "${tool_root}/bin/fd" --version
+          else
+            file "${tool_root}/bin/rg" "${tool_root}/bin/fd"
+          fi
+
       - name: Build architecture-specific image archive
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
@@ -72,6 +178,7 @@ jobs:
           docker buildx build \
             --platform "linux/${ARCHITECTURE}" \
             --build-arg "VERSION=${VERSION}" \
+            --build-arg "COMMIT=${GITHUB_SHA}" \
             --file component/InferNex-Agent/Dockerfile \
             --tag "docker.io/library/infernex-agent:${VERSION}" \
             --output "type=docker,dest=${RUNNER_TEMP}/infernex-agent-images-${ARCHITECTURE}.tar" \
@@ -93,7 +200,17 @@ jobs:
         env:
           ARCHITECTURE: ${{ matrix.architecture }}
           VERSION: ${{ env.BUNDLE_VERSION }}
+          INCLUDE_PI_TUI: ${{ env.INCLUDE_PI_TUI }}
         run: |
+          mkdir -p "${RUNNER_TEMP}/offline-dist"
+          raw_name="infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
+          install -m 0755 \
+            "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+            "${RUNNER_TEMP}/offline-dist/${raw_name}"
+          (
+            cd "${RUNNER_TEMP}/offline-dist"
+            sha256sum "${raw_name}" >"${raw_name}.sha256"
+          )
           component/InferNex-Agent/scripts/offline/build-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
@@ -106,55 +223,113 @@ jobs:
             -C "${RUNNER_TEMP}/verify"
           "${RUNNER_TEMP}/verify/infernex-agent-offline-${VERSION}-linux-${ARCHITECTURE}/bin/verify-agent.sh" \
             --checksums-only
+          pi_args=()
+          tool_args=()
+          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+            pi_args+=(--pi-runtime-dir "${RUNNER_TEMP}/pi-runtime/pi")
+            tool_args+=(--tool-runtime-dir "${RUNNER_TEMP}/tui-tools")
+          fi
           component/InferNex-Agent/scripts/offline/build-host-bundle.sh \
             --version "${VERSION}" \
             --architecture "${ARCHITECTURE}" \
             --binary "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" \
+            "${pi_args[@]}" \
+            "${tool_args[@]}" \
             --output-dir "${RUNNER_TEMP}/offline-dist"
+          if [[ "${INCLUDE_PI_TUI}" == "true" && "${ARCHITECTURE}" == "amd64" ]]; then
+            mkdir -p "${RUNNER_TEMP}/pi-model-check/state"
+            cat >"${RUNNER_TEMP}/pi-model-check/agent.conf" <<'EOF'
+          --openai-base-url=http://127.0.0.1:8000/v1
+          --openai-model=infernex-local-test
+          --context-window-tokens=32768
+          --max-output-tokens=8192
+          --reasoning-display=hidden
+          EOF
+            "${RUNNER_TEMP}/infernex-agent-linux-${ARCHITECTURE}" tui \
+              --config "${RUNNER_TEMP}/pi-model-check/agent.conf" \
+              --pi-binary "${RUNNER_TEMP}/pi-runtime/pi/pi" \
+              --extension component/InferNex-Agent/pi/infernex.ts \
+              --state-dir "${RUNNER_TEMP}/pi-model-check/state" \
+              --check
+          fi
           mkdir -p "${RUNNER_TEMP}/verify-host"
           tar -xzf \
-            "${RUNNER_TEMP}/offline-dist/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
+            "${RUNNER_TEMP}/offline-dist/infernex-agent-${VERSION}-linux-${ARCHITECTURE}.tar.gz" \
             -C "${RUNNER_TEMP}/verify-host"
           (
-            cd "${RUNNER_TEMP}/verify-host/infernex-agent-host-offline-${VERSION}-linux-${ARCHITECTURE}"
-            sha256sum --check SHA256SUMS
+            cd "${RUNNER_TEMP}/verify-host/infernex-agent-${VERSION}-linux-${ARCHITECTURE}"
+            source ./bin/bundle-lib.sh
+            bundle_verify_checksums "$PWD"
+            test -x ./install.sh
+              test -x ./bin/configure-evidence.sh
+              test -x ./bin/configure-skills.sh
+              test -f ./skills/cann-runtime-diagnosis/SKILL.md
+              test -f ./skills/hixl-communication-diagnosis/SKILL.md
+              test -f ./docs/guides/local-evidence-and-reports-zh.md
+              test -f ./docs/guides/skills-and-cann-hixl-zh.md
+            ./install.sh --help >/dev/null
+            if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+              test -x ./payload/pi-runtime/pi
+              test -x ./payload/tools/bin/rg
+              test -x ./payload/tools/bin/fd
+              test -f ./payload/tools/licenses/ripgrep-LICENSE-MIT
+              test -f ./payload/tools/licenses/fd-LICENSE-MIT
+              test -f ./pi/infernex.ts
+            test -f ./pi/host-tools.ts
+              test -f ./pi/LICENSE.pi.txt
+              if [[ "${ARCHITECTURE}" == "amd64" ]]; then
+                test "$(./payload/pi-runtime/pi --version)" = "0.84.1"
+                ./payload/tools/bin/rg --version
+                ./payload/tools/bin/fd --version
+              fi
+            fi
           )
 
       - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
-          name: infernex-agent-offline-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
+          name: infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}
           path: |
-            ${{ runner.temp }}/offline-dist/*.tar.gz
-            ${{ runner.temp }}/offline-dist/*.tar.gz.sha256
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.tar.gz
+            ${{ runner.temp }}/offline-dist/infernex-agent-${{ env.BUNDLE_VERSION }}-linux-${{ matrix.architecture }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 30
 
   prerelease:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_prerelease }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_prerelease) }}
     needs:
       - build
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
+      INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:
       - name: Download architecture bundles
         uses: actions/download-artifact@v4
         with:
-          pattern: infernex-agent-offline-${{ inputs.version }}-linux-*
+          pattern: infernex-agent-${{ env.BUNDLE_VERSION }}-linux-*
           path: release-assets
           merge-multiple: true
 
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ env.BUNDLE_VERSION }}
+          INCLUDE_PI_TUI: ${{ env.INCLUDE_PI_TUI }}
         run: |
+          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
+            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, cross-session semantic memory, an 8192-token default output limit, reasoning blocks hidden by default, context/token display, controlled InferNex MCP tools, and SHA-256 artifact paging for large logs. The launch directory (or --workspace) is the interactive filesystem workspace: read/grep/find/ls inherit the launching operator's Linux permissions, while write/edit/bash require local approval and cannot escape the workspace through relative paths or symlinks. Persistent unattended evidence roots remain a separate low-privilege service feature; stale unreadable roots no longer block upgrades. CANN plog capture discovers container mounts plus bounded Ascend/NPU roots, retains Pod metadata, current/previous logs, source maps and plog by Pod UID, and reports exec failures instead of silently returning an empty capture. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+          else
+            release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
+          fi
           gh release create "infernex-agent-v${VERSION}" \
-            release-assets/* \
+            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz \
+            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz.sha256 \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "Installable cluster and host/systemd bundles for existing InferNex clusters. Host bundles include the XShell/SSH natural-language terminal; read tools run automatically and write tools require local approval. Agent bundles do not contain vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify the architecture-specific outer SHA256 before extraction."
+            --notes "${release_notes}"

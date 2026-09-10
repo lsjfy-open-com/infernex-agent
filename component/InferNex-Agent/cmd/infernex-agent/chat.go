@@ -22,32 +22,49 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
+	"github.com/chzyer/readline"
+	"golang.org/x/term"
 )
 
 const maxAPIKeyBytes = 64 * 1024
 
 type chatOptions struct {
-	configPath    string
-	mcpURL        string
-	baseURL       string
-	model         string
-	apiKeyFile    string
-	timeout       time.Duration
-	ask           string
-	maxToolRounds int
-	verbose       bool
+	configPath          string
+	mcpURL              string
+	baseURL             string
+	model               string
+	apiKeyFile          string
+	timeout             time.Duration
+	ask                 string
+	maxToolRounds       int
+	contextWindowTokens int
+	maxOutputTokens     int
+	contextThreshold    int
+	keepRecentTurns     int
+	toolResultMaxTokens int
+	artifactDir         string
+	verbose             bool
 }
 
 type modelFileOptions struct {
-	baseURL    string
-	model      string
-	apiKeyFile string
-	timeout    time.Duration
+	baseURL             string
+	model               string
+	apiKeyFile          string
+	timeout             time.Duration
+	contextWindowTokens int
+	maxOutputTokens     int
+	contextThreshold    int
+	keepRecentTurns     int
+	toolResultMaxTokens int
+	reasoningDisplay    string
 }
 
 func runChat(args []string) error {
@@ -59,11 +76,14 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
+	progress := terminalProgress(os.Stderr, opts.verbose)
 	model, err := infernexchat.NewOpenAI(infernexchat.OpenAIConfig{
-		BaseURL: opts.baseURL,
-		Model:   opts.model,
-		APIKey:  apiKey,
-		Timeout: opts.timeout,
+		BaseURL:         opts.baseURL,
+		Model:           opts.model,
+		APIKey:          apiKey,
+		Timeout:         opts.timeout,
+		MaxOutputTokens: opts.maxOutputTokens,
+		Progress:        progress,
 	})
 	if err != nil {
 		return fmt.Errorf("configure interactive model: %w", err)
@@ -75,18 +95,33 @@ func runChat(args []string) error {
 	if err != nil {
 		return err
 	}
-	reader := bufio.NewReader(os.Stdin)
-	approver := interactiveApprover(reader, os.Stdout)
+	var input chatInput
+	approver := infernexchat.Approver(nil)
 	if opts.ask != "" {
 		// One-shot mode is suitable for scripts, so it never grants a write action.
-		approver = nil
+	} else {
+		input, err = newChatInput(os.Stdin, os.Stdout, os.Stderr)
+		if err != nil {
+			_ = tools.Close()
+			return fmt.Errorf("initialize interactive terminal: %w", err)
+		}
+		defer input.Close()
+		approver = interactiveApprover(input, os.Stdout)
 	}
 	conversation, err := infernexchat.NewConversation(ctx, infernexchat.Config{
 		Model:         model,
 		Tools:         tools,
 		Approver:      approver,
-		Progress:      terminalProgress(os.Stderr, opts.verbose),
+		Progress:      progress,
 		MaxToolRounds: opts.maxToolRounds,
+		Context: infernexchat.ContextConfig{
+			WindowTokens:               opts.contextWindowTokens,
+			MaxOutputTokens:            opts.maxOutputTokens,
+			CompactionThresholdPercent: opts.contextThreshold,
+			KeepRecentTurns:            opts.keepRecentTurns,
+			ToolResultMaxTokens:        opts.toolResultMaxTokens,
+		},
+		Artifacts: infernexchat.ArtifactConfig{Directory: opts.artifactDir},
 	})
 	if err != nil {
 		_ = tools.Close()
@@ -102,7 +137,7 @@ func runChat(args []string) error {
 		fmt.Fprintln(os.Stdout, answer)
 		return nil
 	}
-	return interactiveChat(ctx, reader, os.Stdout, conversation)
+	return interactiveChat(ctx, input, os.Stdout, conversation)
 }
 
 func parseChatOptions(args []string) (chatOptions, error) {
@@ -114,9 +149,15 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	flags.StringVar(&opts.baseURL, "base-url", "", "OpenAI-compatible base URL (overrides config)")
 	flags.StringVar(&opts.model, "model", "", "OpenAI-compatible model name (overrides config)")
 	flags.StringVar(&opts.apiKeyFile, "api-key-file", "", "API key file (overrides config)")
-	flags.DurationVar(&opts.timeout, "timeout", time.Minute, "model request timeout")
+	flags.DurationVar(&opts.timeout, "timeout", 3*time.Minute, "per-attempt model request timeout")
 	flags.StringVar(&opts.ask, "ask", "", "ask once and exit; write tools are denied")
 	flags.IntVar(&opts.maxToolRounds, "max-tool-rounds", 8, "maximum model/tool rounds per question")
+	flags.IntVar(&opts.contextWindowTokens, "context-window-tokens", infernexchat.DefaultContextWindowTokens, "model context window token budget")
+	flags.IntVar(&opts.maxOutputTokens, "max-output-tokens", 0, "output tokens reserved and requested per model call; default is derived from the context window")
+	flags.IntVar(&opts.contextThreshold, "context-compaction-threshold", infernexchat.DefaultCompactionThresholdPercent, "context usage percent that triggers compaction")
+	flags.IntVar(&opts.keepRecentTurns, "context-keep-recent-turns", infernexchat.DefaultKeepRecentTurns, "recent user turns retained verbatim during compaction")
+	flags.IntVar(&opts.toolResultMaxTokens, "tool-result-max-tokens", 0, "approximate token cap for one tool result; default is 15% of the window up to 4096")
+	flags.StringVar(&opts.artifactDir, "artifact-dir", defaultChatArtifactDir(), "directory for large tool-result artifacts; empty disables storage")
 	flags.BoolVar(&opts.verbose, "verbose", false, "print bounded tool results to stderr")
 	if err := flags.Parse(args); err != nil {
 		return chatOptions{}, err
@@ -146,12 +187,51 @@ func parseChatOptions(args []string) (chatOptions, error) {
 	if !explicit["timeout"] && fileOpts.timeout > 0 {
 		opts.timeout = fileOpts.timeout
 	}
+	if !explicit["context-window-tokens"] && fileOpts.contextWindowTokens > 0 {
+		opts.contextWindowTokens = fileOpts.contextWindowTokens
+	}
+	if !explicit["max-output-tokens"] && fileOpts.maxOutputTokens > 0 {
+		opts.maxOutputTokens = fileOpts.maxOutputTokens
+	}
+	if !explicit["context-compaction-threshold"] && fileOpts.contextThreshold > 0 {
+		opts.contextThreshold = fileOpts.contextThreshold
+	}
+	if !explicit["context-keep-recent-turns"] && fileOpts.keepRecentTurns > 0 {
+		opts.keepRecentTurns = fileOpts.keepRecentTurns
+	}
+	if !explicit["tool-result-max-tokens"] && fileOpts.toolResultMaxTokens > 0 {
+		opts.toolResultMaxTokens = fileOpts.toolResultMaxTokens
+	}
 	if strings.TrimSpace(opts.baseURL) == "" || strings.TrimSpace(opts.model) == "" {
 		return chatOptions{}, fmt.Errorf(
 			"interactive model is not configured; run sudo /opt/infernex-agent/bin/configure-model.sh --base-url <URL> --model <MODEL> --api-key-file <FILE> --test-tools",
 		)
 	}
+	resolved, err := infernexchat.ResolveContextConfig(infernexchat.ContextConfig{
+		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
+		CompactionThresholdPercent: opts.contextThreshold, KeepRecentTurns: opts.keepRecentTurns,
+		ToolResultMaxTokens: opts.toolResultMaxTokens,
+	})
+	if err != nil {
+		return chatOptions{}, fmt.Errorf("invalid chat context configuration: %w", err)
+	}
+	opts.contextWindowTokens = resolved.WindowTokens
+	opts.maxOutputTokens = resolved.MaxOutputTokens
+	opts.contextThreshold = resolved.CompactionThresholdPercent
+	opts.keepRecentTurns = resolved.KeepRecentTurns
+	opts.toolResultMaxTokens = resolved.ToolResultMaxTokens
 	return opts, nil
+}
+
+func defaultChatArtifactDir() string {
+	if runtime.GOOS != "windows" {
+		return "/var/lib/infernex-agent/chat-artifacts"
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "infernex-agent", "chat-artifacts")
+	}
+	return filepath.Join(cache, "infernex-agent", "chat-artifacts")
 }
 
 func readModelFileOptions(path string) (modelFileOptions, error) {
@@ -181,12 +261,36 @@ func readModelFileOptions(path string) (modelFileOptions, error) {
 			if err != nil {
 				return modelFileOptions{}, fmt.Errorf("parse --openai-timeout in %s: %w", path, err)
 			}
+		case strings.HasPrefix(line, "--context-window-tokens="):
+			result.contextWindowTokens, err = parsePositiveConfigInt(line, "--context-window-tokens=")
+		case strings.HasPrefix(line, "--max-output-tokens="):
+			result.maxOutputTokens, err = parsePositiveConfigInt(line, "--max-output-tokens=")
+		case strings.HasPrefix(line, "--context-compaction-threshold="):
+			result.contextThreshold, err = parsePositiveConfigInt(line, "--context-compaction-threshold=")
+		case strings.HasPrefix(line, "--context-keep-recent-turns="):
+			result.keepRecentTurns, err = parsePositiveConfigInt(line, "--context-keep-recent-turns=")
+		case strings.HasPrefix(line, "--tool-result-max-tokens="):
+			result.toolResultMaxTokens, err = parsePositiveConfigInt(line, "--tool-result-max-tokens=")
+		case strings.HasPrefix(line, "--reasoning-display="):
+			result.reasoningDisplay = strings.TrimPrefix(line, "--reasoning-display=")
+		}
+		if err != nil {
+			return modelFileOptions{}, err
 		}
 	}
 	if err := scanner.Err(); err != nil {
 		return modelFileOptions{}, fmt.Errorf("read Agent configuration %s: %w", path, err)
 	}
 	return result, nil
+}
+
+func parsePositiveConfigInt(line, prefix string) (int, error) {
+	value := strings.TrimPrefix(line, prefix)
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("parse %s in Agent configuration: expected a positive integer", strings.TrimSuffix(prefix, "="))
+	}
+	return parsed, nil
 }
 
 func readAPIKey(path string) (string, error) {
@@ -209,16 +313,90 @@ func readAPIKey(path string) (string, error) {
 	return strings.TrimSpace(string(payload)), nil
 }
 
+var errInputInterrupted = errors.New("interactive input interrupted")
+
+type chatInput interface {
+	ReadLine(string, bool) (string, error)
+	Close() error
+}
+
+type readlineChatInput struct {
+	instance *readline.Instance
+}
+
+func (r *readlineChatInput) ReadLine(prompt string, addHistory bool) (string, error) {
+	r.instance.SetPrompt(prompt)
+	line, err := r.instance.Readline()
+	if errors.Is(err, readline.ErrInterrupt) {
+		return "", errInputInterrupted
+	}
+	if err == nil && addHistory && strings.TrimSpace(line) != "" {
+		_ = r.instance.SaveHistory(line)
+	}
+	return line, err
+}
+
+func (r *readlineChatInput) Close() error {
+	return r.instance.Close()
+}
+
+type bufferedChatInput struct {
+	reader *bufio.Reader
+	output io.Writer
+}
+
+func (b *bufferedChatInput) ReadLine(prompt string, _ bool) (string, error) {
+	fmt.Fprint(b.output, prompt)
+	line, err := b.reader.ReadString('\n')
+	return strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"), err
+}
+
+func (b *bufferedChatInput) Close() error { return nil }
+
+func newChatInput(stdin *os.File, stdout, stderr io.Writer) (chatInput, error) {
+	if !term.IsTerminal(int(stdin.Fd())) {
+		return &bufferedChatInput{reader: bufio.NewReader(stdin), output: stdout}, nil
+	}
+	instance, err := readline.NewEx(&readline.Config{
+		Prompt:                 "infernex> ",
+		Stdin:                  stdin,
+		Stdout:                 stdout,
+		Stderr:                 stderr,
+		HistoryFile:            "",
+		HistoryLimit:           100,
+		HistorySearchFold:      true,
+		DisableAutoSaveHistory: true,
+		InterruptPrompt:        "^C",
+		EOFPrompt:              "exit",
+		AutoComplete: readline.NewPrefixCompleter(
+			readline.PcItem("/help"),
+			readline.PcItem("/context"),
+			readline.PcItem("/usage"),
+			readline.PcItem("/compact"),
+			readline.PcItem("/undo"),
+			readline.PcItem("/clear"),
+			readline.PcItem("/exit"),
+		),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &readlineChatInput{instance: instance}, nil
+}
+
 func interactiveChat(
 	ctx context.Context,
-	reader *bufio.Reader,
+	input chatInput,
 	output io.Writer,
 	conversation *infernexchat.Conversation,
 ) error {
-	fmt.Fprintln(output, "InferNex Agent interactive terminal. Enter /help for commands.")
+	fmt.Fprintln(output, "InferNex Agent interactive terminal. Enter /help for commands. Arrow keys edit/history; Ctrl+U clears the current line.")
 	for {
-		fmt.Fprint(output, "infernex> ")
-		line, err := reader.ReadString('\n')
+		line, err := input.ReadLine("infernex> ", true)
+		if errors.Is(err, errInputInterrupted) {
+			fmt.Fprintln(output, "Input cleared. Use /exit or Ctrl+D to quit.")
+			continue
+		}
 		if err != nil && !errors.Is(err, io.EOF) {
 			return fmt.Errorf("read terminal input: %w", err)
 		}
@@ -230,8 +408,33 @@ func interactiveChat(
 		case "/clear":
 			conversation.Reset()
 			fmt.Fprintln(output, "Conversation cleared.")
+		case "/compact":
+			if compactErr := conversation.Compact(ctx); compactErr != nil {
+				fmt.Fprintf(output, "error: %v\n", compactErr)
+			} else {
+				fmt.Fprintln(output, "Conversation context compacted.")
+			}
+		case "/undo":
+			if conversation.UndoLastTurn() {
+				fmt.Fprintln(output, "Last user turn removed from the model context. Press Up to recall, edit, and resend it.")
+			} else {
+				fmt.Fprintln(output, "There is no removable user turn in the current context.")
+			}
+		case "/context":
+			stats := conversation.ContextStats()
+			fmt.Fprintf(output, "Context: estimated=%d + output-reserve=%d / window=%d tokens; threshold=%d; messages=%d; compactions=%d; pruned-tool-results=%d; model-calls=%d; provider-reported prompt=%d output=%d total=%d\n",
+				stats.EstimatedInputTokens, stats.MaxOutputTokens, stats.WindowTokens, stats.ThresholdTokens,
+				stats.MessageCount, stats.Compactions, stats.PrunedToolResults, stats.ModelCalls,
+				stats.ReportedPromptTokens, stats.ReportedOutputTokens, stats.ReportedTotalTokens)
+		case "/usage":
+			stats := conversation.ContextStats()
+			fmt.Fprintf(output, "Usage: model-calls=%d; provider-usage-responses=%d; prompt=%d; output=%d; total=%d tokens; current-context-estimate=%d/%d (%d%%). Provider totals are zero when the endpoint omits usage.\n",
+				stats.ModelCalls, stats.ReportedUsageCalls, stats.ReportedPromptTokens,
+				stats.ReportedOutputTokens, stats.ReportedTotalTokens,
+				stats.EstimatedTotalTokens, stats.WindowTokens,
+				stats.EstimatedTotalTokens*100/max(1, stats.WindowTokens))
 		case "/help":
-			fmt.Fprintln(output, "Commands: /help, /clear, /exit. Read-only tools run automatically; every write asks for exact 'yes'.")
+			fmt.Fprintln(output, "Commands: /help, /context, /usage, /compact, /undo, /clear, /exit. Editing: Left/Right, Home/End, Backspace/Delete, Up/Down history, Ctrl+W delete word, Ctrl+U clear line, Ctrl+C cancel input, Ctrl+D exit. /undo removes model context only; it does not roll back approved cluster changes. Read-only tools run automatically; every write asks for exact 'yes'.")
 		default:
 			answer, askErr := conversation.Ask(ctx, input)
 			if askErr != nil {
@@ -249,7 +452,7 @@ func interactiveChat(
 	}
 }
 
-func interactiveApprover(reader *bufio.Reader, output io.Writer) infernexchat.Approver {
+func interactiveApprover(input chatInput, output io.Writer) infernexchat.Approver {
 	return func(_ context.Context, request infernexchat.ApprovalRequest) (bool, error) {
 		arguments, err := json.MarshalIndent(request.Arguments, "", "  ")
 		if err != nil {
@@ -257,12 +460,15 @@ func interactiveApprover(reader *bufio.Reader, output io.Writer) infernexchat.Ap
 		}
 		fmt.Fprintf(
 			output,
-			"\nWRITE approval required\ntool: %s\narguments: %s\nType yes to continue: ",
+			"\nWRITE approval required\ntool: %s\narguments: %s\n",
 			boundedTerminalText(request.Tool, 256),
 			boundedTerminalText(string(arguments), 4096),
 		)
-		answer, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
+		answer, err := input.ReadLine("Type yes to continue: ", false)
+		if errors.Is(err, errInputInterrupted) || errors.Is(err, io.EOF) {
+			return false, nil
+		}
+		if err != nil {
 			return false, err
 		}
 		return strings.TrimSpace(answer) == "yes", nil
@@ -289,6 +495,22 @@ func terminalProgress(output io.Writer, verbose bool) infernexchat.Progress {
 					boundedTerminalText(event.Message, 4096),
 				)
 			}
+		case "context-compaction":
+			fmt.Fprintf(output, "[context] %s\n", boundedTerminalText(event.Message, 512))
+		case "model-call":
+			fmt.Fprintf(output, "[model] %s\n", boundedTerminalText(event.Message, 256))
+		case "model-usage":
+			fmt.Fprintf(output, "[tokens] %s\n", boundedTerminalText(event.Message, 512))
+		case "model-retry", "model-empty":
+			fmt.Fprintf(output, "[model retry] %s\n", boundedTerminalText(event.Message, 512))
+		case "answer-continuation":
+			fmt.Fprintf(output, "[model] %s\n", boundedTerminalText(event.Message, 512))
+		case "tool-loop":
+			fmt.Fprintf(output, "[loop blocked] %s\n", boundedTerminalText(event.Tool, 256))
+		case "tool-budget":
+			fmt.Fprintf(output, "[checkpoint] %s; requesting a partial conclusion\n", boundedTerminalText(event.Message, 512))
+		case "artifact-stored":
+			fmt.Fprintf(output, "[artifact] %s\n", boundedTerminalText(event.Message, 1024))
 		}
 	}
 }

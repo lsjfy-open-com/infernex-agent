@@ -1,6 +1,6 @@
 apiVersion: v2
 name: infernex-agent
-description: Guardrailed InferNex domain tools for MCP-compatible agent runtimes
+description: Guardrailed openFuyao Kubernetes, Helm, and InferNex tools for agent runtimes
 type: application
 version: 0.3.0
 appVersion: 0.3.0

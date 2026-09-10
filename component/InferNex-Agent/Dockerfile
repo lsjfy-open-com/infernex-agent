@@ -14,6 +14,7 @@ FROM --platform=$BUILDPLATFORM golang:1.25 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=0.3.0-dev
+ARG COMMIT=unknown
 
 WORKDIR /workspace
 COPY InferNex-Bridge/go.mod InferNex-Bridge/go.sum ./InferNex-Bridge/
@@ -26,12 +27,13 @@ RUN go mod download
 COPY InferNex-Agent ./
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath \
-    -ldflags="-s -w -X main.version=${VERSION}" \
+    -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /out/infernex-agent ./cmd/infernex-agent
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /
 COPY --from=builder /out/infernex-agent /infernex-agent
+COPY --from=builder /workspace/InferNex-Agent/skills /opt/infernex-agent/skills
 USER 65532:65532
 EXPOSE 8080 8081
 ENTRYPOINT ["/infernex-agent"]

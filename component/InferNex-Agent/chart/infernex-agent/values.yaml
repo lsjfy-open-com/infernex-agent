@@ -52,7 +52,7 @@ supervisor:
       # The API key is read only from an existing Secret.
       baseURL: ""
       model: ""
-      timeout: 60s
+      timeout: 3m
       existingSecret: ""
       secretKey: api-key
   remediation:
@@ -80,11 +80,20 @@ rbac:
   targetNamespaces: []
 
 tools:
+  activeDiagnostics:
+    # Enables fixed active-read probes, including bounded pods/exec. This does
+    # not expose arbitrary shell or grant workload mutation permissions.
+    enabled: false
+    mode: diagnose
   deployment:
     # Catalog deployment is deliberately opt-in. When enabled, the Agent can
     # only create/delete InferNexService resources in targetNamespaces; it
     # still cannot submit arbitrary Kubernetes objects.
     enabled: false
+    # CI-only compatibility fixture. Never enable in production.
+    testCatalog: false
+    workspaceNamespace: infernex-agent-workspace
+    templateNamespace: infernex-bridge-system
 
 changeSafety:
   # Newly created catalog services that do not become Ready in this window

@@ -19,6 +19,8 @@ Options:
   --version VERSION       Agent version (default: Chart.yaml version)
   --architecture ARCH    amd64 or arm64 (default: current host)
   --binary FILE          Reuse an already-built static Linux binary
+  --pi-runtime-dir DIR   Include an extracted, pinned Pi Linux release and TUI
+  --tool-runtime-dir DIR Include pinned rg/fd binaries and their licenses
   --output-dir DIR       Destination directory (default: ./dist)
   --force                Replace an existing bundle with the same name
   -h, --help             Show this help
@@ -35,6 +37,8 @@ version="$(
 )"
 architecture="$(bundle_host_architecture)"
 binary_source=""
+pi_runtime_source="${PI_RUNTIME_DIR:-}"
+tool_runtime_source="${TOOL_RUNTIME_DIR:-}"
 output_dir="${PWD}/dist"
 force="false"
 go_bin="${GO_BIN:-go}"
@@ -54,6 +58,16 @@ while (($#)); do
     --binary)
       [[ $# -ge 2 ]] || bundle_die "--binary requires a value"
       binary_source="$2"
+      shift 2
+      ;;
+    --pi-runtime-dir)
+      [[ $# -ge 2 ]] || bundle_die "--pi-runtime-dir requires a value"
+      pi_runtime_source="$2"
+      shift 2
+      ;;
+    --tool-runtime-dir)
+      [[ $# -ge 2 ]] || bundle_die "--tool-runtime-dir requires a value"
+      tool_runtime_source="$2"
       shift 2
       ;;
     --output-dir)
@@ -85,6 +99,17 @@ if [[ -n "$binary_source" ]]; then
   [[ -f "$binary_source" ]] ||
     bundle_die "binary does not exist: ${binary_source}"
 fi
+if [[ -n "$pi_runtime_source" ]]; then
+  [[ -d "$pi_runtime_source" && -f "${pi_runtime_source}/pi" ]] ||
+    bundle_die "Pi runtime directory must contain the pi executable: ${pi_runtime_source}"
+fi
+if [[ -n "$tool_runtime_source" ]]; then
+  [[ -d "$tool_runtime_source" &&
+    -x "${tool_runtime_source}/bin/rg" &&
+    -x "${tool_runtime_source}/bin/fd" &&
+    -d "${tool_runtime_source}/licenses" ]] ||
+    bundle_die "tool runtime must contain executable bin/rg, bin/fd and licenses/: ${tool_runtime_source}"
+fi
 
 bundle_require_command sha256sum
 bundle_require_command tar
@@ -94,7 +119,7 @@ fi
 
 mkdir -p -- "$output_dir"
 output_dir="$(cd -- "$output_dir" && pwd)"
-bundle_name="infernex-agent-host-offline-${version}-linux-${architecture}"
+bundle_name="infernex-agent-${version}-linux-${architecture}"
 archive_name="${bundle_name}.tar.gz"
 archive_output="${output_dir}/${archive_name}"
 archive_checksum="${archive_output}.sha256"
@@ -113,7 +138,7 @@ cleanup() {
 trap cleanup EXIT
 
 bundle_root="${work_dir}/${bundle_name}"
-mkdir -p "${bundle_root}/bin" "${bundle_root}/docs" "${bundle_root}/payload"
+mkdir -p "${bundle_root}/bin" "${bundle_root}/docs" "${bundle_root}/payload" "${bundle_root}/skills"
 binary_target="${bundle_root}/payload/infernex-agent"
 
 if [[ -n "$binary_source" ]]; then
@@ -135,34 +160,49 @@ fi
 install -m 0755 \
   "${script_dir}/bundle-lib.sh" \
   "${agent_dir}/scripts/host/configure-model.sh" \
+  "${agent_dir}/scripts/host/configure-evidence.sh" \
+  "${agent_dir}/scripts/host/configure-skills.sh" \
   "${agent_dir}/scripts/host/chat.sh" \
+  "${agent_dir}/scripts/host/tui.sh" \
   "${agent_dir}/scripts/host/create-kubeconfig.sh" \
   "${agent_dir}/scripts/host/install-host.sh" \
   "${agent_dir}/scripts/host/restore-host-install.sh" \
   "${agent_dir}/scripts/host/uninstall-host.sh" \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
-install -m 0644 \
-  "${agent_dir}/docs/host-install-openeuler-zh.md" \
-  "${bundle_root}/README.md"
-install -m 0644 \
-  "${agent_dir}/docs/product-guide-zh.md" \
-  "${agent_dir}/docs/product-design-zh.md" \
-  "${agent_dir}/docs/install-and-modes-zh.md" \
-  "${agent_dir}/docs/model-configuration-zh.md" \
-  "${agent_dir}/docs/security-boundaries-zh.md" \
-  "${agent_dir}/docs/operations-runbook-zh.md" \
-  "${agent_dir}/docs/change-safety-zh.md" \
-  "${agent_dir}/docs/progressive-experiments-zh.md" \
-  "${bundle_root}/docs/"
+cp -a -- "${agent_dir}/skills/." "${bundle_root}/skills/"
+if [[ -n "$pi_runtime_source" ]]; then
+  bundle_info "including pinned Pi TUI runtime"
+  install -d -m 0755 "${bundle_root}/payload/pi-runtime"
+  cp -a -- "${pi_runtime_source}/." "${bundle_root}/payload/pi-runtime/"
+  chmod 0755 "${bundle_root}/payload/pi-runtime/pi"
+  install -d -m 0755 "${bundle_root}/pi"
+  install -m 0644 "${agent_dir}/pi/infernex.ts" "${agent_dir}/pi/host-tools.ts" "${bundle_root}/pi/"
+  install -m 0644 "${agent_dir}/pi/LICENSE.pi.txt" "${bundle_root}/pi/LICENSE.pi.txt"
+fi
+if [[ -n "$tool_runtime_source" ]]; then
+  bundle_info "including pinned offline TUI search tools"
+  install -d -m 0755 "${bundle_root}/payload/tools"
+  cp -a -- "${tool_runtime_source}/." "${bundle_root}/payload/tools/"
+  chmod 0755 "${bundle_root}/payload/tools/bin/rg" "${bundle_root}/payload/tools/bin/fd"
+  while IFS= read -r license_file; do chmod 0644 "$license_file"; done < <(
+    find "${bundle_root}/payload/tools/licenses" -type f -print
+  )
+fi
+install -m 0755 \
+  "${agent_dir}/scripts/host/quick-install.sh" \
+  "${bundle_root}/install.sh"
+bundle_copy_documentation "${agent_dir}" "${bundle_root}"
 install -m 0644 "${repo_root}/LICENSE" "${bundle_root}/LICENSE"
 
 created_utc="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 cat >"${bundle_root}/bundle.properties" <<EOF
-format=infernex-agent-host-offline-v1
+format=infernex-agent-linux-v1
 agent_version=${version}
 architecture=${architecture}
 binary=payload/infernex-agent
+pi_runtime=$([[ -n "$pi_runtime_source" ]] && printf 'payload/pi-runtime' || printf 'none')
+tool_runtime=$([[ -n "$tool_runtime_source" ]] && printf 'payload/tools' || printf 'none')
 created_utc=${created_utc}
 EOF
 
@@ -182,5 +222,5 @@ mv -f -- "$temporary_archive" "$archive_output"
   sha256sum "$archive_name"
 ) >"$archive_checksum"
 
-bundle_info "host bundle created: ${archive_output}"
+bundle_info "Agent package created: ${archive_output}"
 bundle_info "outer checksum: ${archive_checksum}"

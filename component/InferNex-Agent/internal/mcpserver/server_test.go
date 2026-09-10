@@ -18,16 +18,24 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/kubeops"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/localfiles"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
 )
 
 type stubObserver struct{}
@@ -37,6 +45,68 @@ type stubDeployer struct{}
 type stubDiagnoser struct{}
 
 type stubExperiments struct{}
+
+type stubCollectorSource struct{}
+
+func (stubCollectorSource) ListTargets(context.Context, string, string, string, string) ([]collectorrun.Target, error) {
+	return nil, nil
+}
+
+func (stubCollectorSource) Collect(context.Context, collectorrun.Target, string, int) (diagnosticexec.Result, error) {
+	return diagnosticexec.Result{}, nil
+}
+
+type stubKubernetes struct{}
+
+func (stubKubernetes) InspectServiceBackends(_ context.Context, req kubeops.ServiceBackendRequest) (kubeops.ServiceBackendReport, error) {
+	return kubeops.ServiceBackendReport{Namespace: req.Namespace, Name: req.Name, TrafficVerified: false}, nil
+}
+
+func (stubKubernetes) DetectEnvironment(context.Context) (kubeops.Environment, error) {
+	return kubeops.Environment{
+		Platform: "openfuyao", ClusterRoles: []string{"inference-business-cluster"},
+		Namespaces: []string{}, Capabilities: map[string]bool{}, Evidence: []string{},
+		Recommendations: []string{}, Warnings: []string{},
+	}, nil
+}
+
+func (stubKubernetes) ClusterOverview(context.Context) (kubeops.ClusterOverview, error) {
+	return kubeops.ClusterOverview{KubernetesVersion: "v1.33.1"}, nil
+}
+
+func (stubKubernetes) ListWorkloads(_ context.Context, request kubeops.WorkloadRequest) (kubeops.WorkloadInventory, error) {
+	return kubeops.WorkloadInventory{Namespace: request.Namespace, Workloads: []kubeops.WorkloadSummary{}, Pods: []kubeops.PodSummary{}, Services: []kubeops.ServiceSummary{}}, nil
+}
+
+func (stubKubernetes) GetEvents(_ context.Context, request kubeops.EventRequest) (kubeops.EventList, error) {
+	return kubeops.EventList{Namespace: request.Namespace, SinceMinutes: 60, Events: []kubeops.EventSummary{}}, nil
+}
+
+func (stubKubernetes) GetPodLogs(_ context.Context, request kubeops.PodLogRequest) (kubeops.PodLogResult, error) {
+	return kubeops.PodLogResult{Namespace: request.Namespace, Pod: request.Pod, Streams: []kubeops.LogStream{}}, nil
+}
+
+func (stubKubernetes) ListHelmReleases(_ context.Context, request kubeops.HelmReleaseRequest) (kubeops.HelmReleaseList, error) {
+	return kubeops.HelmReleaseList{Namespace: request.Namespace, Releases: []kubeops.HelmReleaseSummary{}}, nil
+}
+
+func (stubKubernetes) DiscoverResources(_ context.Context, request kubeops.ResourceDiscoveryRequest) (kubeops.ResourceDiscovery, error) {
+	return kubeops.ResourceDiscovery{GroupVersions: []kubeops.APIGroupResources{{GroupVersion: request.GroupVersion}}}, nil
+}
+
+func (stubKubernetes) ReadResources(_ context.Context, request kubeops.ResourceReadRequest) (kubeops.ResourceReadResult, error) {
+	return kubeops.ResourceReadResult{GroupVersion: request.GroupVersion, Resource: request.Resource, Objects: []map[string]any{}}, nil
+}
+
+func (stubDeployer) ListSources(context.Context) (deployer.SourceList, error) {
+	return deployer.SourceList{
+		TargetNamespace: "infernex-agent-workspace",
+		Sources: []deployer.Source{{
+			SourceID: "service:models:stable", Kind: "stable-service",
+			Namespace: "models", Name: "stable", TargetNamespace: "infernex-agent-workspace",
+		}},
+	}, nil
+}
 
 func (stubDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (diagnostics.Report, error) {
 	return diagnostics.Report{
@@ -67,7 +137,7 @@ func (stubDeployer) Deploy(_ context.Context, request deployer.Request) (deploye
 	return deployer.Result{
 		Namespace:    request.Namespace,
 		Name:         request.Name,
-		CatalogID:    request.CatalogID,
+		SourceID:     request.SourceID,
 		Operation:    "created",
 		ResourceKind: "InferNexService",
 	}, nil
@@ -77,7 +147,7 @@ func (stubDeployer) Delete(_ context.Context, request deployer.Request) (deploye
 	return deployer.Result{
 		Namespace:    request.Namespace,
 		Name:         request.Name,
-		CatalogID:    request.CatalogID,
+		SourceID:     request.SourceID,
 		Operation:    "deleted",
 		ResourceKind: "InferNexService",
 	}, nil
@@ -171,8 +241,8 @@ func TestServerPublishesOnlyReadOnlyDomainTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 4 {
-		t.Fatalf("tool count = %d, want 4", len(list.Tools))
+	if len(list.Tools) != 5 {
+		t.Fatalf("tool count = %d, want 5", len(list.Tools))
 	}
 	for _, tool := range list.Tools {
 		if tool.Annotations == nil ||
@@ -237,6 +307,74 @@ func TestServerPublishesOnlyReadOnlyDomainTools(t *testing.T) {
 	}
 }
 
+func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
+	ctx := context.Background()
+	server := New(stubObserver{}, "test", WithKubernetes(stubKubernetes{}), WithInferNexBridge(false))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(list.Tools) != 10 {
+		t.Fatalf("tool count = %d, want 10", len(list.Tools))
+	}
+	want := map[string]bool{
+		"openfuyao_detect_environment": false,
+		"k8s_detect_environment":       false,
+		"k8s_inspect_service_backends": false,
+		"k8s_cluster_overview":         false,
+		"k8s_list_workloads":           false,
+		"k8s_discover_api_resources":   false,
+		"k8s_read_resources":           false,
+		"k8s_get_events":               false,
+		"k8s_get_pod_logs":             false,
+		"helm_list_releases":           false,
+	}
+	for _, tool := range list.Tools {
+		if _, ok := want[tool.Name]; !ok {
+			t.Fatalf("unexpected tool in Bridge-less mode: %q", tool.Name)
+		}
+		want[tool.Name] = true
+		if tool.Annotations == nil || !tool.Annotations.ReadOnlyHint || !tool.Annotations.IdempotentHint {
+			t.Fatalf("general tool %q is not safely annotated: %#v", tool.Name, tool.Annotations)
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Fatalf("general tool %q missing", name)
+		}
+	}
+
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "openfuyao_detect_environment", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("detect environment call failed: err=%v result=%#v", err, result)
+	}
+	payload, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatalf("marshal environment: %v", err)
+	}
+	var environment kubeops.Environment
+	if err := json.Unmarshal(payload, &environment); err != nil {
+		t.Fatalf("unmarshal environment: %v", err)
+	}
+	if environment.Platform != "openfuyao" {
+		t.Fatalf("environment = %#v", environment)
+	}
+}
+
 func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) {
 	ctx := context.Background()
 	server := New(stubObserver{}, "test", WithDeployer(stubDeployer{}))
@@ -258,8 +396,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 7 {
-		t.Fatalf("tool count = %d, want 7", len(list.Tools))
+	if len(list.Tools) != 9 {
+		t.Fatalf("tool count = %d, want 9", len(list.Tools))
 	}
 	tools := make(map[string]*mcp.Tool, len(list.Tools))
 	for _, tool := range list.Tools {
@@ -268,7 +406,8 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	deployTool := tools["infernex_deploy_model"]
 	deleteTool := tools["infernex_delete_model"]
 	changeTool := tools["infernex_get_change"]
-	if deployTool == nil || deleteTool == nil || changeTool == nil {
+	sourcesTool := tools["infernex_list_deployment_sources"]
+	if deployTool == nil || deleteTool == nil || changeTool == nil || sourcesTool == nil {
 		t.Fatalf("deployment tools missing: %#v", tools)
 	}
 	if deployTool.Annotations == nil ||
@@ -290,10 +429,9 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
 		Name: "infernex_deploy_model",
 		Arguments: map[string]any{
-			"namespace": "models",
-			"name":      "tiny",
-			"catalogId": deployer.TinyModelCatalogID,
-			"confirm":   true,
+			"name":     "qwen-copy",
+			"sourceId": "service:models:stable",
+			"confirm":  true,
 		},
 	})
 	if err != nil {
@@ -310,7 +448,7 @@ func TestServerPublishesConstrainedDeploymentToolsOnlyWhenEnabled(t *testing.T) 
 	if err := json.Unmarshal(payload, &deployment); err != nil {
 		t.Fatalf("unmarshal deploy result: %v", err)
 	}
-	if deployment.Operation != "created" || deployment.Name != "tiny" {
+	if deployment.Operation != "created" || deployment.Name != "qwen-copy" {
 		t.Fatalf("deploy result = %#v", deployment)
 	}
 }
@@ -341,8 +479,8 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 8 {
-		t.Fatalf("tool count = %d, want 8", len(list.Tools))
+	if len(list.Tools) != 9 {
+		t.Fatalf("tool count = %d, want 9", len(list.Tools))
 	}
 	tools := make(map[string]*mcp.Tool, len(list.Tools))
 	for _, tool := range list.Tools {
@@ -407,6 +545,309 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 	}
 	if plan.ID != "experiment-1" || len(plan.FeatureProfiles) != 1 {
 		t.Fatalf("experiment = %#v", plan)
+	}
+}
+
+func TestServerPublishesDurableSemanticMemoryWithWriteAnnotations(t *testing.T) {
+	ctx := context.Background()
+	store, err := semanticmemory.NewFileStore(t.TempDir(), "cluster-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithSemanticMemory(store))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	defer serverSession.Close()
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	if tools["infernex_search_memory"] == nil || tools["infernex_remember"] == nil || tools["infernex_forget_memory"] == nil {
+		t.Fatalf("semantic memory tools missing: %#v", tools)
+	}
+	if !tools["infernex_search_memory"].Annotations.ReadOnlyHint || tools["infernex_remember"].Annotations.ReadOnlyHint ||
+		!*tools["infernex_forget_memory"].Annotations.DestructiveHint {
+		t.Fatal("semantic memory tool annotations do not enforce read/write boundaries")
+	}
+
+	remembered, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_remember", Arguments: map[string]any{
+			"scope": "cluster", "type": "decision", "subject": "变更窗口",
+			"summary": "工作日白天只进行只读探测。", "source": "user-confirmed", "confirm": true,
+		},
+	})
+	if err != nil || remembered.IsError {
+		t.Fatalf("remember failed: err=%v result=%#v", err, remembered)
+	}
+	searched, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "infernex_search_memory", Arguments: map[string]any{"query": "变更窗口"},
+	})
+	if err != nil || searched.IsError {
+		t.Fatalf("search failed: err=%v result=%#v", err, searched)
+	}
+	payload, _ := json.Marshal(searched.StructuredContent)
+	var result semanticmemory.SearchResult
+	if err := json.Unmarshal(payload, &result); err != nil || len(result.Records) != 1 {
+		t.Fatalf("semantic memory search=%#v err=%v", result, err)
+	}
+}
+
+func TestServerPublishesCollectorRunsWithApprovalAnnotations(t *testing.T) {
+	manager, err := collectorrun.NewManager(stubCollectorSource{}, filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithCollectorRuns(manager))
+	ctx := context.Background()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_start_collector_run", "infernex_list_collector_runs", "infernex_get_collector_run", "infernex_stop_collector_run"} {
+		if tools[name] == nil {
+			t.Fatalf("collector tool missing: %s", name)
+		}
+	}
+	if tools["infernex_start_collector_run"].Annotations.ReadOnlyHint || tools["infernex_stop_collector_run"].Annotations.ReadOnlyHint {
+		t.Fatal("collector lifecycle tools must require local approval")
+	}
+	if !tools["infernex_list_collector_runs"].Annotations.ReadOnlyHint || !tools["infernex_get_collector_run"].Annotations.ReadOnlyHint {
+		t.Fatal("collector query tools must be read-only")
+	}
+}
+
+func TestServerPublishesBoundedLocalEvidenceAndReportTools(t *testing.T) {
+	ctx := context.Background()
+	evidenceRoot := filepath.Join(t.TempDir(), "logs")
+	if err := os.MkdirAll(evidenceRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(evidenceRoot, "vllm.log"), []byte("GET /metrics 200\nERROR worker timeout\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := localfiles.New([]string{evidenceRoot}, filepath.Join(t.TempDir(), "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithLocalFiles(workspace))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_list_evidence_roots", "infernex_find_evidence_files", "infernex_grep_evidence_files", "infernex_read_evidence_file", "infernex_list_reports", "infernex_read_report", "infernex_create_markdown_report"} {
+		if tools[name] == nil {
+			t.Fatalf("missing local evidence tool %s", name)
+		}
+	}
+	if !tools["infernex_grep_evidence_files"].Annotations.ReadOnlyHint || tools["infernex_create_markdown_report"].Annotations.ReadOnlyHint {
+		t.Fatal("local evidence annotations do not enforce read/write boundary")
+	}
+	rootID := workspace.Roots()[0].ID
+	grep, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_grep_evidence_files", Arguments: map[string]any{"rootId": rootID, "pattern": ".", "recursive": true}})
+	if err != nil || grep.IsError {
+		t.Fatalf("grep failed: err=%v result=%#v", err, grep)
+	}
+	payload, _ := json.Marshal(grep.StructuredContent)
+	var grepResult localfiles.GrepResult
+	if err := json.Unmarshal(payload, &grepResult); err != nil || len(grepResult.Matches) != 1 || grepResult.FilteredLines != 1 {
+		t.Fatalf("grep result=%#v err=%v", grepResult, err)
+	}
+	report, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_create_markdown_report", Arguments: map[string]any{"title": "worker timeout", "markdown": "## Finding\n\nWorker timed out.", "sources": []map[string]any{{"rootId": rootID, "path": "vllm.log"}}, "confirm": true}})
+	if err != nil || report.IsError {
+		t.Fatalf("report failed: err=%v result=%#v", err, report)
+	}
+}
+
+func TestServerPublishesProgressiveDiagnosticSkills(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	directory := filepath.Join(root, "hixl-diagnosis")
+	if err := os.MkdirAll(filepath.Join(directory, "references"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "SKILL.md"), []byte("---\nname: hixl-diagnosis\ndescription: Diagnose HiXL timeouts\n---\nUse evidence first."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "references", "timeouts.md"), []byte("# Timeouts\nCheck both peers."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry, err := skills.NewRegistry([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := New(stubObserver{}, "test", WithInferNexBridge(false), WithSkills(registry))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	for _, name := range []string{"infernex_list_skills", "infernex_read_skill", "infernex_read_skill_reference"} {
+		if tools[name] == nil || !tools[name].Annotations.ReadOnlyHint {
+			t.Fatalf("missing read-only Skill tool %s", name)
+		}
+	}
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_read_skill_reference", Arguments: map[string]any{"name": "hixl-diagnosis", "reference": "timeouts.md"}})
+	if err != nil || result.IsError {
+		t.Fatalf("read reference failed: %v %#v", err, result)
+	}
+	payload, _ := json.Marshal(result.StructuredContent)
+	var reference skills.ReferenceContent
+	if err := json.Unmarshal(payload, &reference); err != nil || reference.Content == "" {
+		t.Fatalf("decode reference: %#v %v", reference, err)
+	}
+}
+
+func TestDiagnosticDelegatePublishesRestrictedScopedContract(t *testing.T) {
+	ctx := context.Background()
+	collector, err := collectorrun.NewManager(stubCollectorSource{}, filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, namespace := range []string{"models", "other-team"} {
+		if _, err := collector.Create(collectorrun.StartRequest{Profile: "npu-inventory", Namespace: namespace, LabelSelector: "app=vllm", DurationMinutes: 1, MaxBytes: 1024 * 1024, Confirm: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := New(
+		stubObserver{}, "test",
+		WithKubernetes(stubKubernetes{}),
+		WithNamespaces([]string{"models"}),
+		WithDiagnosticDelegate([]string{"models"}),
+		WithDeployer(stubDeployer{}),
+		WithCollectorRuns(collector),
+	)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	client := mcp.NewClient(&mcp.Implementation{Name: "diagnostic-partner", Version: "test"}, nil)
+	clientSession, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	list, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := map[string]*mcp.Tool{}
+	for _, tool := range list.Tools {
+		tools[tool.Name] = tool
+	}
+	if tools["infernex_get_diagnostic_delegate_contract"] == nil {
+		t.Fatal("diagnostic delegate contract tool is missing")
+	}
+	for _, forbidden := range []string{"k8s_read_resources", "infernex_deploy_model", "infernex_remember"} {
+		if tools[forbidden] != nil {
+			t.Fatalf("restricted endpoint exposed forbidden tool %s", forbidden)
+		}
+	}
+	allowed, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_list_workloads", Arguments: map[string]any{"namespace": "models"}})
+	if err != nil || allowed.IsError {
+		t.Fatalf("scoped workload read failed: err=%v result=%#v", err, allowed)
+	}
+	denied, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_list_workloads", Arguments: map[string]any{"namespace": "kube-system"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !denied.IsError {
+		t.Fatalf("out-of-scope namespace was accepted: %#v", denied)
+	}
+	for _, namespace := range []string{"", "kube-system", "models"} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "k8s_inspect_service_backends", Arguments: map[string]any{"namespace": namespace, "name": "model"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError != (namespace != "models") {
+			t.Fatalf("backend scope %q: %#v", namespace, result)
+		}
+	}
+	collectorList, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_list_collector_runs", Arguments: map[string]any{}})
+	if err != nil || collectorList.IsError {
+		t.Fatalf("collector list failed: err=%v result=%#v", err, collectorList)
+	}
+	payload, _ := json.Marshal(collectorList.StructuredContent)
+	var visible collectorrun.TaskList
+	if err := json.Unmarshal(payload, &visible); err != nil || len(visible.Tasks) != 1 || visible.Tasks[0].Namespace != "models" {
+		t.Fatalf("delegate-visible collectors=%#v err=%v", visible, err)
+	}
+}
+
+func TestDiagnosticDelegateUsesBoundedEventBurstDefaults(t *testing.T) {
+	options := serverOptions{diagnosticDelegate: true}
+	duration, bytes, err := boundDelegateCapture(options, 0, 0)
+	if err != nil || duration != 15 || bytes != 256*1024*1024 {
+		t.Fatalf("defaults duration=%d bytes=%d err=%v", duration, bytes, err)
+	}
+	if _, _, err := boundDelegateCapture(options, 61, 1024*1024); err == nil {
+		t.Fatal("continuous delegated capture exceeded the burst duration ceiling")
+	}
+	if _, _, err := boundDelegateCapture(options, 15, 3*1024*1024*1024); err == nil {
+		t.Fatal("delegated capture exceeded the evidence budget")
 	}
 }
 
