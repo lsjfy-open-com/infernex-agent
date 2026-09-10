@@ -7,8 +7,10 @@ package semanticmemory
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +19,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/namedfiles"
 )
 
 const schemaVersion = "agent.infernex.io/v1alpha1"
@@ -34,6 +38,8 @@ type Record struct {
 	APIVersion string     `json:"apiVersion"`
 	Kind       string     `json:"kind"`
 	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Path       string     `json:"path,omitempty"`
 	ClusterID  string     `json:"clusterId,omitempty"`
 	Scope      string     `json:"scope"`
 	Type       string     `json:"type"`
@@ -133,8 +139,21 @@ func (s *FileStore) Put(request PutRequest) (Record, error) {
 	if record.Scope == "cluster" {
 		record.ClusterID = s.clusterID
 	}
-	if err := s.write(record); err != nil {
+	record.Name = namedfiles.Name(record.Subject, record.CreatedAt)
+	contents, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
 		return Record{}, err
+	}
+	record.Path, err = namedfiles.Create(s.root, record.Name, ".json", record.ID, append(contents, '\n'))
+	if err != nil {
+		return Record{}, err
+	}
+	actualName := strings.TrimSuffix(filepath.Base(record.Path), ".json")
+	if actualName != record.Name {
+		record.Name = actualName
+		if err := s.write(record); err != nil {
+			return Record{}, err
+		}
 	}
 	return record, nil
 }
@@ -158,9 +177,25 @@ func (s *FileStore) Search(request SearchRequest) (SearchResult, error) {
 		}
 		types[value] = true
 	}
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return SearchResult{}, fmt.Errorf("read semantic memory directory: %w", err)
+	var paths []string
+	if validID(query) {
+		filename, err := s.lookup(query)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return SearchResult{}, err
+		}
+		if err == nil {
+			paths = append(paths, filename)
+		}
+	} else {
+		entries, err := os.ReadDir(s.root)
+		if err != nil {
+			return SearchResult{}, fmt.Errorf("read semantic memory directory: %w", err)
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() && filepath.Ext(entry.Name()) == ".json" {
+				paths = append(paths, filepath.Join(s.root, entry.Name()))
+			}
+		}
 	}
 	type ranked struct {
 		record Record
@@ -168,13 +203,13 @@ func (s *FileStore) Search(request SearchRequest) (SearchResult, error) {
 	}
 	now := time.Now().UTC()
 	rankedRecords := make([]ranked, 0)
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
-		record, readErr := s.read(filepath.Join(s.root, entry.Name()))
+	for _, filename := range paths {
+		record, readErr := s.read(filename)
 		if readErr != nil {
 			return SearchResult{}, readErr
+		}
+		if validID(query) && record.ID != query {
+			return SearchResult{}, fmt.Errorf("memory index id mismatch")
 		}
 		if record.DeletedAt != nil || record.ExpiresAt != nil && !record.ExpiresAt.After(now) {
 			continue
@@ -213,8 +248,14 @@ func (s *FileStore) Forget(id string) (Record, error) {
 	if !validID(id) {
 		return Record{}, fmt.Errorf("invalid memory id %q", id)
 	}
-	path := filepath.Join(s.root, id+".json")
+	path, err := s.lookup(id)
+	if err != nil {
+		return Record{}, err
+	}
 	record, err := s.read(path)
+	if err == nil && record.ID != id {
+		return Record{}, fmt.Errorf("memory index id mismatch")
+	}
 	if err != nil {
 		return Record{}, err
 	}
@@ -231,60 +272,60 @@ func (s *FileStore) Forget(id string) (Record, error) {
 	return record, nil
 }
 
+func (s *FileStore) lookup(id string) (string, error) {
+	filename, err := namedfiles.Lookup(s.root, id)
+	if err == nil || !os.IsNotExist(err) {
+		return filename, err
+	}
+	// Old records and a missing/rebuildable index remain readable after upgrade.
+	legacy := filepath.Join(s.root, id+".json")
+	if _, err := os.Lstat(legacy); err == nil {
+		return legacy, nil
+	}
+	entries, err := os.ReadDir(s.root)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		filename := filepath.Join(s.root, entry.Name())
+		record, err := s.read(filename)
+		if err != nil {
+			return "", err
+		}
+		if record.ID == id {
+			if err := namedfiles.Index(s.root, id, entry.Name()); err != nil {
+				return "", err
+			}
+			return filename, nil
+		}
+	}
+	return "", fmt.Errorf("memory %s: %w", id, os.ErrNotExist)
+}
+
 func (s *FileStore) write(record Record) error {
-	contents, err := json.MarshalIndent(record, "", "  ")
+	target, err := s.lookup(record.ID)
 	if err != nil {
-		return fmt.Errorf("encode semantic memory: %w", err)
-	}
-	contents = append(contents, '\n')
-	target := filepath.Join(s.root, record.ID+".json")
-	if _, err := os.Stat(target); err == nil {
-		file, openErr := os.OpenFile(target, os.O_WRONLY|os.O_TRUNC, 0o600)
-		if openErr != nil {
-			return fmt.Errorf("open semantic memory for update: %w", openErr)
-		}
-		if _, openErr = file.Write(contents); openErr == nil {
-			openErr = file.Sync()
-		}
-		closeErr := file.Close()
-		if openErr != nil {
-			return fmt.Errorf("update semantic memory: %w", openErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("close semantic memory update: %w", closeErr)
-		}
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat semantic memory: %w", err)
-	}
-	temporary, err := os.CreateTemp(s.root, ".memory.*")
-	if err != nil {
-		return fmt.Errorf("create semantic memory temporary file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
 		return err
 	}
-	if _, err := temporary.Write(contents); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("write semantic memory: %w", err)
+	record.Path = "" // Stored records remain relocatable.
+	contents, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return err
 	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("sync semantic memory: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close semantic memory: %w", err)
-	}
-	if err := os.Rename(temporaryPath, target); err != nil {
-		return fmt.Errorf("activate semantic memory: %w", err)
-	}
-	return nil
+	return namedfiles.Replace(target, append(contents, '\n'))
 }
 
 func (s *FileStore) read(path string) (Record, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return Record{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 128*1024 {
+		return Record{}, fmt.Errorf("memory must be a bounded regular file")
+	}
 	contents, err := os.ReadFile(path)
 	if err != nil {
 		return Record{}, fmt.Errorf("read semantic memory: %w", err)
@@ -296,18 +337,23 @@ func (s *FileStore) read(path string) (Record, error) {
 	if record.APIVersion != schemaVersion || record.Kind != "InferNexSemanticMemory" || !validID(record.ID) {
 		return Record{}, fmt.Errorf("invalid semantic memory record %s", path)
 	}
+	record.Path = path
+	record.Name = namedfiles.Name(record.Subject, record.CreatedAt)
+	if filepath.Base(path) != record.ID+".json" {
+		record.Name = strings.TrimSuffix(filepath.Base(path), ".json")
+	}
 	return record, nil
 }
 
 func relevance(query string, record Record) int {
-	if query == "" {
+	if query == "" || query == record.ID {
 		return 1
 	}
 	q := terms(query)
 	fields := []struct {
 		value  string
 		weight int
-	}{{record.Subject, 8}, {strings.Join(record.Tags, " "), 5}, {record.Summary, 3}, {record.Type, 2}}
+	}{{record.Name, 8}, {record.Subject, 8}, {strings.Join(record.Tags, " "), 5}, {record.Summary, 3}, {record.Type, 2}}
 	score := 0
 	for _, field := range fields {
 		candidate := terms(field.value)
@@ -368,11 +414,12 @@ func newID() (string, error) {
 	if _, err := rand.Read(value[:]); err != nil {
 		return "", fmt.Errorf("generate memory id: %w", err)
 	}
-	return hex.EncodeToString(value[:]), nil
+	digest := sha256.Sum256(value[:])
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func validID(id string) bool {
-	if len(id) != 32 {
+	if len(id) != 32 && len(id) != 64 {
 		return false
 	}
 	_, err := hex.DecodeString(id)
