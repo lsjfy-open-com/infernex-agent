@@ -109,3 +109,37 @@ test("HCCL invokes MPI with the requested ranks after sourcing CANN setup", asyn
   assert.match(output, /arg=-f\narg=\/etc\/hccl\/hosts/);
  } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+test("full access classifies effects rather than trusting risk claims or shell text", async () => {
+ const { readOnlyHostCommand, needsHostApproval, needsMCPApproval } = await import('./host-tools.ts');
+ for (const command of ['id -u', 'ls -lah /var/log', 'cat /var/log/app.log', 'grep -n timeout /var/log/app.log', 'kubectl -n models logs pod-a --tail=100', 'kubectl -n models exec pod-a -c main -- cat /var/log/plog.log', "ssh root@node-a 'ip route show'", 'ethtool -S eth0']) assert.equal(readOnlyHostCommand(command),true,command);
+ for (const command of ['reboot', 'hostname changed', 'date -s now', 'ip route flush table all', 'kubectl delete pod foo', 'kubectl get --raw /api/proxy/unsafe', 'kubectl -n models exec p -- sh -c id', 'ssh -oProxyCommand=reboot host cat /log', "ssh host 'ip link set eth0 down'", 'cat /log; reboot', 'cat /log | sh', 'cat $(reboot)', 'cat /log > /etc/config', "cat '/log\nreboot'", 'python3 -c print(1)', 'find / -exec reboot', 'sudo cat /log', 'cat /dev/sda', "c''at /log"]) assert.equal(readOnlyHostCommand(command),false,command);
+ assert.equal(needsHostApproval('full','infernex_sample_pfc',{}),false);
+ assert.equal(needsHostApproval('full','infernex_network_probe',{probe:'iperf-client'}),true);
+ assert.equal(needsHostApproval('full','infernex_run_hccl_test',{}),true);
+ assert.equal(needsHostApproval('full','infernex_network_probe',{probe:'unknown'}),true);
+ assert.equal(needsHostApproval('manual','infernex_host_exec',{command:'id'}),true);
+ for (const name of ['infernex_create_markdown_report','infernex_remember','infernex_forget_memory','infernex_start_plog_capture','infernex_start_collector_run']) assert.equal(needsMCPApproval('full',name,false),false);
+ for (const name of ['infernex_deploy_model','infernex_delete_model','infernex_start_experiment','unknown_write']) assert.equal(needsMCPApproval('full',name,false),true);
+ assert.equal(needsMCPApproval('full','infernex_delete_model',true),true);
+});
+
+test("full access executes safe commands without dialogs but preserves gates and busy identity", async () => {
+ const commands = new Map<string,any>(), tools = new Map<string,any>(), events = new Map<string,any>();
+ let executions = 0, confirmations = 0; const notices: string[] = [];
+ const execute = async (mode: any, command: string) => { executions++; return {mode,uid:mode==='root'?0:1000,cwd:'/tmp',command,exitCode:0,stdout:mode==='root'?'0\n':'1000\n',stderr:'',truncated:false,timedOut:false,cancelled:false}; };
+ const state = registerHostTools({registerCommand:(n:string,c:any)=>commands.set(n,c),registerTool:(t:any)=>tools.set(t.name,t),on:(n:string,f:any)=>events.set(n,f)} as unknown as ExtensionAPI, undefined, undefined, execute);
+ const ctx = {hasUI:true,isIdle:()=>true,ui:{notify:(s:string)=>notices.push(s),setStatus:()=>{},confirm:async()=>{confirmations++;return false;}}};
+ await commands.get('mode_change').handler('full',ctx);
+ assert.equal(state.access(),'full'); assert.equal(state.mode(),'normal'); assert.equal(executions,0);
+ await tools.get('infernex_host_exec').execute('1',{command:'id -u'},undefined,undefined,ctx);
+ await tools.get('infernex_sample_pfc').execute('2',{deviceIds:[0]},undefined,undefined,ctx);
+ assert.equal(executions,2); assert.equal(confirmations,0);
+ for (const [name,params] of [['infernex_host_exec',{command:'kubectl delete pod p'}],['infernex_network_probe',{probe:'iperf-client',target:'node-a'}],['infernex_run_hccl_test',{executable:'/opt/all_reduce_test',ranks:1,devicesPerNode:1}]] as const) await assert.rejects(tools.get(name).execute('3',params,undefined,undefined,ctx),/denied/);
+ assert.equal(executions,2); assert.equal(confirmations,3); assert.equal(state.wasDenied(),true);
+ await state.operation(async()=>{ await commands.get('mode_change').handler('root',ctx); assert.equal(state.mode(),'normal'); });
+ await commands.get('mode_change').handler('root full',ctx); assert.equal(state.mode(),'root'); assert.equal(state.access(),'full');
+ await commands.get('mode_change').handler('normal manual',ctx); assert.equal(state.mode(),'normal'); assert.equal(state.access(),'manual');
+ await commands.get('mode_change').handler('full',{...ctx,hasUI:false}); assert.equal(state.access(),'manual');
+ await commands.get('mode_change').handler('full',ctx); events.get('session_start')({},ctx); assert.equal(state.access(),'manual'); assert.equal(state.mode(),'normal');
+});

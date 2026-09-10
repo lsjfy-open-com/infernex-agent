@@ -24,19 +24,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.13`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.14`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.13-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.13-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.14-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.14-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.13-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.13-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.13-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.14-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.14-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.14-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -128,6 +128,39 @@ ID 到文件名的直接索引。报告 ID 为内容 SHA-256，记忆 ID 为生�
 旧版文件无需手工重命名，旧 ID 继续有效，列表和搜索会补充可读名称。索引缺失时可从源文件重建，
 正常按 ID 读取无需扫描整个目录。已有文件原路径保留，以免破坏历史引用；本修改不追溯改写 alpha.14
 安装包。工具原始日志 Artifact 的内容 hash 和证据引用协议不受影响。
+
+### 完全访问与连续执行（develop，尚未发布）
+
+执行身份与批准策略独立设置：
+
+```text
+/mode_change full          # 当前身份 + 完全访问
+/mode_change root full     # root 身份 + 完全访问（TUI 须由 sudo 启动）
+/mode_change normal full   # infernex-agent 身份 + 完全访问
+/mode_change manual        # 当前身份 + 逐次批准
+/mode_change status
+```
+
+开启后再输入任务。完全访问是对当前会话内任务的低影响操作预授权，不改变 Kubernetes RBAC、远端
+SSH 身份或后台服务 UID。每次新建/恢复会话仍从 `normal + manual` 开始；切换时必须无正在运行的
+模型或工具操作。状态栏同时显示身份和批准策略，工具详情记录自动执行或人工批准。
+
+| 操作 | 完全访问模式 |
+| --- | --- |
+| 集群只读查询、固定诊断探针、PFC/网络计数器、有限连通性探测 | 自动执行 |
+| 受支持的单条只读本机/SSH/Pod 命令 | 自动执行 |
+| 有界 plog/CollectorRun 采集、报告、任务所需的已验证记忆写入/软删除 | 自动执行 |
+| 集群部署/删除/实验、其他未分类 MCP 写操作 | 人工批准 |
+| 重启、配置/路由修改、HCCL/iperf 压测 | 人工批准 |
+| 任意脚本/解释器、重定向、管道及无法可靠分类的 shell | 人工批准；优先改用结构化诊断工具 |
+
+只读 shell 支持常用 `ls/cat/head/tail/grep`、系统/网络状态，以及受限的 `kubectl get/describe/logs/exec`
+和 SSH 读取。它不靠模型声称 `risk=safe` 或 `confirm=true` 来放行，也不尝试把任意 shell 当作安全语言解析。
+
+模型给出阶段报告却未完成任务时会自动续跑。任务完成并验证后调用 `infernex_task_status complete`，
+真实缺少输入/外部依赖时使用 `blocked`，随后给出最终报告。Esc 取消、人工拒绝、模型错误不会被自动续跑
+覆盖；连续三次结束且没有新工具证据时暂停并提示阻塞，避免空转。已有采集任务不会因 Esc 或模式切换自动
+停止，需要通过采集任务工具管理。此机制不保证故障模型永不出错，也不取消集群影响操作的人为判断。
 
 ### Reasoning 展示
 

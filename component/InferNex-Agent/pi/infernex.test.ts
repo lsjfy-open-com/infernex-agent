@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import infernexExtension from "./infernex.ts";
+import infernexExtension, { registerAutonomousTask } from "./infernex.ts";
 
 type RegisteredTool = {
 	name: string;
@@ -16,15 +16,19 @@ let mockLargeResponse = false;
 function mockAPI() {
 	const tools: RegisteredTool[] = [];
 	const commands: string[] = [];
+ const commandHandlers = new Map<string, any>();
+ const sent: any[] = [];
 	const events: string[] = [];
 	const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
 	return {
 		tools,
 		api: {
+ sendMessage: (...args: any[]) => sent.push(args),
 			registerTool(tool: RegisteredTool) {
 				tools.push(tool);
 			},
-			registerCommand(name: string) {
+			registerCommand(name: string, command: any) {
+ commandHandlers.set(name, command);
 				commands.push(name);
 			},
 			on(name: string, handler: (...args: any[]) => unknown) {
@@ -34,7 +38,7 @@ function mockAPI() {
 				handlers.set(name, registered);
 			},
 		} as unknown as ExtensionAPI,
-		commands,
+		commands, commandHandlers, sent,
 		events,
 		handlers,
 	};
@@ -89,7 +93,7 @@ test("loads MCP tools and executes read-only calls without approval", async () =
 		"cluster_overview",
 		"deploy_service",
 		"infernex_read_artifact",
-		"infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test",
+		"infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test", "infernex_task_status",
 	]);
 	assert.deepEqual(mock.commands, ["mode_change", "infernex-tools"]);
 	assert.ok(mock.events.includes("session_start"));
@@ -245,4 +249,43 @@ test("Pi's real tool execution component renders a single content row and expand
  assert.match(expanded, /long command/); assert.match(expanded, /network-counter=123/);
  component.setExpanded(false);
  assert.equal(component.render(60).filter(line => line.trim()).length, 1);
+});
+
+test("continuous tasks resume progress endings but respect completion, blockers, cancel and denial", async () => {
+ const mock = mockAPI(); let access: 'manual'|'full' = 'full', denied = false;
+ const task = registerAutonomousTask(mock.api,{access:()=>access,wasDenied:()=>denied,resetDenied:()=>{denied=false;}});
+ const notices: string[] = [];
+ const ctx = {hasUI:true,hasPendingMessages:()=>false,ui:{notify:(s:string)=>notices.push(s)}};
+ const emit = async(name:string,event:any) => {for (const handler of mock.handlers.get(name)||[]) await handler(event,ctx);};
+ const input = ()=>emit('input',{source:'interactive',text:'diagnose mooncake timeout'});
+ const ended = (stopReason='stop')=>emit('agent_end',{messages:[{role:'assistant',stopReason,content:[{type:'text',text:'progress report'}]}]});
+ await input(); await ended(); assert.equal(mock.sent.length,1); assert.deepEqual(mock.sent[0][1],{triggerTurn:true,deliverAs:'followUp'});
+ await mock.tools[0].execute('done',{state:'complete',summary:'Verified and saved report'},undefined,undefined,ctx);
+ await ended(); assert.equal(mock.sent.length,1);
+ await input(); await ended('aborted'); await ended(); assert.equal(mock.sent.length,1);
+ await input(); await ended('error'); await ended(); assert.equal(mock.sent.length,1);
+ await input(); denied=true; await ended(); assert.equal(mock.sent.length,1);
+ await input(); task.pause(); await ended(); assert.equal(mock.sent.length,1);
+ await input(); await mock.tools[0].execute('blocked',{state:'blocked',summary:'Target cluster credentials are missing'},undefined,undefined,ctx); await ended(); assert.equal(mock.sent.length,1);
+ await input(); await ended(); await ended(); await ended(); assert.equal(mock.sent.length,3); assert.match(notices.at(-1)!,/三次/);
+ access='manual'; await input(); await ended(); assert.equal(mock.sent.length,3);
+ access='full'; await input(); await emit('session_start',{}); await ended(); assert.equal(mock.sent.length,3);
+});
+
+test("full mode skips local report approval while cluster mutations still require the operator", async () => {
+ installMockFetch(); const original = globalThis.fetch;
+ globalThis.fetch = (async(input:any, init:any)=>{
+  const response = await original(input,init); const payload = await response.json();
+  if (JSON.parse(init.body).method==='tools/list') payload.result.tools.push({name:'infernex_create_markdown_report',inputSchema:{type:'object'},annotations:{readOnlyHint:false}});
+  return Response.json(payload);
+ }) as typeof fetch;
+ const mock=mockAPI(); await infernexExtension(mock.api);
+ let confirmations=0;
+ const ctx={hasUI:true,isIdle:()=>true,ui:{notify:()=>{},setStatus:()=>{},confirm:async()=>{confirmations++;return false;}}};
+ await mock.commandHandlers.get('mode_change').handler('full',ctx);
+ await mock.tools.find(t=>t.name==='infernex_create_markdown_report')!.execute('1',{title:'Mooncake report',confirm:true},undefined,undefined,ctx);
+ assert.equal(confirmations,0);
+ await assert.rejects(mock.tools.find(t=>t.name==='deploy_service')!.execute('2',{name:'model',confirm:true,risk:'safe'},undefined,undefined,ctx),/denied/);
+ assert.equal(confirmations,1);
+ installMockFetch();
 });
