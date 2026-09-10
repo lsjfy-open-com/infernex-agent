@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
 import { userInfo } from "node:os";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 export type HostMode = "normal" | "root";
 const safePath = "/opt/infernex-agent/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/Ascend/driver/tools";
@@ -107,7 +107,7 @@ export function hcclCommand(input: { executable: string; ranks: number; devicesP
 	return (input.setupScript ? `source ${quote(absolutePath(input.setupScript))} && ` : "") + "exec " + args.map(quote).join(" ");
 }
 
-export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string) => Promise<{ text: string }> = async text => ({ text })) {
+export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string) => Promise<{ text: string }> = async text => ({ text }), renderer?: (label: string) => Pick<ToolDefinition, "renderShell" | "renderCall" | "renderResult">) {
 	let mode: HostMode = "normal", busy = 0;
 	const normalUser = process.env.INFERNEX_HOST_USER || "infernex-agent";
 	const rootWorkspace = process.env.INFERNEX_WORKSPACE_ROOT || process.cwd();
@@ -137,7 +137,7 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 		if (["bash", "read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) return { block: true, reason: "Use infernex_host_exec so /mode_change controls the actual command UID" };
 	});
 	const register = (name: string, description: string, properties: Record<string, unknown>, required: string[], build: (input: any, selected: HostMode) => string, defaultTimeout: number) => {
-		pi.registerTool({ name, label: name, description, parameters: { type: "object", properties: { ...properties, timeoutSeconds: { type: "integer", minimum: 1, maximum: 600 } }, required, additionalProperties: false } as any,
+		pi.registerTool({ ...renderer?.(({ infernex_host_exec: "本机命令", infernex_network_probe: "网络探测", infernex_sample_pfc: "PFC 采样", infernex_run_hccl_test: "HCCL 测试" } as Record<string, string>)[name] || name), name, label: name, description, parameters: { type: "object", properties: { ...properties, timeoutSeconds: { type: "integer", minimum: 1, maximum: 600 } }, required, additionalProperties: false } as any,
 			async execute(_id, params, signal, _update, ctx) {
 				if (!ctx.hasUI) throw new Error("Host execution requires an interactive terminal");
 				if (busy) throw new Error("Another host command or mode transition is active");
