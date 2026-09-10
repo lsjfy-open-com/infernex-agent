@@ -1,5 +1,6 @@
 import { registerHostTools } from "./host-tools.ts";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { stripVTControlCharacters } from "node:util";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { mkdir, open, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -91,6 +92,64 @@ async function boundedResultText(text: string): Promise<{ text: string; artifact
 	};
 }
 
+// Rendering only: the model, stored results and approval previews keep their
+// original payloads. Components return no result rows until the user expands.
+function plainTerminal(value: string): string {
+ return stripVTControlCharacters(value).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/g, "");
+}
+function terminalLines(text: string, width: number, single = false): string[] {
+ const limit = Math.max(1, Math.floor(width));
+ const lines: string[] = []; let line = "", cells = 0;
+ const clean = plainTerminal(text).replace(/\t/g, "  ");
+ // Conservative width for non-ASCII cells prevents CJK/emoji from wrapping a
+ // collapsed tool into the following report. Combining marks occupy no cells.
+ for (const char of clean) {
+  if (char === "\n") { if (single) break; lines.push(line); line = ""; cells = 0; continue; }
+  const size = /\p{Mark}/u.test(char) || char === "\u200d" ? 0 : char.codePointAt(0)! > 127 ? 2 : 1;
+  if (size > limit) continue;
+  if (cells + size > limit) { if (single) break; lines.push(line); line = ""; cells = 0; }
+  line += char; cells += size;
+ }
+ lines.push(line);
+ return lines;
+}
+
+export function compactToolRenderer(label: string): Pick<ToolDefinition, "renderShell" | "renderCall" | "renderResult"> {
+ const object = (value: unknown): Record<string, any> => value && typeof value === "object" ? value as Record<string, any> : {};
+ return {
+  renderShell: "self",
+  renderCall(args, _theme, context) {
+   const state = context.state;
+   state.startedAt ??= Date.now();
+   return { invalidate() {}, render(width: number) {
+    const input = object(args);
+    const target = [input.namespace, input.pod || input.name || input.sshTarget || input.probe].filter(v => typeof v === "string").join("/");
+    const status = state.resultStatus || (context.executionStarted ? "执行中" : "准备中");
+    const elapsed = state.finishedAt ? ` · ${((state.finishedAt - state.startedAt) / 1000).toFixed(1)}s` : "";
+    const heading = `${status} · ${label}${target ? ` · ${target}` : ""}${elapsed}`;
+    const rows = terminalLines(heading.replace(/\s+/g, " "), width, true);
+    if (context.expanded) rows.push(...terminalLines("参数：\n" + JSON.stringify(args ?? {}, null, 2), width));
+    return rows;
+   }};
+  },
+  renderResult(result, options, _theme, context) {
+   const details = object(result.details);
+   let payload: Record<string, any> = {};
+   const text = (result.content || []).filter(part => part.type === "text").map(part => (part as {text: string}).text).join("\n");
+   if (text.length < 65536) { try { payload = object(JSON.parse(text)); } catch {} }
+   const timedOut = details.timedOut || payload.timedOut;
+   const cancelled = details.cancelled || payload.cancelled;
+   const failed = context.isError || details.status === "failed" || payload.status === "failed" ||
+    (typeof details.exitCode === "number" && details.exitCode !== 0) || (typeof payload.exitCode === "number" && payload.exitCode !== 0);
+   context.state.resultStatus = timedOut ? "超时" : cancelled ? "已取消" : failed ? "失败" : options.isPartial ? "执行中" : "完成";
+   if (!options.isPartial) context.state.finishedAt ??= Date.now();
+   return { invalidate() {}, render(width: number) {
+    return options.expanded ? terminalLines("结果：\n" + text, width) : [];
+   }};
+  },
+ };
+}
+
 export default async function infernexExtension(pi: ExtensionAPI) {
 	const list = await requestMCP<{ tools: MCPTool[] }>("tools/list", {});
 	let artifactsCreated = 0;
@@ -105,6 +164,7 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 
 	for (const tool of list.tools || []) {
 		pi.registerTool({
+			...compactToolRenderer(tool.annotations?.title || tool.name),
 			name: tool.name,
 			label: tool.annotations?.title || tool.name,
 			description: tool.description || `Call the InferNex MCP tool ${tool.name}`,
@@ -135,13 +195,14 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 				if (bounded.artifact) artifactsCreated += 1;
 				return {
 					content: [{ type: "text", text: bounded.text }],
-					details: { tool: tool.name, endpoint, annotations: tool.annotations, artifact: bounded.artifact },
+					details: { tool: tool.name, endpoint, annotations: tool.annotations, artifact: bounded.artifact, status: (result.structuredContent as {status?: string} | undefined)?.status },
 				};
 			},
 		});
 	}
 
 	pi.registerTool({
+		...compactToolRenderer("读取证据"),
 		name: "infernex_read_artifact",
 		label: "Read InferNex Artifact",
 		description: "Read a bounded byte range from a large InferNex tool result previously stored by this TUI.",
@@ -202,7 +263,7 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 		const bounded = await boundedResultText(text);
 		if (bounded.artifact) artifactsCreated++;
 		return bounded;
-	});
+	}, compactToolRenderer);
 
 	pi.registerCommand("infernex-tools", {
 		description: "Show the InferNex tools loaded into this TUI session",
@@ -212,7 +273,8 @@ export default async function infernexExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_start", (_event, ctx) => {
-		ctx.ui.notify(`InferNex TUI connected: ${list.tools.length} cluster tools · workspace ${workspaceRoot()}`, "info");
+		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
+		ctx.ui.notify(`InferNex TUI connected: ${list.tools.length} cluster tools · Ctrl+O 展开/折叠工具详情 · workspace ${workspaceRoot()}`, "info");
 		ctx.ui.setStatus("infernex", `InferNex MCP · ${list.tools.length} tools · ${artifactsCreated} artifacts`);
 	});
 

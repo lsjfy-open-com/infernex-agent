@@ -187,3 +187,62 @@ test("surfaces provider errors and empty assistant responses in the TUI", async 
 	end({ type: "message_end", message: { role: "assistant", content: [], stopReason: "stop" } }, context);
 	assert.match(notifications.at(-1)?.message || "", /no displayable text or tool call/);
 });
+
+test("tool rows stay one line until expanded, preserve failures and sanitize terminal controls", async () => {
+ const { compactToolRenderer } = await import('./infernex.ts');
+ const renderer = compactToolRenderer('本机命令');
+ const state: any = {};
+ const args = { command: 'echo ' + '很长的参数\n'.repeat(100) };
+ const context: any = { state, args, executionStarted: true, expanded: false, isError: false };
+ const call = renderer.renderCall!(args, {} as any, context);
+ assert.equal(call.render(40).length, 1);
+ assert.doesNotMatch(call.render(40)[0], /很长的参数/);
+ const payload = { content: [{ type: 'text', text: '\u001b[2J' + 'long output\n'.repeat(500) }], details: { exitCode: 1 } } as any;
+ const result = renderer.renderResult!(payload, { expanded: false, isPartial: false }, {} as any, context);
+ assert.equal(result.render(40).length, 0);
+ assert.match(call.render(40)[0], /失败/);
+ assert.equal(payload.content[0].text.startsWith('\u001b[2J'), true, 'rendering must not change stored/model evidence');
+ const expandedContext = { ...context, expanded: true };
+ const expandedCall = renderer.renderCall!(args, {} as any, expandedContext);
+ const expandedResult = renderer.renderResult!(payload, { expanded: true, isPartial: false }, {} as any, expandedContext);
+ assert.ok(expandedCall.render(40).length > 1); assert.ok(expandedResult.render(40).length > 1);
+ assert.doesNotMatch(expandedResult.render(40).join('\n'), /\u001b/);
+ for (const width of [1, 2, 10, 40, 80]) {
+  const rows = renderer.renderCall!(args, {} as any, context).render(width);
+  assert.equal(rows.length, 1);
+  assert.ok(Array.from(rows[0]).reduce((n, c) => n + (c.codePointAt(0)! > 127 ? 2 : 1), 0) <= width);
+ }
+ for (const [details, expected] of [[{ timedOut: true }, '超时'], [{ cancelled: true }, '已取消'], [{ exitCode: 0 }, '完成']] as const) {
+  renderer.renderResult!({ content: [], details } as any, { expanded: false, isPartial: false }, {} as any, context);
+  assert.match(call.render(40)[0], new RegExp(expected));
+ }
+});
+
+test("all production MCP, host and evidence tools use compact rendering", async () => {
+ installMockFetch(); const mock = mockAPI(); await infernexExtension(mock.api);
+ for (const tool of mock.tools as any[]) {
+  assert.equal(tool.renderShell, 'self', tool.name);
+  assert.equal(typeof tool.renderCall, 'function', tool.name);
+  assert.equal(typeof tool.renderResult, 'function', tool.name);
+ }
+});
+
+test("Pi's real tool execution component renders a single content row and expands on demand", async () => {
+ const { compactToolRenderer } = await import('./infernex.ts');
+ const { ToolExecutionComponent } = await import('./node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/components/tool-execution.js');
+ const { initTheme } = await import('./node_modules/@earendil-works/pi-coding-agent/dist/modes/interactive/theme/theme.js');
+ initTheme('dark', false);
+ const definition: any = { name: 'infernex_host_exec', ...compactToolRenderer('本机命令') };
+ const component = new ToolExecutionComponent(definition.name, 'compact-render-test', { command: 'long command\n'.repeat(40) }, {}, definition, { requestRender() {} } as any, process.cwd());
+ component.markExecutionStarted();
+ const pending = component.render(60).filter(line => line.trim());
+ assert.equal(pending.length, 1); assert.match(pending[0], /执行中/);
+ component.updateResult({ content: [{ type: 'text', text: 'network-counter=123\n'.repeat(200) }], details: { exitCode: 1 }, isError: false });
+ const collapsed = component.render(60).filter(line => line.trim());
+ assert.equal(collapsed.length, 1); assert.match(collapsed[0], /失败/);
+ component.setExpanded(true);
+ const expanded = component.render(60).join('\n');
+ assert.match(expanded, /long command/); assert.match(expanded, /network-counter=123/);
+ component.setExpanded(false);
+ assert.equal(component.render(60).filter(line => line.trim()).length, 1);
+});
