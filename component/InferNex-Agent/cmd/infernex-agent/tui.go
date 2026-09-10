@@ -33,6 +33,7 @@ type tuiOptions struct {
 	checkOnly        bool
 	reasoningDisplay string
 	workspace        string
+	hostUser         string
 	piArgs           []string
 }
 
@@ -89,6 +90,7 @@ func runTUI(args []string) error {
 		"INFERNEX_MCP_URL="+opts.mcpURL,
 		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
 		"INFERNEX_WORKSPACE_ROOT="+workspaceDir,
+		"INFERNEX_HOST_USER="+opts.hostUser,
 	)
 	piEnv = prependToolPath(piEnv, defaultToolBinDir)
 	if err := checkPiModelConfiguration(opts, modelOpts, piEnv); err != nil {
@@ -175,6 +177,7 @@ func parseTUIOptions(args []string) (tuiOptions, modelFileOptions, string, error
 	flags.StringVar(&opts.stateDir, "state-dir", defaultPiStateDir, "Pi configuration and session directory")
 	flags.BoolVar(&opts.checkOnly, "check", false, "validate the migrated InferNex model configuration without opening the TUI")
 	flags.StringVar(&opts.reasoningDisplay, "reasoning-display", "", "reasoning block display: hidden (default) or visible")
+	flags.StringVar(&opts.hostUser, "host-user", "infernex-agent", "non-root Linux account for normal-mode host commands")
 	flags.StringVar(&opts.workspace, "workspace", "", "filesystem workspace; defaults to the directory where infernex-agent was started")
 	if err := flags.Parse(args); err != nil {
 		return tuiOptions{}, modelFileOptions{}, "", err

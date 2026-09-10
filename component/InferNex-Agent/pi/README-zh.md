@@ -1,30 +1,14 @@
-# Pi TUI 基础实现
+# Pi TUI
 
-本目录是 `agent/pi-agent-foundation` 分支的实验性 TUI。它复用 Pi 的终端界面、Session、上下文压缩和 token 展示，但不把 Pi 当成 Kubernetes 后端。
+Pi 提供终端交互、会话和上下文管理，后台 Go MCP 提供集群工具。
 
-安全结构如下：
+- `/mode_change normal|root|status` 控制本机命令的真实执行身份，默认 normal。
+- 本机文件、shell、SSH 统一经过 `infernex_host_exec`，Pi 原生文件/bash 工具被拦截以防绕过模式。
+- root 模式需要 root 启动的 TUI；普通模式使用服务用户和 no-new-privileges。
+- 支持结构化网络探针、PFC 多次采样及 HCCL MPI 测试，命令经本地终端预览批准。
+- MCP 的后台身份、集群执行模式和 Kubernetes RBAC 独立；本机 root 不等于 Pod/SSH 对端 root。
 
-- Pi 只负责模型循环和终端交互；
-- `infernex.ts` 从本机 InferNex Agent `/mcp` 动态发现工具；
-- 启动器禁用 Pi 内置 `bash`、`read`、`write`、`edit` 等 coding tools；
-- MCP 标记为只读的工具可自动执行，其他工具必须由交互终端确认；
-- 快照、变更记录、验证和回退仍由现有 Go 服务处理。
+参见[权限与网络诊断指南](../docs/guides/host-network-diagnostics-zh.md)和[安装指南](../docs/guides/install-and-modes-zh.md)。
 
-开发验证（Pi v0.84.1）：
-
-```bash
-sudo install -m 0755 pi /opt/infernex-agent/bin/pi
-sudo install -d -m 0755 /opt/infernex-agent/pi
-sudo install -m 0644 infernex.ts /opt/infernex-agent/pi/infernex.ts
-sudo /opt/infernex-agent/bin/tui.sh
-```
-
-正式离线包将在完成真实 A2/openEuler aarch64 验证后，把固定版本的 Pi Linux ARM64/AMD64 二进制及许可证一并打入宿主机包。当前分支不改变既有 `infernex-agent chat`，便于并行对比。
-
-开发构建时先按 `upstream.json` 下载并校验对应架构的官方归档，解压后执行：
-
-```bash
-./scripts/offline/build-host-bundle.sh \
-  --architecture arm64 \
-  --pi-runtime-dir /path/to/pi
-```
+本目录修改需要同时运行 `npm run typecheck` 和 `npm test`；Linux CI 还以 root 验证真实 UID 切换、
+文件访问拒绝、环境隔离、超时与取消。安装包包含 infernex.ts 和 host-tools.ts，运行时无需 npm/Node 安装。

@@ -1,7 +1,11 @@
 # Pi TUI 使用与边界
 
-`agent/pi-agent-foundation` 分支把 Pi 作为 InferNex Agent 的交互层候选实现。完整 Pi 测试包中，
+Pi 是 InferNex Agent 的交互层。完整 Pi 测试包中，
 `infernex-agent chat` 默认进入 TUI；旧 Go 终端仍作为显式兼容入口保留。
+
+> develop 的新增权限模式、网络/PFC/HCCL 工具见[Host 网络诊断指南](host-network-diagnostics-zh.md)。
+> `/mode_change normal|root` 控制本机命令 UID；本机文件和 shell 使用 `infernex_host_exec`，原生文件/bash 工具已拦截。
+> 以下 alpha.13 工作区描述仅适用于旧包，新模式不以工作区路径规则代替 OS 权限。
 
 ## 为什么采用 Pi
 
@@ -13,19 +17,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.12`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.13`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.12-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.12-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.13-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.13-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.12-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.12-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.12-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.13-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.13-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.13-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -124,7 +128,7 @@ infernex-agent tui --reasoning-display visible
 
 ## 工具与安全边界
 
-alpha.12 启用受控的 Pi 文件工具，并由 InferNex 扩展实施工作区和批准策略：
+alpha.13 启用受控的 Pi 文件工具，并由 InferNex 扩展实施工作区和批准策略：
 
 - `read`、`grep`、`find`、`ls` 在当前工作区内免确认；
 - 相对路径和绝对路径均不能越出工作区，符号链接也不能逃逸；

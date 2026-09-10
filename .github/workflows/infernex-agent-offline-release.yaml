@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 45
     env:
       BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
-      INCLUDE_PI_TUI: ${{ github.event_name == 'push' || inputs.include_pi_tui }}
+      INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
       matrix:
@@ -92,6 +92,8 @@ jobs:
           npm ci --ignore-scripts
           npm run typecheck
           npm test
+          sudo useradd --system --create-home --home-dir /var/lib/infernex-mode-test infernex-mode-test
+          sudo env INFERNEX_TEST_HOST_USER=infernex-mode-test "$(command -v node)" --experimental-strip-types --test host-tools.test.ts
 
       - name: Download and verify pinned Pi runtime
         if: ${{ env.INCLUDE_PI_TUI == 'true' }}
@@ -272,6 +274,7 @@ jobs:
               test -f ./payload/tools/licenses/ripgrep-LICENSE-MIT
               test -f ./payload/tools/licenses/fd-LICENSE-MIT
               test -f ./pi/infernex.ts
+            test -f ./pi/host-tools.ts
               test -f ./pi/LICENSE.pi.txt
               if [[ "${ARCHITECTURE}" == "amd64" ]]; then
                 test "$(./payload/pi-runtime/pi --version)" = "0.84.1"
@@ -300,7 +303,7 @@ jobs:
       contents: write
     env:
       BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
-      INCLUDE_PI_TUI: ${{ github.event_name == 'push' || inputs.include_pi_tui }}
+      INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:
       - name: Download architecture bundles

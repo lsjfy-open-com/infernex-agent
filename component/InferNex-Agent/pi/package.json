@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test infernex.test.ts",
+    "test": "node --experimental-strip-types --test infernex.test.ts host-tools.test.ts",
     "smoke:deepseek": "node deepseek-smoke.mjs"
   },
   "devDependencies": {

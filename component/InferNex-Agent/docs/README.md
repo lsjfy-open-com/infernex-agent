@@ -21,3 +21,5 @@
 - `archive/`：历史路线图、提案、社区材料和视频，供追溯，不能作为当前能力承诺。
 
 源仓库保留的 InferNex 平台说明位于根目录 `docs/upstream/`，不等于 Agent 的安装前置条件。历史 Release 使用固定 tag 查阅当时的文档；alpha.13 安装包不被本次开发变更覆盖。
+
+- [Host 权限切换、SSH、PFC 和 HCCL/网络诊断](guides/host-network-diagnostics-zh.md)

@@ -114,6 +114,7 @@ legacy_host_targets=(
   /opt/infernex-agent/bin/tui.sh
   /opt/infernex-agent/pi-runtime
   /opt/infernex-agent/pi/infernex.ts
+  /opt/infernex-agent/pi/host-tools.ts
   /opt/infernex-agent/pi/LICENSE.pi.txt
   /opt/infernex-agent/bin/configure-evidence.sh
   /opt/infernex-agent/bin/configure-skills.sh
@@ -136,6 +137,7 @@ collector_host_targets=(
   /opt/infernex-agent/bin/tui.sh
   /opt/infernex-agent/pi-runtime
   /opt/infernex-agent/pi/infernex.ts
+  /opt/infernex-agent/pi/host-tools.ts
   /opt/infernex-agent/pi/LICENSE.pi.txt
   /opt/infernex-agent/bin/configure-evidence.sh
   /opt/infernex-agent/bin/configure-skills.sh

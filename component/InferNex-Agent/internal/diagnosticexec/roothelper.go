@@ -25,6 +25,7 @@ const maxRootHelperRequestBytes = 8 * 1024
 var rootHelperProbes = map[string]bool{
 	"npu-inventory": true, "cann-version": true, "hccn-device": true,
 	"hccn-pfc-stats": true, "hccl-root-info": true, "hccl-test-layout": true,
+	"network-addresses": true, "network-routes": true, "network-sockets": true, "network-tcp-counters": true, "rdma-links": true, "rdma-counters": true,
 }
 
 var rootHelperSlots = make(chan struct{}, 2)
@@ -129,12 +130,15 @@ func handleRootHelperConnection(ctx context.Context, connection net.Conn) {
 	}
 	runner := &Runner{timeout: defaultTimeout}
 	var result Result
+	var attempts []Attempt
 	for _, command := range commands {
 		result, err = runner.runCommand(ctx, "host-root", "management-node", request.Probe, command, command.name, command.args...)
+		attempts = append(attempts, Attempt{Command: displayCommand(command), ExitCode: result.ExitCode, Stderr: result.Stderr, Error: result.Error})
 		if err == nil {
 			break
 		}
 	}
+	result.Attempts = attempts
 	response := rootHelperResponse{Result: result}
 	if err != nil {
 		response.Error = boundedRootError(err)

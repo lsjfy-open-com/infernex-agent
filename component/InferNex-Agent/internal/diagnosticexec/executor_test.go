@@ -95,3 +95,45 @@ func TestSSHRequiresConfiguredAlias(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestSSHDiscoveryOnlyAdvertisesConfiguredChannel(t *testing.T) {
+	for _, test := range []struct {
+		config  string
+		targets []string
+		want    bool
+	}{
+		{"", nil, false}, {"/etc/ssh/config", nil, false}, {"/etc/ssh/config", []string{"peer"}, true},
+	} {
+		runner, err := New(fake.NewSimpleClientset(), &rest.Config{Host: "https://example.invalid"}, test.config, test.targets)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(runner.Channels(), "ssh") != test.want {
+			t.Fatalf("channels=%v", runner.Channels())
+		}
+	}
+}
+
+func TestFailedExecutableFallbackPreservesBothAttempts(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	runner := &Runner{timeout: time.Second}
+	result, err := runner.Run(t.Context(), Request{Channel: "local", Probe: "hccn-pfc-stats", DeviceID: 1})
+	if err == nil || len(result.Attempts) != 2 {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if !strings.Contains(result.Attempts[0].Command, "hccn_tool -i 1 -stat -g") || result.Attempts[0].Error == "" || result.Attempts[1].Error == "" {
+		t.Fatalf("attempts=%+v", result.Attempts)
+	}
+}
+
+func TestNetworkCounterProbesDoNotMutateKernelState(t *testing.T) {
+	for name, expected := range map[string]string{"network-addresses": "ip -brief address", "network-routes": "ip route show table all", "network-sockets": "ss -s", "network-tcp-counters": "nstat -az", "rdma-links": "rdma link show", "rdma-counters": "rdma statistic show"} {
+		commands, err := probeCommands(name, 0)
+		if err != nil || len(commands) != 1 || displayCommand(commands[0]) != expected {
+			t.Fatalf("probe=%s commands=%v err=%v", name, commands, err)
+		}
+		if !rootHelperProbes[name] {
+			t.Fatalf("missing root helper profile %s", name)
+		}
+	}
+}

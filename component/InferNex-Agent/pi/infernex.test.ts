@@ -89,8 +89,9 @@ test("loads MCP tools and executes read-only calls without approval", async () =
 		"cluster_overview",
 		"deploy_service",
 		"infernex_read_artifact",
+		"infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test",
 	]);
-	assert.deepEqual(mock.commands, ["infernex-tools"]);
+	assert.deepEqual(mock.commands, ["mode_change", "infernex-tools"]);
 	assert.ok(mock.events.includes("session_start"));
 	const result = await mock.tools[0].execute("call-1", {}, undefined, undefined, { hasUI: false });
 	assert.match(result.content[0].text, /cluster_overview/);
@@ -114,33 +115,13 @@ test("denies write-capable tools without interactive approval", async () => {
 	);
 });
 
-test("scopes filesystem tools to the launch workspace and gates mutations", async () => {
-	mockLargeResponse = false;
-	installMockFetch();
-	process.env.INFERNEX_WORKSPACE_ROOT = await mkdtemp(join(tmpdir(), "infernex-workspace-"));
-	const mock = mockAPI();
-	await infernexExtension(mock.api);
-	const gate = mock.handlers.get("tool_call")?.[0];
-	assert.ok(gate);
-
-	assert.equal(
-		await gate({ toolName: "read", input: { path: "." } }, { hasUI: false }),
-		undefined,
-	);
-	await assert.rejects(
-		gate({ toolName: "read", input: { path: "../outside" } }, { hasUI: false }),
-		/outside the InferNex workspace/,
-	);
-	const denied = await gate(
-		{ toolName: "write", input: { path: "report.md", content: "result" } },
-		{ hasUI: true, ui: { confirm: async () => false } },
-	);
-	assert.deepEqual(denied, { block: true, reason: "operator denied workspace write" });
-	const allowed = await gate(
-		{ toolName: "write", input: { path: "report.md", content: "result" } },
-		{ hasUI: true, ui: { confirm: async () => true } },
-	);
-	assert.equal(allowed, undefined);
+test("filesystem builtins cannot bypass the mode-aware executor", async () => {
+ installMockFetch(); const mock = mockAPI(); await infernexExtension(mock.api);
+ const gate = mock.handlers.get("tool_call")?.[0]; assert.ok(gate);
+ for (const toolName of ["read", "write", "bash", "grep", "find", "ls", "edit"]) {
+  const result = await gate({toolName, input: {}}, {hasUI: true});
+  assert.equal((result as any).block, true);
+ }
 });
 
 test("stores large tool results and reads them progressively by hash", async () => {

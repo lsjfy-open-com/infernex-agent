@@ -19,9 +19,11 @@ Agent 管理的可恢复任务。它在 `diagnose` 及以上模式可用，按 n
 | `cann-version` | 读取固定 CANN/driver 版本文件 | passive/active-read |
 | `hccl-root-info` | 读取固定 `/etc/hccl_rootInfo.json` | active-read |
 | `hccl-test-layout` | 检查固定 HCCL Test 目录，不运行测试 | active-read |
+| `network-tcp-counters` / `network-sockets` | nstat / ss 网络统计 | active-read |
+| `rdma-counters` | RDMA 计数 | active-read |
 
 Profile 不接受 shell、脚本正文、路径、镜像、环境变量或额外命令参数。HCCL Test 本体不在当前列表：
-它会占用设备并产生网络流量，后续作为 `benchmark` action class 实现。
+它会占用设备并产生网络流量；交互式执行已由 Pi TUI 的 `infernex_run_hccl_test` 提供，见[网络诊断指南](host-network-diagnostics-zh.md)。它不作为周期 CollectorRun 自动重复执行。
 
 ## 自然语言示例
 

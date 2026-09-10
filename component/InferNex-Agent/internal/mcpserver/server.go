@@ -370,7 +370,7 @@ type plogTaskListOutput struct {
 
 type collectorStartInput struct {
 	Channel         string `json:"channel,omitempty" jsonschema:"Collector channel: pod (default), local, or host-root when configured"`
-	Profile         string `json:"profile" jsonschema:"Fixed profile: hccn-pfc-stats, hccn-device, npu-inventory, cann-version, hccl-root-info, or hccl-test-layout"`
+	Profile         string `json:"profile" jsonschema:"Fixed profile: hccn-pfc-stats, hccn-device, npu-inventory, cann-version, hccl-root-info, hccl-test-layout, network-tcp-counters, network-sockets, or rdma-counters"`
 	Namespace       string `json:"namespace" jsonschema:"Namespace containing target Pods"`
 	LabelSelector   string `json:"labelSelector" jsonschema:"Non-empty Kubernetes label selector expanded on every sample"`
 	Container       string `json:"container,omitempty" jsonschema:"Optional exact container name; empty tries regular containers in matching Pods"`
