@@ -416,12 +416,19 @@ func (m *Manager) recordError(id string, err error) {
 	m.mu.Unlock()
 }
 func (m *Manager) persist(task Task) error {
-	payload, err := json.MarshalIndent(task, "", "  ")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.tasks[task.ID]
+	if !ok {
+		return fmt.Errorf("collector task not found: %s", task.ID)
+	}
+	authoritative := clone(current)
+	payload, err := json.MarshalIndent(authoritative, "", "  ")
 	if err != nil {
 		return err
 	}
-	target := filepath.Join(m.stateDir, safe(task.ID)+".json")
-	temporary, err := os.CreateTemp(m.stateDir, "."+safe(task.ID)+".*.tmp")
+	target := filepath.Join(m.stateDir, safe(authoritative.ID)+".json")
+	temporary, err := os.CreateTemp(m.stateDir, "."+safe(authoritative.ID)+".*.tmp")
 	if err != nil {
 		return err
 	}
