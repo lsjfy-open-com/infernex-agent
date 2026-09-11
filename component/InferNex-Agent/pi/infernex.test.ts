@@ -272,6 +272,30 @@ test("continuous tasks resume progress endings but respect completion, blockers,
  access='full'; await input(); await emit('session_start',{}); await ended(); assert.equal(mock.sent.length,3);
 });
 
+test("continuous tasks count only successful tool results as new evidence", async () => {
+ const mock = mockAPI();
+ registerAutonomousTask(mock.api,{access:()=>"full",wasDenied:()=>false,resetDenied:()=>{}});
+ const notices: string[] = [];
+ const ctx = {hasUI:true,hasPendingMessages:()=>false,ui:{notify:(s:string)=>notices.push(s)}};
+ const emit = async(name:string,event:any) => {for (const handler of mock.handlers.get(name)||[]) await handler(event,ctx);};
+ const ended = ()=>emit('agent_end',{messages:[{role:'assistant',stopReason:'stop',content:[{type:'text',text:'progress'}]}]});
+ const result = (details:any, text='{}') => ({toolName:'infernex_host_exec',isError:false,result:{details,content:[{type:'text',text}]}});
+ await emit('input',{source:'interactive',text:'diagnose timeout'});
+ await emit('tool_execution_end',result({exitCode:1})); await ended();
+ await emit('tool_execution_end',result({timedOut:true})); await ended();
+ await emit('tool_execution_end',result({cancelled:true})); await ended();
+ assert.equal(mock.sent.length,2); assert.match(notices.at(-1)!,/三次/);
+
+ await emit('input',{source:'interactive',text:'retry with evidence'});
+ await emit('tool_execution_end',result({exitCode:1})); await ended();
+ await emit('tool_execution_end',result({exitCode:0},'{"sample":1}')); await ended();
+ await emit('tool_execution_end',result({status:'failed'})); await ended();
+ await emit('tool_execution_end',result({},'{"status":"failed"}')); await ended();
+ assert.equal(mock.sent.length,6);
+ await emit('tool_execution_end',result({},'{"exitCode":2}')); await ended();
+ assert.equal(mock.sent.length,6); assert.match(notices.at(-1)!,/三次/);
+});
+
 test("full mode skips local report approval while cluster mutations still require the operator", async () => {
  installMockFetch(); const original = globalThis.fetch;
  globalThis.fetch = (async(input:any, init:any)=>{
