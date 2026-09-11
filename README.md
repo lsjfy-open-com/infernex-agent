@@ -4,13 +4,13 @@
 
 A Kubernetes-first agent for inference deployment and operations, with optional InferNex, Helm and customer-platform adapters. It runs on a Linux management host using the active kubeconfig. InferNex CRDs are not required for native discovery, logs and diagnosis.
 
-**Current boundary:** alpha.14 provides the full Pi TUI, evidence/diagnostic tools and guarded Bridge deployment/recovery. Native resource-aware deployment and request-level load balancing are planned, not yet implemented. See the [capability matrix and architecture](component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md).
+**Current boundary:** alpha.15 provides the full Pi TUI, evidence/diagnostic tools and guarded Bridge deployment/recovery. Native resource-aware deployment and request-level load balancing are planned, not yet implemented. See the [capability matrix and architecture](component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md).
 
-alpha.14 adds `/mode_change normal|root`, SSH/network probes, timestamped PFC sampling and MPI HCCL tests. See the [host diagnostics guide](component/InferNex-Agent/docs/guides/host-network-diagnostics-zh.md).
+alpha.15 adds compact tool rows, readable report/memory filenames and `/mode_change manual|full` continuous execution on top of alpha.14 host identity, SSH/network, PFC and HCCL diagnostics. Cluster-impacting work still requires approval. See the [release notes](component/InferNex-Agent/docs/releases/v0.5.0-alpha.15-zh.md).
 
 ## Install the experimental release
 
-Download the archive and matching SHA256 for your management host's CPU architecture from [v0.5.0-alpha.14](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.14). Extract it and run `sudo ./install.sh`, then `sudo infernex-agent chat`. The full package includes Pi, rg and fd; no Node or Go installation is needed.
+Download the archive and matching SHA256 for your management host's CPU architecture from [v0.5.0-alpha.15](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.15). Extract it and run `sudo ./install.sh`, then `sudo infernex-agent chat`. The full package includes Pi, rg and fd; no Node or Go installation is needed.
 
 Use the [installation guide](component/InferNex-Agent/docs/guides/offline-install-zh.md) for exact verification and upgrade steps. A release tag identifies an immutable experimental package, not a main-branch merge or hardware certification.
 

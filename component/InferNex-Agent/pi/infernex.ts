@@ -150,6 +150,20 @@ export function compactToolRenderer(label: string): Pick<ToolDefinition, "render
  };
 }
 
+function successfulToolEvidence(event: { isError: boolean; result?: any }): boolean {
+ if (event.isError) return false;
+ const details = event.result?.details && typeof event.result.details === "object" ? event.result.details : {};
+ let payload: Record<string, any> = {};
+ const text = Array.isArray(event.result?.content)
+  ? event.result.content.filter((part: any) => part?.type === "text" && typeof part.text === "string").map((part: any) => part.text).join("\n")
+  : "";
+ if (text.length < 65536) { try { const value = JSON.parse(text); if (value && typeof value === "object") payload = value; } catch {} }
+ return !(details.timedOut || details.cancelled || payload.timedOut || payload.cancelled ||
+  details.status === "failed" || payload.status === "failed" ||
+  (typeof details.exitCode === "number" && details.exitCode !== 0) ||
+  (typeof payload.exitCode === "number" && payload.exitCode !== 0));
+}
+
 // An explicit completion checkpoint keeps a partial report from silently ending
 // a full-access task. Cancellation, denial and terminal model errors never queue
 // a continuation. Three endings without new tool evidence pause a stuck model.
@@ -173,7 +187,7 @@ export function registerAutonomousTask(pi: ExtensionAPI, host: Pick<ReturnType<t
   },
  });
  pi.on("tool_execution_end", (event) => {
-  if (!active || event.isError || event.toolName === "infernex_task_status") return;
+  if (!active || event.toolName === "infernex_task_status" || !successfulToolEvidence(event)) return;
   const fingerprint = createHash("sha256").update(event.toolName + JSON.stringify(event.result)).digest("hex");
   if (!seen.has(fingerprint)) { seen.add(fingerprint); progress = true; }
  });
