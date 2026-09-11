@@ -421,11 +421,20 @@ func (m *Manager) persist(task Task) error {
 		return err
 	}
 	target := filepath.Join(m.stateDir, safe(task.ID)+".json")
-	temporary := target + ".tmp"
-	if err := os.WriteFile(temporary, append(payload, '\n'), 0o600); err != nil {
+	temporary, err := os.CreateTemp(m.stateDir, "."+safe(task.ID)+".*.tmp")
+	if err != nil {
 		return err
 	}
-	return os.Rename(temporary, target)
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if _, err := temporary.Write(append(payload, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, target)
 }
 func (m *Manager) load() error {
 	entries, err := os.ReadDir(m.stateDir)

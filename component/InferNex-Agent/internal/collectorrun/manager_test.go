@@ -2,8 +2,10 @@ package collectorrun
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -71,6 +73,44 @@ func TestCollectorPersistsSamplesAndResumesState(t *testing.T) {
 	restored, err := reloaded.Get(task.ID)
 	if err != nil || restored.Status != "stopped" {
 		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+}
+
+func TestConcurrentPersistsUseIndependentTemporaryFiles(t *testing.T) {
+	state, evidence := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence")
+	manager, err := NewManager(&fakeSource{}, state, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := Task{ID: "concurrent-state", Status: "running", CreatedAt: time.Now().UTC()}
+	start := make(chan struct{})
+	errors := make(chan error, 64)
+	var group sync.WaitGroup
+	for sample := 0; sample < cap(errors); sample++ {
+		group.Add(1)
+		go func(sample int) {
+			defer group.Done()
+			<-start
+			copy := task
+			copy.Samples = sample
+			errors <- manager.persist(copy)
+		}(sample)
+	}
+	close(start)
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent persist failed: %v", err)
+		}
+	}
+	payload, err := os.ReadFile(filepath.Join(state, task.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Task
+	if err := json.Unmarshal(payload, &saved); err != nil || saved.ID != task.ID {
+		t.Fatalf("invalid final state: task=%#v err=%v", saved, err)
 	}
 }
 
