@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.12"
+        default: "0.5.0-alpha.15"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -26,7 +26,7 @@ on:
       include_pi_tui:
         description: Bundle the pinned Pi runtime and InferNex TUI extension
         required: true
-        default: false
+        default: true
         type: boolean
 
 permissions:
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.15' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -303,7 +303,7 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.12' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.15' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:
@@ -321,7 +321,7 @@ jobs:
           INCLUDE_PI_TUI: ${{ env.INCLUDE_PI_TUI }}
         run: |
           if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
-            release_notes="Experimental Pi-based InferNex Agent TUI for management-node testing. The package includes the complete pinned Pi v0.84.1 runtime, resumable sessions, cross-session semantic memory, an 8192-token default output limit, reasoning blocks hidden by default, context/token display, controlled InferNex MCP tools, and SHA-256 artifact paging for large logs. The launch directory (or --workspace) is the interactive filesystem workspace: read/grep/find/ls inherit the launching operator's Linux permissions, while write/edit/bash require local approval and cannot escape the workspace through relative paths or symlinks. Persistent unattended evidence roots remain a separate low-privilege service feature; stale unreadable roots no longer block upgrades. CANN plog capture discovers container mounts plus bounded Ascend/NPU roots, retains Pod metadata, current/previous logs, source maps and plog by Pod UID, and reports exec failures instead of silently returning an empty capture. Installation does not contact npm and requires no Node, Bun, Go, or Python installation. This is an alpha prerelease; keep the existing stable Agent package available for rollback."
+            release_notes="Experimental management-node package with the pinned Pi v0.84.1 runtime. Since alpha.14, tool activity is collapsed to one status row, reports and memories use readable keyword-plus-UTC-time filenames backed by hash indexes, and /mode_change independently selects normal/root identity and manual/full approval policy. Full access continues a task through intermediate reports and automatically runs recognized read-only host/SSH/Pod diagnostics, bounded evidence collectors, reports and verified memory updates; cluster deployment/deletion/experiments, HCCL or iperf load, and unclassified commands still require operator approval. Three endings without successful new tool evidence pause continuation. CANN plog, PFC/HCCN, RDMA, SSH and kubectl exec diagnostics remain included. Installation is offline and requires no Node, Bun, Go or Python installation. This is an alpha prerelease; retain alpha.14 or another known-good package for rollback."
           else
             release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
           fi

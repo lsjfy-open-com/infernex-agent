@@ -3,16 +3,16 @@
 Pi 是 InferNex Agent 的交互层。完整 Pi 测试包中，
 `infernex-agent chat` 默认进入 TUI；旧 Go 终端仍作为显式兼容入口保留。
 
-> develop 的新增权限模式、网络/PFC/HCCL 工具见[Host 网络诊断指南](host-network-diagnostics-zh.md)。
+> 权限模式、网络/PFC/HCCL 工具见[Host 网络诊断指南](host-network-diagnostics-zh.md)。
 > `/mode_change normal|root` 控制本机命令 UID；本机文件和 shell 使用 `infernex_host_exec`，原生文件/bash 工具已拦截。
 > 以下 alpha.13 工作区描述仅适用于旧包，新模式不以工作区路径规则代替 OS 权限。
 
 ## 工具调用的紧凑显示
 
-develop 默认将每次工具调用显示为一行“状态 · 操作 · 目标 · 耗时”，长参数、命令和结果不占据报告区域。
+alpha.15 默认将每次工具调用显示为一行“状态 · 操作 · 目标 · 耗时”，长参数、命令和结果不占据报告区域。
 按 `Ctrl+O` 展开/折叠工具详情；自定义键位对应 Pi 的 `app.tools.expand`。打开或恢复会话默认折叠。
 失败、超时、取消在摘要中明确标记；批准执行时仍展示完整命令。这里只改变终端渲染，不裁剪模型收到的
-结果、历史证据或 Artifact 内容。本改动尚未包含在 alpha.14 安装包中。
+结果、历史证据或 Artifact 内容。此功能从 alpha.15 安装包开始提供。
 
 ## 为什么采用 Pi
 
@@ -24,19 +24,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.14`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 `v0.5.0-alpha.15`。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.14-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.14-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.15-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.15-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.14-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.14-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.14-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.15-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.15-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.15-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```
@@ -94,8 +94,9 @@ assistant message 为空时也会直接显示原因。这样可以区分“模�
 请保留告警中的 provider error、vLLM access log 对应请求，以及接口返回的首个 SSE event，作为后续
 适配具体 vLLM-Ascend 版本和 tool-call parser 的证据。
 
-TUI 默认把**执行命令时的当前目录**作为文件工作区，并继承启动用户的操作系统权限。以 root 从
-`/data/array/case-01` 启动时，可直接只读遍历该磁盘阵列目录，无需 `configure-evidence`：
+TUI 使用 `/mode_change` 选定的本机身份执行文件与 shell 操作。`normal` 身份固定使用
+`infernex-agent` 用户及其 home，清除继承能力并禁止重新提权；`root` 身份使用启动时的工作区，且要求
+通过 sudo 启动 TUI。需要 root 检查 `/data/array/case-01` 时：
 
 ```bash
 cd /data/array/case-01
@@ -104,16 +105,16 @@ sudo infernex-agent tui
 sudo infernex-agent tui --workspace /data/array/case-01
 ```
 
-Session 仍单独保存在 `/var/lib/infernex-agent/pi/sessions`，不会写进工作区。恢复 Session 时对应挂载
-目录必须仍然存在；磁盘阵列未挂载时应先恢复挂载，不要把会话静默切换到另一个目录。
+随后执行 `/mode_change root` 或 `/mode_change root full`。Session 仍单独保存在
+`/var/lib/infernex-agent/pi/sessions`，不会写进工作区。恢复 Session 时对应挂载目录必须仍然存在。
 
 新安装默认 `max-output-tokens=8192`，小窗口按 context window 的 1/4 降低。该值会转换为 Pi 模型
 配置的 `maxTokens`；可重新运行模型配置脚本调整，不需要重新打包或安装 Pi。Session 负责恢复一次
 对话；跨 Session 的稳定知识由 Go Core 的 `infernex_search_memory`、`infernex_remember` 和
-`infernex_forget_memory` 提供，保存于 `/var/lib/infernex-agent/semantic-memory`。记忆写入和忘记会像
-其他写工具一样要求本机批准，历史集群事实仍需工具重新验证。
+`infernex_forget_memory` 提供，保存于 `/var/lib/infernex-agent/semantic-memory`。记忆写入和忘记在
+manual 模式要求本机批准，在 full 模式仅对已验证的任务知识自动执行；历史集群事实仍需工具重新验证。
 
-### 报告和记忆的可读名称（develop，尚未发布）
+### 报告和记忆的可读名称（alpha.15）
 
 新报告和记忆以标题/主题关键词加 UTC 日期时间命名，例如：
 
@@ -126,10 +127,10 @@ ID 到文件名的直接索引。报告 ID 为内容 SHA-256，记忆 ID 为生�
 不会改变它。记忆搜索支持关键词、日期及完整 ID；按 ID 精确查询仍执行集群隔离、过期和忘记过滤。
 
 旧版文件无需手工重命名，旧 ID 继续有效，列表和搜索会补充可读名称。索引缺失时可从源文件重建，
-正常按 ID 读取无需扫描整个目录。已有文件原路径保留，以免破坏历史引用；本修改不追溯改写 alpha.14
-安装包。工具原始日志 Artifact 的内容 hash 和证据引用协议不受影响。
+正常按 ID 读取无需扫描整个目录。已有文件原路径保留，以免破坏历史引用；升级不会追溯改写 alpha.14
+创建的文件。工具原始日志 Artifact 的内容 hash 和证据引用协议不受影响。
 
-### 完全访问与连续执行（develop，尚未发布）
+### 完全访问与连续执行（alpha.15）
 
 执行身份与批准策略独立设置：
 

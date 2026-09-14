@@ -1,4 +1,4 @@
-> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.13 的原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.15 的原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
@@ -15,7 +15,7 @@ images, or shell commands.
 The intended management-node installation is one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.13/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.13 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.15/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.15 bash
 ```
 
 The installer discovers the current kubeconfig, CPU architecture, and whether
@@ -41,10 +41,11 @@ Markdown-only Skills without granting shell or cluster permissions; see the
 [Chinese Skill guide](docs/guides/skills-and-cann-hixl-zh.md).
 
 The current public candidate is
-[v0.4.0-rc.8](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.4.0-rc.8).
-Generic Kubernetes reads, network fields, truncated-answer continuation, and
-the `/usage` command described on this branch are planned for the next
-candidate and must pass Kind plus an existing-cluster acceptance run.
+[v0.5.0-alpha.15](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.15).
+It includes the Pi TUI, generic Kubernetes reads, guarded Bridge operations,
+host/SSH/Pod diagnostics, compact tool rows, readable report and memory names,
+and manual/full approval modes. Native resource-aware deployment and request-level
+load balancing remain planned capabilities.
 
 The management-node installation provides one Agentic terminal:
 
@@ -54,8 +55,10 @@ sudo infernex-agent chat
 ```
 
 The model must support OpenAI-compatible function/tool calling. Read-only MCP
-tools run automatically; every mutating tool requires an exact local `yes`.
-One-shot `--ask` mode always denies writes.
+tools run automatically. Manual access asks for local approval on writes; full
+access preauthorizes bounded evidence/report operations while retaining approval
+for cluster mutations, load tests and unclassified commands. One-shot `--ask`
+mode always denies writes.
 
 The base Kubernetes layer publishes eight passive read tools on any
 authorized Kubernetes/openFuyao cluster:

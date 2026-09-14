@@ -2,8 +2,10 @@ package collectorrun
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,11 +52,19 @@ func TestCollectorPersistsSamplesAndResumesState(t *testing.T) {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for source.calls.Load() < 2 && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		current, getErr := manager.Get(task.ID)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if current.Samples == 2 {
+			break
+		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if source.calls.Load() != 2 {
-		t.Fatalf("calls=%d", source.calls.Load())
+	current, err := manager.Get(task.ID)
+	if err != nil || current.Samples != 2 {
+		t.Fatalf("task=%#v calls=%d err=%v", current, source.calls.Load(), err)
 	}
 	got, err := manager.Stop(task.ID, true)
 	if err != nil || got.Samples != 2 {
@@ -71,6 +81,73 @@ func TestCollectorPersistsSamplesAndResumesState(t *testing.T) {
 	restored, err := reloaded.Get(task.ID)
 	if err != nil || restored.Status != "stopped" {
 		t.Fatalf("restored=%#v err=%v", restored, err)
+	}
+}
+
+func TestConcurrentPersistsSerializeAuthoritativeState(t *testing.T) {
+	state, evidence := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence")
+	manager, err := NewManager(&fakeSource{}, state, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := manager.Create(StartRequest{Channel: "host-root", Profile: "hccn-pfc-stats", DeviceIDs: []int{0}, IntervalSeconds: 60, DurationMinutes: 1, MaxBytes: 1024 * 1024, Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errors := make(chan error, 64)
+	var group sync.WaitGroup
+	for sample := 0; sample < cap(errors); sample++ {
+		group.Add(1)
+		go func(sample int) {
+			defer group.Done()
+			<-start
+			copy := task
+			copy.Samples = sample
+			errors <- manager.persist(copy)
+		}(sample)
+	}
+	close(start)
+	group.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("concurrent persist failed: %v", err)
+		}
+	}
+	payload, err := os.ReadFile(filepath.Join(state, task.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved Task
+	if err := json.Unmarshal(payload, &saved); err != nil || saved.ID != task.ID || saved.Samples != task.Samples {
+		t.Fatalf("invalid final state: task=%#v err=%v", saved, err)
+	}
+}
+
+func TestPersistRejectsStaleRunningSnapshotAfterStop(t *testing.T) {
+	state, evidence := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "evidence")
+	manager, err := NewManager(&fakeSource{}, state, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := manager.Create(StartRequest{Channel: "host-root", Profile: "hccn-pfc-stats", DeviceIDs: []int{0}, IntervalSeconds: 60, DurationMinutes: 1, MaxBytes: 1024 * 1024, Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Stop(running.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.persist(running); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewManager(&fakeSource{}, state, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := reloaded.Get(running.ID)
+	if err != nil || restored.Status != "stopped" {
+		t.Fatalf("stale running snapshot restored: task=%#v err=%v", restored, err)
 	}
 }
 
