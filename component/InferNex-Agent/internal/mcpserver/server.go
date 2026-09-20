@@ -399,6 +399,10 @@ type experimentListOutput struct {
 	Experiments []experiment.Plan `json:"experiments"`
 }
 
+type sloProfileListOutput struct {
+	Profiles []slo.Summary `json:"profiles"`
+}
+
 type serverOptions struct {
 	deployer           deployer.Deployer
 	diagnoser          diagnostics.Diagnoser
@@ -1082,8 +1086,8 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 
 	if options.bridge && options.experiments != nil && !options.diagnosticDelegate {
 		if provider, ok := options.experiments.(interface{ ListSLOProfiles() []slo.Summary }); ok {
-			mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_slo_profiles", Description: "List approved local SLO profile IDs, hashes, bounded request budgets and target names without private prompts or endpoints.", Annotations: readOnly("List SLO profiles")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, []slo.Summary, error) {
-				return nil, provider.ListSLOProfiles(), nil
+			mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_slo_profiles", Description: "List approved local SLO profile IDs, hashes, bounded request budgets and target names without private prompts or endpoints.", Annotations: readOnly("List SLO profiles")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, sloProfileListOutput, error) {
+				return nil, sloProfileListOutput{Profiles: provider.ListSLOProfiles()}, nil
 			})
 		}
 		mutating := func(title string) *mcp.ToolAnnotations {

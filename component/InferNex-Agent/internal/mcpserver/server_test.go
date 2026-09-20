@@ -36,6 +36,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 )
 
 type stubObserver struct{}
@@ -45,6 +46,11 @@ type stubDeployer struct{}
 type stubDiagnoser struct{}
 
 type stubExperiments struct{}
+type stubSLOExperiments struct{ stubExperiments }
+
+func (stubSLOExperiments) ListSLOProfiles() []slo.Summary {
+	return []slo.Summary{{ID: "smoke", Version: "1", SHA256: "abc", Samples: 2, Targets: []string{"models/stable", "models/trial"}}}
+}
 
 type stubCollectorSource struct{}
 
@@ -120,7 +126,7 @@ func (stubDiagnoser) Diagnose(_ context.Context, request diagnostics.Request) (d
 func (stubExperiments) Create(_ context.Context, request experiment.Request) (experiment.Plan, error) {
 	return experiment.Plan{
 		ID: "experiment-1", Namespace: request.Namespace, BaselineName: request.BaselineName,
-		CandidatePrefix: request.CandidatePrefix, FeatureProfiles: request.FeatureProfiles,
+		CandidatePrefix: request.CandidatePrefix, FeatureProfiles: request.FeatureProfiles, SLOProfile: request.SLOProfile,
 		Status: experiment.PlanStatusPlanned,
 	}, nil
 }
@@ -529,7 +535,7 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 		Name: "infernex_start_experiment",
 		Arguments: map[string]any{
 			"namespace": "models", "baselineName": "stable", "candidatePrefix": "trial",
-			"featureProfiles": []string{"enable-mooncake"}, "confirm": true,
+			"featureProfiles": []string{"enable-mooncake"}, "sloProfile": "smoke", "confirm": true,
 		},
 	})
 	if err != nil || experimentResult.IsError {
@@ -543,8 +549,56 @@ func TestServerPublishesDiagnosticsAndExperimentToolsOnlyWhenEnabled(t *testing.
 	if err := json.Unmarshal(payload, &plan); err != nil {
 		t.Fatalf("decode experiment: %v", err)
 	}
-	if plan.ID != "experiment-1" || len(plan.FeatureProfiles) != 1 {
+	if plan.ID != "experiment-1" || len(plan.FeatureProfiles) != 1 || plan.SLOProfile != "smoke" {
 		t.Fatalf("experiment = %#v", plan)
+	}
+}
+
+func TestServerListsSLOProfilesAsObject(t *testing.T) {
+	ctx := context.Background()
+	server := New(stubObserver{}, "test", WithExperiments(stubSLOExperiments{}))
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	mcpClient := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "test"}, nil)
+	clientSession, err := mcpClient.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	listed, err := clientSession.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, tool := range listed.Tools {
+		if tool.Name == "infernex_list_slo_profiles" {
+			found = true
+			if tool.OutputSchema == nil {
+				t.Fatal("missing object output schema")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("SLO profile tool missing")
+	}
+	result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_list_slo_profiles", Arguments: map[string]any{}})
+	if err != nil || result.IsError {
+		t.Fatalf("call failed: %v %+v", err, result)
+	}
+	payload, err := json.Marshal(result.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output sloProfileListOutput
+	if err := json.Unmarshal(payload, &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Profiles) != 1 || output.Profiles[0].ID != "smoke" {
+		t.Fatalf("bad SLO summary: %+v", output)
 	}
 }
 
