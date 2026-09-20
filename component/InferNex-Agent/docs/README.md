@@ -7,6 +7,7 @@
 | 安装/升级实验包 | [alpha.15 发布说明](releases/v0.5.0-alpha.15-zh.md)、[离线安装](guides/offline-install-zh.md)、[安装模式](guides/install-and-modes-zh.md)、[openEuler 管理节点](guides/host-install-openeuler-zh.md) |
 | 配模型与使用 TUI | [模型配置](guides/model-configuration-zh.md)、[Pi TUI](guides/pi-tui-zh.md)、[产品使用](guides/product-guide-zh.md) |
 | 看当前到底支持什么 | [通用底座能力矩阵](architecture/kubernetes-first-zh.md)、[MCP 工具目录](reference/mcp-tool-catalog-zh.md) |
+| 看智谱与业界方案、效果及我们的差距 | [基础设施 Agent 洞察（2026-09-20）](architecture/infra-agent-industry-insights-2026-09-20-zh.md) |
 | 设计原生部署/规格/均衡/客户适配 | [Kubernetes 分层契约](architecture/kubernetes-first-zh.md) |
 | 运维、取证和回退 | [运维手册](guides/operations-runbook-zh.md)、[日志报告](guides/local-evidence-and-reports-zh.md)、[变更保护](guides/change-safety-zh.md) |
 | 验证 Mooncake prefix hit 超时 | [网络与交换机同窗取证](guides/mooncake-prefix-hit-network-validation-zh.md) |
