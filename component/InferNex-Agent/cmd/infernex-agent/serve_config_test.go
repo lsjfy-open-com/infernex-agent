@@ -41,6 +41,19 @@ func TestReadAgentArgumentFileRejectsPositionalContent(t *testing.T) {
 	}
 }
 
+func TestSLOProfilesRequireExplicitExperimentEnablement(t *testing.T) {
+	if _, err := parseServerOptions([]string{"--slo-profile-directory=/etc/infernex-agent/slo-profiles"}); err == nil {
+		t.Fatal("active SLO profiles accepted without experiments enabled")
+	}
+	opts, err := parseServerOptions([]string{
+		"--enable-experiments", "--enable-log-diagnostics",
+		"--slo-profile-directory=/etc/infernex-agent/slo-profiles",
+	})
+	if err != nil || opts.sloProfileDirectory != "/etc/infernex-agent/slo-profiles" {
+		t.Fatalf("SLO profile configuration = %#v, error = %v", opts, err)
+	}
+}
+
 func TestParseServerOptionsValidatesExecutionModeAndSSHPair(t *testing.T) {
 	if _, err := parseServerOptions([]string{"--execution-mode=god-mode"}); err == nil {
 		t.Fatal("invalid execution mode was accepted")

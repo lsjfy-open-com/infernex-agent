@@ -1,6 +1,8 @@
-> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.13 的原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.16 的原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
+
+alpha.16 新增可选 SLO 对照实验与 Git / snapshot 版本关联记录，使用方式和能力边界见[SLO 与配置版本指南](docs/guides/slo-and-config-versions-zh.md)。
 
 [English](README.md) | 简体中文
 
@@ -39,7 +41,7 @@ Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的�
 联网安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.13/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.13 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.16/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.16 bash
 ```
 
 离线安装：
@@ -106,7 +108,7 @@ Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/guides/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.13`（继承 alpha.12 功能并整合部署/恢复保护），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
+当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.16`（继承 alpha.12 功能并整合部署/恢复保护），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 

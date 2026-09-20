@@ -1,5 +1,7 @@
 # 渐进式特性实验与跨节点故障关联
 
+alpha.16 可选增加固定请求 SLO 门禁：管理员配置场景后，在创建实验时选择 `sloProfile`。本页描述默认的就绪与诊断流程；启用方式、业务指标与证据格式见[SLO 与配置版本指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/slo-and-config-versions-zh.md)。
+
 ## 1. 解决的问题
 
 InferNex 同时承载 vLLM、vLLM Ascend、Mooncake、PD 分离、HCCL/RDMA、

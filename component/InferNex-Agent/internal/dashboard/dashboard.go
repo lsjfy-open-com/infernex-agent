@@ -342,6 +342,7 @@ const indexHTML = `<!doctype html>
 		card.append(cardHead);
 		const badges = el("div", "badges");
 		badges.append(badge("基线 " + plan.baselineName), badge("当前稳定 " + plan.stableService), badge("阶段 " + plan.currentStage + "/" + (plan.stages || []).length));
+		badges.append(badge(plan.sloProfile ? "SLO: " + plan.sloProfile : "就绪与诊断门禁 · 未运行 SLO"));
 		card.append(badges);
 		if (plan.message) card.append(el("div", "meta", plan.message));
 		const stages = el("div", "experiment-stages");
@@ -351,6 +352,16 @@ const indexHTML = `<!doctype html>
 		  const body = el("div");
 		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " · " + stage.featureProfile + " · " + stage.status));
 		  body.append(el("div", "", stage.baselineName + " → " + stage.candidateName));
+		  if (stage.slo) {
+			const result = stage.slo;
+			const labels = {passed: "通过", regression: "退化", inconclusive: "证据不足"};
+			body.append(badge("SLO " + (labels[result.decision] || result.decision), result.decision === "passed" ? "good" : (result.decision === "regression" ? "critical" : "warning")));
+			if (result.reason) body.append(el("div", "meta", result.reason));
+			if (result.baseline && result.candidate) {
+			  body.append(el("div", "meta", "端到端 p95: " + Number(result.baseline.p95Millis || 0).toFixed(1) + " → " + Number(result.candidate.p95Millis || 0).toFixed(1) + " ms；成功率: " + (100 * Number(result.baseline.successRate || 0)).toFixed(1) + "% → " + (100 * Number(result.candidate.successRate || 0)).toFixed(1) + "%"));
+			}
+			body.append(el("div", "meta", "证据 " + result.runId + (result.evidenceSha256 ? " · SHA256 " + result.evidenceSha256 : " · 未完成")));
+		  }
 		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "新增异常: " + stage.comparison.regressionCategories.join(", ")));
 		  if (stage.message) body.append(el("div", "meta", stage.message));
 		  row.append(body);

@@ -57,6 +57,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/remediator"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	infernexskills "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -112,6 +113,7 @@ type options struct {
 	experimentTimeout            time.Duration
 	experimentSoak               time.Duration
 	experimentDiagnosticInterval time.Duration
+	sloProfileDirectory          string
 }
 
 func main() {
@@ -129,6 +131,8 @@ func run() error {
 		switch os.Args[1] {
 		case "cluster-state":
 			return runClusterState(os.Args[2:])
+		case "config-version":
+			return runConfigVersion(os.Args[2:])
 		case "chat":
 			return runChat(os.Args[2:])
 		case "tui":
@@ -221,6 +225,7 @@ func parseServerOptions(args []string) (options, error) {
 	)
 	flags.StringVar(&opts.evidenceRoots, "evidence-roots", "", "Comma-separated operator-approved host directories for read-only historical log analysis; empty uses state-dir/imports")
 	flags.StringVar(&opts.reportDirectory, "report-directory", "", "Protected Markdown report directory; empty uses state-dir/reports")
+	flags.StringVar(&opts.sloProfileDirectory, "slo-profile-directory", "", "Administrator-approved SLO profile directory; empty disables active SLO experiments")
 	flags.StringVar(&opts.skillDirectories, "skill-directories", "/opt/infernex-agent/skills,/etc/infernex-agent/skills.d", "Comma-separated read-only diagnostic Skill roots")
 	flags.DurationVar(
 		&opts.deploymentTimeout,
@@ -338,6 +343,9 @@ func parseServerOptions(args []string) (options, error) {
 	}
 	if opts.enableExperiments && !opts.enableDiagnostics {
 		return options{}, fmt.Errorf("--enable-experiments requires --enable-log-diagnostics")
+	}
+	if strings.TrimSpace(opts.sloProfileDirectory) != "" && !opts.enableExperiments {
+		return options{}, fmt.Errorf("--slo-profile-directory requires --enable-experiments")
 	}
 	if opts.enableTestCatalog && !opts.enableDeployment {
 		return options{}, fmt.Errorf("--enable-test-catalog requires --enable-deployment")
@@ -573,19 +581,32 @@ func serveAgent(opts options) error {
 		if storeErr != nil {
 			return fmt.Errorf("configure persistent experiment store: %w", storeErr)
 		}
+		experimentConfig := experiment.Config{
+			TemplateNamespace:  opts.experimentTemplateNS,
+			ReadinessTimeout:   opts.experimentTimeout,
+			SoakDuration:       opts.experimentSoak,
+			PollInterval:       5 * time.Second,
+			DiagnosticInterval: opts.experimentDiagnosticInterval,
+			DiagnosticsMinutes: opts.eventSinceMinutes,
+		}
+		if strings.TrimSpace(opts.sloProfileDirectory) != "" {
+			profiles, profileErr := slo.LoadProfiles(opts.sloProfileDirectory)
+			if profileErr != nil {
+				return fmt.Errorf("load approved SLO profiles: %w", profileErr)
+			}
+			evidence, evidenceErr := slo.NewFileStore(filepath.Join(opts.stateDir, "slo"))
+			if evidenceErr != nil {
+				return fmt.Errorf("configure SLO evidence store: %w", evidenceErr)
+			}
+			experimentConfig.SLOProfiles = profiles
+			experimentConfig.SLORunner = slo.NewRunner(evidence, nil)
+		}
 		controller, controllerErr := experiment.New(
 			kubeClient,
 			changeStore,
 			planStore,
 			domainDiagnoser,
-			experiment.Config{
-				TemplateNamespace:  opts.experimentTemplateNS,
-				ReadinessTimeout:   opts.experimentTimeout,
-				SoakDuration:       opts.experimentSoak,
-				PollInterval:       5 * time.Second,
-				DiagnosticInterval: opts.experimentDiagnosticInterval,
-				DiagnosticsMinutes: opts.eventSinceMinutes,
-			},
+			experimentConfig,
 		)
 		if controllerErr != nil {
 			return fmt.Errorf("configure progressive experiments: %w", controllerErr)

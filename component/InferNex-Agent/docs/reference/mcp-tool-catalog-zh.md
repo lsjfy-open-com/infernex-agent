@@ -97,9 +97,12 @@ NPU checker 和 EvalScope 伪装成已实现工具。
 | `infernex_deploy_model` | 写 | 固定 workspace；不接受任意 image、command、URL、namespace 或 YAML；需要批准 |
 | `infernex_delete_model` | 写/破坏 | 只能删除带 Agent ownership 和 change ID 的对象；需要批准 |
 | `infernex_get_change` | 只读 | 查询 change journal、commit、apply failure 和 rollback 状态 |
-| `infernex_start_experiment` | 写 | 从稳定基线克隆；每阶段只增加一个批准特性；回归即停止和回退 |
+| `infernex_list_slo_profiles` | 只读 | 列出批准场景 ID、摘要、目标和请求预算，不返回原始 prompt 或端点 |
+| `infernex_start_experiment` | 写 | 从稳定基线克隆；每阶段只增加一个批准特性；可选 `sloProfile` 启用固定请求业务门禁；退化或证据不足停止并回退 |
 | `infernex_get_experiment` | 只读 | 查询阶段、对照、证据和回退结果 |
 | `infernex_list_experiments` | 只读 | 查询持久化实验列表 |
+
+alpha.16 的 SLO 默认关闭，须配置 `--slo-profile-directory` 并批准实验。配置与请求样例见[SLO 与配置版本指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/slo-and-config-versions-zh.md)。`config-version record/show/list/verify` 是本地 CLI，不是 MCP 写工具，也不执行集群恢复。
 
 上述写工具仍偏 Bridge 路径；openFuyao 主 Chart 的 values、Helm upgrade/rollback 和 Gateway 路由
 修改属于 v0.5 后续 typed tools，不能通过通用 `k8s_read_resources` 绕过。

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 const ApprovedFeatureLabel = "agent.infernex.io/approved-experiment-feature"
 
 type Request struct {
+	SLOProfile      string
 	Namespace       string
 	BaselineName    string
 	CandidatePrefix string
@@ -44,34 +46,42 @@ type Request struct {
 }
 
 type Stage struct {
-	Index          int                     `json:"index"`
-	FeatureProfile string                  `json:"featureProfile"`
-	BaselineName   string                  `json:"baselineName"`
-	CandidateName  string                  `json:"candidateName"`
-	Status         string                  `json:"status"`
-	ChangeID       string                  `json:"changeId,omitempty"`
-	StartedAt      time.Time               `json:"startedAt,omitempty"`
-	ReadyAt        time.Time               `json:"readyAt,omitempty"`
-	CompletedAt    time.Time               `json:"completedAt,omitempty"`
-	Message        string                  `json:"message,omitempty"`
-	Comparison     *diagnostics.Comparison `json:"comparison,omitempty"`
+	FeatureUID           string                  `json:"featureUid,omitempty"`
+	FeatureSpecSHA256    string                  `json:"featureSpecSha256,omitempty"`
+	TemplateFingerprints map[string]string       `json:"templateFingerprints,omitempty"`
+	SLO                  *slo.Result             `json:"slo,omitempty"`
+	Index                int                     `json:"index"`
+	FeatureProfile       string                  `json:"featureProfile"`
+	BaselineName         string                  `json:"baselineName"`
+	CandidateName        string                  `json:"candidateName"`
+	Status               string                  `json:"status"`
+	ChangeID             string                  `json:"changeId,omitempty"`
+	StartedAt            time.Time               `json:"startedAt,omitempty"`
+	ReadyAt              time.Time               `json:"readyAt,omitempty"`
+	CompletedAt          time.Time               `json:"completedAt,omitempty"`
+	Message              string                  `json:"message,omitempty"`
+	Comparison           *diagnostics.Comparison `json:"comparison,omitempty"`
 }
 
 type Plan struct {
-	APIVersion      string    `json:"apiVersion"`
-	Kind            string    `json:"kind"`
-	ID              string    `json:"id"`
-	Namespace       string    `json:"namespace"`
-	BaselineName    string    `json:"baselineName"`
-	CandidatePrefix string    `json:"candidatePrefix"`
-	FeatureProfiles []string  `json:"featureProfiles"`
-	Status          string    `json:"status"`
-	CurrentStage    int       `json:"currentStage"`
-	StableService   string    `json:"stableService"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-	Message         string    `json:"message,omitempty"`
-	Stages          []Stage   `json:"stages"`
+	SLOGateMode      string       `json:"sloGateMode"`
+	SLOProfile       string       `json:"sloProfile,omitempty"`
+	SLOProfileSHA256 string       `json:"sloProfileSha256,omitempty"`
+	SLOSnapshot      *slo.Profile `json:"sloSnapshot,omitempty"`
+	APIVersion       string       `json:"apiVersion"`
+	Kind             string       `json:"kind"`
+	ID               string       `json:"id"`
+	Namespace        string       `json:"namespace"`
+	BaselineName     string       `json:"baselineName"`
+	CandidatePrefix  string       `json:"candidatePrefix"`
+	FeatureProfiles  []string     `json:"featureProfiles"`
+	Status           string       `json:"status"`
+	CurrentStage     int          `json:"currentStage"`
+	StableService    string       `json:"stableService"`
+	CreatedAt        time.Time    `json:"createdAt"`
+	UpdatedAt        time.Time    `json:"updatedAt"`
+	Message          string       `json:"message,omitempty"`
+	Stages           []Stage      `json:"stages"`
 }
 
 type Store interface {
@@ -88,6 +98,8 @@ type Manager interface {
 }
 
 type Config struct {
+	SLOProfiles        *slo.Profiles
+	SLORunner          *slo.Runner
 	TemplateNamespace  string
 	ReadinessTimeout   time.Duration
 	SoakDuration       time.Duration

@@ -34,6 +34,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/plogcapture"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/semanticmemory"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/skills"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 )
 
 const readOnlyInstructions = `Use these tools for InferNex-specific observation.
@@ -182,6 +183,7 @@ type diagnosticInput struct {
 }
 
 type experimentInput struct {
+	SLOProfile      string   `json:"sloProfile,omitempty" jsonschema:"Optional administrator-approved local SLO profile ID"`
 	Namespace       string   `json:"namespace" jsonschema:"Namespace containing the stable baseline and experiment candidates"`
 	BaselineName    string   `json:"baselineName" jsonschema:"Ready InferNexService whose runtime fields come from baseRefs"`
 	CandidatePrefix string   `json:"candidatePrefix" jsonschema:"DNS-compatible prefix used for distinct stage candidate names"`
@@ -1079,6 +1081,11 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 	}
 
 	if options.bridge && options.experiments != nil && !options.diagnosticDelegate {
+		if provider, ok := options.experiments.(interface{ ListSLOProfiles() []slo.Summary }); ok {
+			mcp.AddTool(server, &mcp.Tool{Name: "infernex_list_slo_profiles", Description: "List approved local SLO profile IDs, hashes, bounded request budgets and target names without private prompts or endpoints.", Annotations: readOnly("List SLO profiles")}, func(_ context.Context, _ *mcp.CallToolRequest, _ emptyInput) (*mcp.CallToolResult, []slo.Summary, error) {
+				return nil, provider.ListSLOProfiles(), nil
+			})
+		}
 		mutating := func(title string) *mcp.ToolAnnotations {
 			destructive := false
 			openWorld := true
@@ -1096,6 +1103,7 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 			Annotations: mutating("Start progressive InferNex experiment"),
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, input experimentInput) (*mcp.CallToolResult, experiment.Plan, error) {
 			output, err := options.experiments.Create(ctx, experiment.Request{
+				SLOProfile:      input.SLOProfile,
 				Namespace:       input.Namespace,
 				BaselineName:    input.BaselineName,
 				CandidatePrefix: input.CandidatePrefix,

@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.15"
+        default: "0.5.0-alpha.16"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.15' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.16' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -303,10 +303,13 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.15' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.16' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@v6
+
       - name: Download architecture bundles
         uses: actions/download-artifact@v4
         with:
@@ -320,11 +323,9 @@ jobs:
           VERSION: ${{ env.BUNDLE_VERSION }}
           INCLUDE_PI_TUI: ${{ env.INCLUDE_PI_TUI }}
         run: |
-          if [[ "${INCLUDE_PI_TUI}" == "true" ]]; then
-            release_notes="Experimental management-node package with the pinned Pi v0.84.1 runtime. Since alpha.14, tool activity is collapsed to one status row, reports and memories use readable keyword-plus-UTC-time filenames backed by hash indexes, and /mode_change independently selects normal/root identity and manual/full approval policy. Full access continues a task through intermediate reports and automatically runs recognized read-only host/SSH/Pod diagnostics, bounded evidence collectors, reports and verified memory updates; cluster deployment/deletion/experiments, HCCL or iperf load, and unclassified commands still require operator approval. Three endings without successful new tool evidence pause continuation. CANN plog, PFC/HCCN, RDMA, SSH and kubectl exec diagnostics remain included. Installation is offline and requires no Node, Bun, Go or Python installation. This is an alpha prerelease; retain alpha.14 or another known-good package for rollback."
-          else
-            release_notes="One management-node InferNex Agent package for each Linux CPU architecture. It installs a local Agent and no Kubernetes Pod, controller, or CRD; the current kubeconfig and existing InferNex component APIs are discovered automatically. Read tools run automatically and write tools require local approval. The package contains no vLLM, vLLM-Ascend, Mooncake, CANN, or model weights. Verify SHA256 before use."
-          fi
+          release_notes="component/InferNex-Agent/docs/releases/v${VERSION}-zh.md"
+          test -s "${release_notes}"
+          test "${INCLUDE_PI_TUI}" = "true"
           gh release create "infernex-agent-v${VERSION}" \
             release-assets/infernex-agent-${VERSION}-linux-*.tar.gz \
             release-assets/infernex-agent-${VERSION}-linux-*.tar.gz.sha256 \
@@ -332,4 +333,4 @@ jobs:
             --target "${GITHUB_SHA}" \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes "${release_notes}"
+            --notes-file "${release_notes}"

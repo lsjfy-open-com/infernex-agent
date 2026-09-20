@@ -14,6 +14,8 @@ package experiment
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -31,6 +33,7 @@ import (
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 )
 
 const (
@@ -158,10 +161,26 @@ func (c *Controller) Create(ctx context.Context, request Request) (Plan, error) 
 	if err := validateBaselineSpec(baseline); err != nil {
 		return Plan{}, err
 	}
+	featureConfigs := make(map[string]*infernexv1alpha1.InferNexServiceConfig, len(request.FeatureProfiles))
 	for _, profile := range request.FeatureProfiles {
-		if _, err := c.getApprovedFeature(ctx, profile); err != nil {
+		feature, err := c.getApprovedFeature(ctx, profile)
+		if err != nil {
 			return Plan{}, err
 		}
+		featureConfigs[profile] = feature
+	}
+	var selected *slo.Profile
+	var selectedHash string
+	if request.SLOProfile != "" {
+		if c.config.SLOProfiles == nil || c.config.SLORunner == nil {
+			return Plan{}, fmt.Errorf("SLO profiling is not enabled")
+		}
+		p, h, e := c.config.SLOProfiles.Lookup(request.SLOProfile)
+		if e != nil {
+			return Plan{}, e
+		}
+		selected = &p
+		selectedHash = h
 	}
 
 	id, err := changesafety.NewID()
@@ -170,6 +189,8 @@ func (c *Controller) Create(ctx context.Context, request Request) (Plan, error) 
 	}
 	createdAt := c.now().UTC()
 	plan := Plan{
+		SLOGateMode: "disabled",
+		SLOProfile:  request.SLOProfile, SLOProfileSHA256: selectedHash, SLOSnapshot: selected,
 		APIVersion:      "agent.infernex.io/v1alpha1",
 		Kind:            "InferNexExperiment",
 		ID:              id,
@@ -185,21 +206,52 @@ func (c *Controller) Create(ctx context.Context, request Request) (Plan, error) 
 		Message:         "experiment plan validated; no resource has been created yet",
 		Stages:          make([]Stage, len(request.FeatureProfiles)),
 	}
+	if selected != nil {
+		plan.SLOGateMode = "required"
+	}
 	stableName := request.BaselineName
+	refs := make([]string, 0, len(baseline.Spec.BaseRefs)+len(request.FeatureProfiles))
+	for _, ref := range baseline.Spec.BaseRefs {
+		refs = append(refs, ref.Name)
+	}
 	for index, profile := range request.FeatureProfiles {
+		refs = append([]string{profile}, refs...)
 		candidateName := candidateName(request.CandidatePrefix, index)
+		if selected != nil {
+			baselineEndpoint, ok := selected.Endpoints[request.Namespace+"/"+stableName]
+			if !ok {
+				return Plan{}, fmt.Errorf("SLO profile lacks baseline endpoint mapping for stage %d", index)
+			}
+			candidateEndpoint, ok := selected.Endpoints[request.Namespace+"/"+candidateName]
+			if !ok {
+				return Plan{}, fmt.Errorf("SLO profile lacks candidate endpoint mapping for stage %d", index)
+			}
+			if slo.CanonicalEndpoint(baselineEndpoint) == slo.CanonicalEndpoint(candidateEndpoint) {
+				return Plan{}, fmt.Errorf("SLO profile maps stage %d baseline and candidate to the same endpoint", index)
+			}
+		}
 		if problems := validation.IsDNS1123Subdomain(candidateName); len(problems) > 0 {
 			return Plan{}, fmt.Errorf("generated candidate name %q is invalid: %s", candidateName, strings.Join(problems, "; "))
 		}
 		if err := c.requireAbsent(ctx, request.Namespace, candidateName); err != nil {
 			return Plan{}, err
 		}
+		var fingerprints map[string]string
+		if selected != nil {
+			fingerprints, err = c.templateFingerprints(ctx, refs)
+			if err != nil {
+				return Plan{}, fmt.Errorf("SLO stage %d template references: %w", index, err)
+			}
+		}
 		plan.Stages[index] = Stage{
-			Index:          index,
-			FeatureProfile: profile,
-			BaselineName:   stableName,
-			CandidateName:  candidateName,
-			Status:         StageStatusPending,
+			TemplateFingerprints: fingerprints,
+			FeatureUID:           string(featureConfigs[profile].UID),
+			FeatureSpecSHA256:    specSHA256(featureConfigs[profile].Spec),
+			Index:                index,
+			FeatureProfile:       profile,
+			BaselineName:         stableName,
+			CandidateName:        candidateName,
+			Status:               StageStatusPending,
 		}
 		stableName = candidateName
 	}
@@ -213,11 +265,12 @@ func (c *Controller) Create(ctx context.Context, request Request) (Plan, error) 
 		return Plan{}, fmt.Errorf("start experiment plan: %w", err)
 	}
 	c.startPlan(plan.ID)
-	return plan, nil
+	return publicPlan(plan), nil
 }
 
 func (c *Controller) Get(_ context.Context, id string) (Plan, error) {
-	return c.plans.Latest(strings.TrimSpace(id))
+	p, e := c.plans.Latest(strings.TrimSpace(id))
+	return publicPlan(p), e
 }
 
 func (c *Controller) List(_ context.Context) ([]Plan, error) {
@@ -228,8 +281,13 @@ func (c *Controller) List(_ context.Context) ([]Plan, error) {
 	if len(plans) > maxPlansReturned {
 		plans = plans[len(plans)-maxPlansReturned:]
 	}
+	for i := range plans {
+		plans[i] = publicPlan(plans[i])
+	}
 	return plans, nil
 }
+func (c *Controller) ListSLOProfiles() []slo.Summary { return c.config.SLOProfiles.List() }
+func publicPlan(p Plan) Plan                         { p.SLOSnapshot = nil; return p }
 
 func (c *Controller) startPlan(id string) {
 	c.mu.Lock()
@@ -488,12 +546,182 @@ func (c *Controller) monitorStage(ctx context.Context, plan *Plan, stage *Stage)
 			}
 		}
 		if stage.Comparison != nil && !now.Before(stage.ReadyAt.Add(c.config.SoakDuration)) {
+			if plan.SLOGateMode == "required" || plan.SLOProfile != "" {
+				if plan.SLOSnapshot == nil || c.config.SLORunner == nil {
+					return c.failStage(context.Background(), plan, stage, "required SLO gate configuration is unavailable")
+				}
+				if err := c.runSLOGate(ctx, plan, stage, baseline, candidate); err != nil {
+					return err
+				}
+				if stage.Status == StageStatusRolledBack || plan.Status == PlanStatusFailed {
+					return nil
+				}
+			}
 			return c.passStage(plan, stage)
 		}
 		if err := waitContext(ctx, c.config.PollInterval); err != nil {
 			return err
 		}
 	}
+}
+func serviceIdentity(s *infernexv1alpha1.InferNexService) (slo.Identity, error) {
+	raw, err := json.Marshal(s.Spec)
+	if err != nil {
+		return slo.Identity{}, err
+	}
+	h := sha256.Sum256(raw)
+	return slo.Identity{Namespace: s.Namespace, Name: s.Name, UID: string(s.UID), SpecSHA256: hex.EncodeToString(h[:])}, nil
+}
+func specSHA256(spec any) string {
+	raw, _ := json.Marshal(spec)
+	h := sha256.Sum256(raw)
+	return hex.EncodeToString(h[:])
+}
+func (c *Controller) checkFeatureIdentity(ctx context.Context, stage *Stage) error {
+	feature, err := c.getApprovedFeature(ctx, stage.FeatureProfile)
+	if err != nil {
+		return err
+	}
+	if string(feature.UID) != stage.FeatureUID || specSHA256(feature.Spec) != stage.FeatureSpecSHA256 {
+		return fmt.Errorf("approved feature profile drifted")
+	}
+	return nil
+}
+func (c *Controller) templateFingerprints(ctx context.Context, names []string) (map[string]string, error) {
+	result := map[string]string{}
+	visiting := map[string]bool{}
+	var visit func(string, int) error
+	visit = func(name string, depth int) error {
+		if depth > 32 || len(result) > 32 {
+			return fmt.Errorf("SLO template reference graph exceeds 32 nodes")
+		}
+		if visiting[name] {
+			return fmt.Errorf("SLO template reference cycle")
+		}
+		if _, ok := result[name]; ok {
+			return nil
+		}
+		if name == "" {
+			return fmt.Errorf("empty SLO template reference")
+		}
+		config := &infernexv1alpha1.InferNexServiceConfig{}
+		if err := c.client.Get(ctx, types.NamespacedName{Namespace: c.config.TemplateNamespace, Name: name}, config); err != nil {
+			return fmt.Errorf("read referenced template %s: %w", name, err)
+		}
+		result[name] = string(config.UID) + ":" + specSHA256(config.Spec)
+		visiting[name] = true
+		for _, ref := range config.Spec.BaseRefs {
+			if err := visit(ref.Name, depth+1); err != nil {
+				return err
+			}
+		}
+		delete(visiting, name)
+		return nil
+	}
+	for _, name := range names {
+		if err := visit(name, 0); err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+func (c *Controller) checkTemplateFingerprints(ctx context.Context, stage *Stage, baseline, candidate *infernexv1alpha1.InferNexService) error {
+	if len(stage.TemplateFingerprints) == 0 {
+		return fmt.Errorf("missing SLO template fingerprints")
+	}
+	names := make([]string, 0, len(baseline.Spec.BaseRefs)+len(candidate.Spec.BaseRefs))
+	for _, service := range []*infernexv1alpha1.InferNexService{baseline, candidate} {
+		for _, ref := range service.Spec.BaseRefs {
+			names = append(names, ref.Name)
+		}
+	}
+	current, err := c.templateFingerprints(ctx, names)
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(current, stage.TemplateFingerprints) {
+		return fmt.Errorf("SLO referenced template drifted")
+	}
+	return nil
+}
+func (c *Controller) runSLOGate(ctx context.Context, p *Plan, stage *Stage, baseline, candidate *infernexv1alpha1.InferNexService) error {
+	snapshotJSON, encodeErr := json.Marshal(p.SLOSnapshot)
+	if encodeErr != nil {
+		return c.failStage(context.Background(), p, stage, "SLO profile snapshot is invalid")
+	}
+	_, snapshotHash, parseErr := slo.ParseProfile(snapshotJSON)
+	if parseErr != nil || snapshotHash != p.SLOProfileSHA256 {
+		return c.failStage(context.Background(), p, stage, "SLO profile snapshot drifted; result inconclusive")
+	}
+	if stage.SLO != nil {
+		stage.SLO.Decision = "inconclusive"
+		return c.failStage(context.Background(), p, stage, "SLO stage resumed before commit; prior measurement cannot be safely reused")
+	}
+	if e := c.checkFeatureIdentity(ctx, stage); e != nil {
+		return c.failStage(context.Background(), p, stage, "SLO feature profile changed before measurement")
+	}
+	if e := c.checkTemplateFingerprints(ctx, stage, baseline, candidate); e != nil {
+		return c.failStage(context.Background(), p, stage, "SLO referenced template changed before measurement")
+	}
+	b, e := serviceIdentity(baseline)
+	if e != nil {
+		return e
+	}
+	a, e := serviceIdentity(candidate)
+	if e != nil {
+		return e
+	}
+	runID, e := changesafety.NewID()
+	if e != nil {
+		return e
+	}
+	stage.SLO = &slo.Result{RunID: runID, Decision: "running"}
+	stage.Message = "SLO evidence run started"
+	if e = c.savePlan(p); e != nil {
+		return e
+	}
+	budgetCtx, cancel := context.WithDeadline(ctx, stage.StartedAt.Add(c.config.ReadinessTimeout))
+	defer cancel()
+	result, runErr := c.config.SLORunner.Run(budgetCtx, slo.RunRequest{RunID: runID, ExperimentID: p.ID, StageIndex: stage.Index, ChangeID: stage.ChangeID, Profile: *p.SLOSnapshot, ProfileSHA256: p.SLOProfileSHA256, Baseline: b, Candidate: a})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if runErr != nil {
+		stage.SLO.Decision = "inconclusive"
+		return c.failStage(context.Background(), p, stage, "SLO run inconclusive: "+runErr.Error())
+	}
+	stage.SLO = &result
+	if e = c.savePlan(p); e != nil {
+		return e
+	}
+	if result.Decision != "passed" {
+		return c.failStage(context.Background(), p, stage, "SLO "+result.Decision+": "+result.Reason)
+	}
+	if e := c.checkFeatureIdentity(ctx, stage); e != nil {
+		return c.failStage(context.Background(), p, stage, "SLO feature profile changed during measurement")
+	}
+	if e := c.checkTemplateFingerprints(ctx, stage, baseline, candidate); e != nil {
+		return c.failStage(context.Background(), p, stage, "SLO referenced template changed during measurement")
+	}
+	return c.recheckSLOIdentity(ctx, p, stage, baseline, candidate)
+}
+func (c *Controller) recheckSLOIdentity(ctx context.Context, p *Plan, stage *Stage, baseline, candidate *infernexv1alpha1.InferNexService) error {
+	b, _ := serviceIdentity(baseline)
+	a, _ := serviceIdentity(candidate)
+	for _, prior := range []slo.Identity{b, a} {
+		current := &infernexv1alpha1.InferNexService{}
+		if e := c.client.Get(ctx, types.NamespacedName{Namespace: prior.Namespace, Name: prior.Name}, current); e != nil {
+			return c.failStage(context.Background(), p, stage, "SLO identity recheck inconclusive")
+		}
+		after, e := serviceIdentity(current)
+		if e != nil || after != prior {
+			return c.failStage(context.Background(), p, stage, "SLO identity or spec drifted during measurement")
+		}
+		if !current.Status.Ready || current.Status.ObservedGeneration < current.Generation || terminalDegraded(current) {
+			return c.failStage(context.Background(), p, stage, "SLO target lost readiness during measurement")
+		}
+	}
+	return nil
 }
 
 func (c *Controller) passStage(plan *Plan, stage *Stage) error {
@@ -516,6 +744,10 @@ func (c *Controller) passStage(plan *Plan, stage *Stage) error {
 }
 
 func (c *Controller) failStage(ctx context.Context, plan *Plan, stage *Stage, reason string) error {
+	if stage.SLO != nil && stage.SLO.Decision == "passed" {
+		stage.SLO.Decision = "inconclusive"
+		stage.SLO.Reason = reason
+	}
 	key := types.NamespacedName{Namespace: plan.Namespace, Name: stage.CandidateName}
 	rollbackErr := c.deleteOwnedCandidate(ctx, key, plan.ID, stage.ChangeID)
 	record, recordErr := c.changes.Latest(stage.ChangeID)
