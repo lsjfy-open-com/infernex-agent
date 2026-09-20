@@ -119,9 +119,48 @@ InferNex Bridge（下文简称 Bridge）是仓库已有的 Kubernetes Controller
 
 实现依据：[alpha.15 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.15-zh.md)、[渐进实验现状及边界](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/progressive-experiments-zh.md)、[实验控制器](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/experiment/controller.go)、[变更保护](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/change-safety-zh.md)、[原生能力契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)、[流量诊断实现](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/kubeops/traffic.go)。
 
-当前实验的回退主要是删除本阶段拥有的候选，保留基线；它既不会自动切生产流量，也不等于完成任意软件版本恢复。已有 CI 中的模型请求检查，也不能当作产品运行时已拥有通用 SLO 实验引擎。
+### 4.1 当前的快照、变更记录和回退究竟是什么
 
-修复流程分为采证与资料核对、隔离实验与交付两个步骤。第一步按环境选择知识来源：离线客户使用本地知识、已安装版本和日志，由人手动补入资料或补丁，或通过配套的授权联网工具在其他环境搜集后导入；不能在断网集群里自动对齐上游版本。允许联网且获得授权的客户，可通过只读工具查询上游发布、补丁和兼容矩阵，核验来源、签名或摘要及适用版本。若资料不足，列出缺口并请求补充，不凭猜测选补丁。第二步才将适用的修复候选用于隔离实验；默认先形成建议，实际部署仍走批准的变更流程。这是后续能力规划，不是当前可用的自动升级入口。
+这里的“快照”有两种，不能混为一谈。安装前恢复点在管理节点保存 Agent 本机文件和指定命名空间内的 `InferNexService` 源对象，记录 UID、resourceVersion 和 SHA-256；默认位置为 `/var/lib/infernex-agent/backups/install-<时间>-<PID>/`。它用于安装失败恢复或经确认的手工恢复，不是整个 Kubernetes 集群或 etcd 的快照。[变更保护与快照格式](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/change-safety-zh.md)
+
+每次受管写操作另有 `changeId` 和追加写的变更记录，保存计划、目标、变更前对象或期望对象、执行与回退状态；实验计划也持久化。它们目前是本地受保护状态，生产集群内安装须挂持久卷；**尚未和 Git 提交组成统一配置版本**。Supervisor 的运行态观测快照只供诊断和 Dashboard 展示，也不能拿来恢复配置。[变更记录实现](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/changesafety/store.go)、[实验记录实现](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/experiment/store.go)
+
+```mermaid
+flowchart LR
+  A[安装或升级 Agent] --> B[安装前恢复点<br/>本机文件 + InferNexService 源对象]
+  B --> H[安装失败时恢复本机和受管源对象]
+  C[受管部署或实验] --> D[changeId + 追加写变更记录]
+  D --> E[创建新服务或独立实验候选]
+  E --> F{Ready + 诊断与浸泡门禁}
+  F -- 通过 --> G[提交当前阶段并保留基线]
+  F -- 失败 --> I[核验 UID/所有权/spec 后撤销本次创建]
+```
+
+当前回退只覆盖各动作**拥有且能够核对身份**的范围：实验失败时删除本阶段候选、保留原基线；新部署失败时撤销本次创建；安装失败时用恢复点恢复 Agent 文件及受管源对象。并发修改或所有权不符时保留现场并报告冲突。它不自动切生产流量，不恢复任意 Helm/引擎版本，也不提供 Git + snapshot 的统一版本选择界面。仓库的 GitHub Actions 是代码测试和安装验收环境，不能作为生产 SLO 验收或配置版本管理的证据。
+
+### 4.2 修复所需资料：离线与联网两条入口
+
+以下是**拟建设流程**，不是当前可用的自动升级入口。第一步采证并核对资料，第二步才进入隔离实验和交付；“离线/联网”是第一步的两种环境，不是所有客户都要依次经历的两个阶段。
+
+```mermaid
+flowchart TD
+  A[故障或 SLO 偏差<br/>采集日志、版本、拓扑与复现请求] --> B{客户环境可联网且已授权?}
+  B -- 否 --> C[离线入口<br/>本地知识 + 已安装版本 + 人工补入资料/补丁]
+  B -- 是 --> D[联网入口<br/>只读工具查询官方发布、补丁、兼容矩阵]
+  C --> E[核验来源、版本、摘要与适配条件]
+  D --> E
+  E --> F{证据和适用条件足够?}
+  F -- 否 --> G[列出缺口<br/>请现场或配套联网工具补充]
+  G --> E
+  F -- 是 --> H[提出最小修复候选及回退计划]
+  H --> I[隔离环境构建/配置并做对照实验]
+  I --> J{正确性、SLO 与成本通过?}
+  J -- 否 --> K[保存失败证据和反证，继续定位]
+  J -- 是 --> L[生成可校验制品及组合版本记录]
+  L --> M[批准后灰度、持续观测与可控恢复]
+```
+
+离线入口不能在断网集群自动获取上游补丁；可由人或独立授权的联网工具在外部搜集后导入。联网入口只负责查证和建议，不因为查询成功就自动安装。两条入口都要记录证据来源、适用版本、校验值、缺口和人工决定；资料不足时不猜测补丁。隔离实验和发布须分别验收，影响生产的变更仍走批准流程。
 
 ## 5. 统一工程闭环：我们的目标设计
 
@@ -147,6 +186,18 @@ flowchart LR
 
 核心维护七类记录：Objective（目标）、Evidence（证据）、Hypothesis（假设）、Experiment（实验）、PatchArtifact（补丁）、ReleaseManifest（组合版本）、Change（执行记录）。这是概念模型，不是现有 API。通过工作负载 UID、环境指纹、时间窗、版本和内容摘要关联，用户界面仍使用关键词与日期。
 
+为避免只有名词没有交付形态，下表列出每条能力最终应让使用者看见的输入、产物和动作；均是**目标设计**，不表示今天已有对应界面或 API。
+
+| 能力 | 输入示例 | 可检查的产物与执行形态 |
+| --- | --- | --- |
+| 自动部署 D1/D2 | 模型权重路径、引擎版本、目标 SLO、资源上限、可用节点 | `DeploymentPlan` 写明实例规格/数量、NPU 放置、挂载、预热和失败补偿；经批准由环境适配器创建资源，返回实际 Ready 与请求验证结果 |
+| SLO 实验 E1 | 固定请求样本、并发、基线版本、候选变更 | `Experiment` 保存每次请求的 TTFT/TPOT、吞吐、错误率和质量，给出通过/退化/证据不足及原始样本引用 |
+| 补丁 E2 | 基础镜像 digest、源码提交或配置差异、目标架构 | `PatchArtifact` 给出构建步骤、目标镜像 digest、兼容范围、校验值和恢复方式；失败候选也留档 |
+| 分流与发布 T1/R1 | 稳定/候选实例、容量权重、灰度比例、排空超时 | `TrafficPlan` 指定真实数据面路由和后端权重；验收报告记录请求实际命中分布、流式排空及 SLO 门禁结果 |
+| 故障运维 O1/O2 | 告警、拓扑、证据时间线、允许的操作范围 | `ChangePlan` 写明根因假设、最小动作、批准范围、前后指标及停止/恢复条件；周期优化沿用同一对照和记录格式 |
+
+例如 Mooncake prefix hit 超时不能只输出“可能是交换机”：最终应有可复现请求、等待提交与实际传输的分段时间线、候选变更、同负载对照数据、目标制品或明确的外部设备处置单，以及可执行的恢复目标。缺少任一关键证据时，状态写成“证据不足”，而非“已修复”。
+
 ### 5.1 SLO 与实验判定
 
 先约束正确性、成功率和尾延迟，再在预算内优化有效吞吐或成本。SLO 必须声明统计口径、分位数、时间窗和负载类别；ITL 与 TPOT 的具体计算方式需显式对齐，不能仅凭名称混用。
@@ -169,6 +220,36 @@ flowchart LR
 ### 5.3 补丁、版本与恢复
 
 ReleaseManifest 建议关联 Agent 兼容版本、模型权重所在路径、不可变 revision（固定修订号）或存储快照及校验值、推理引擎和通信库版本、镜像 digest（内容摘要）、部署配置、路由配置、Profile、SLO、实验结果及上一稳定发布。这份完整组合清单尚未交付；目前仅有 Bridge 的 InferNexService 状态、变更记录和受管候选回退，不能把它们称作已有的完整配置版本管理。
+
+用户期望的 **snapshot + Git** 可落成三层，而不是把整个运行中集群提交到 Git：Git 记录可审阅的**期望配置**（Helm values、受管源对象、路由声明）及变更原因；变更前后生成**只读快照**，记录现场对象身份、有效配置、Helm revision、关联镜像和校验摘要；`ReleaseManifest` 把 Git commit、快照 ID、镜像 digest、权重修订和验收结果关联成一个可选的稳定版本。权重仍留在共享盘/存储系统，凭据不进入 Git，快照若含敏感信息须加密并限制访问。非 GitOps 客户可使用本地受保护 Git 仓库并选择是否同步远端；客户已有 GitOps/Operator 时由原有资源拥有者执行配置变更，Agent 不与其争夺写入权。
+
+```mermaid
+flowchart LR
+  A[现网版本 Vn] --> B[采集变更前快照 Sn<br/>对象身份、Helm revision、校验值]
+  B --> C[Git 提交候选期望配置 Cn1<br/>差异、参数、回退目标]
+  C --> D[批准后由资源拥有者应用]
+  D --> E[采集变更后快照 Sn1<br/>实际配置与对象身份]
+  E --> F{真实请求、质量和 SLO 验收}
+  F -- 通过 --> G[ReleaseManifest Vn1<br/>绑定 Cn1、Sn1、镜像/权重修订]
+  F -- 退化 --> H[停止新流量并按批准计划恢复 Cn]
+  H --> I[对照 Sn 核验恢复结果<br/>冲突时停止并交人工]
+```
+
+一个版本索引的**示意形态**如下。它只保存引用和校验值，不保存模型权重或 Secret；字段名尚不是已实现的 API：
+
+```yaml
+version: mooncake-prefix-20260920-01
+gitCommit: <期望配置的提交 SHA>
+beforeSnapshot: <变更前快照 ID>
+afterSnapshot: <变更后快照 ID>
+imageDigest: sha256:<推理镜像摘要>
+weight: {path: /models/shared/model-a, revision: <存储快照或固定修订号>}
+changeId: <执行记录 ID>
+validation: {experimentId: <对照实验 ID>, result: passed}
+parentStableVersion: <上一稳定版本 ID>
+```
+
+回退时先依据 `parentStableVersion` 找到旧 Git 配置和所需制品，再比对当前现场与快照，确认对象身份及期间是否有人修改；通过原资源拥有者撤销配置或使用 Helm revision，而不是把快照整份覆盖集群。恢复后重新采集快照并以真实请求验收。数据迁移、驱动或交换机操作另有独立恢复步骤，不能用 Git revert 宣称全部回退。这是 E2/R1 的设计目标；当前实现只具备上文 4.1 的局部保护。[现有配置版本设计稿](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/policy-modes-config-versions-zh.md)
 
 模型权重不纳入推理镜像。当前主 Chart 可通过 `global.cachePath` 将主机路径挂载到容器 `/root/.cache`，服务也可另配卷；现场生产可使用共享盘，让服务从盘上读取权重。[Chart 挂载模板](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/charts/infernex/charts/inference-backend/templates/_helpers.tpl) 仓库另有小模型样例通过初始化容器下载并校验权重，因此具体交付路径仍按部署类型记录。现场的权重版本变化按重新拉起或滚动替换服务实例处理，即使镜像不变也要检查 Ready（就绪状态）并以真实推理请求验收；不预设框架支持热加载。回退前确认旧路径或快照仍可读取。
 
