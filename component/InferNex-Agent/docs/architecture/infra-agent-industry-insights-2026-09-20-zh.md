@@ -2,7 +2,7 @@
 
 调研日期：2026-09-20。项目比较基线：`infernex-agent-v0.5.0-alpha.15`，源码 `0292d752e74d5fc93707fa85f4db99f116325014`。
 
-本文是研究与设计建议，不代表后续能力已经实现。排期统一维护在[当前路线图](../development/roadmap-zh.md)，原生部署边界见[Kubernetes 分层契约](kubernetes-first-zh.md)。外部资料按访问日理解；`main`、`latest`、`dev` 文档会变化，接入前必须固定版本重新验证。
+本文是研究与设计建议，不代表后续能力已经实现。排期统一维护在[当前路线图](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/roadmap-zh.md)，原生部署边界见[Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。外部资料按访问日理解；`main`、`latest`、`dev` 文档会变化，接入前必须固定版本重新验证。
 
 术语约定：K8s 指 Kubernetes；SLO（Service Level Objective）指服务级目标；MCP（Model Context Protocol，模型上下文协议）供 Agent 调用工具；CRD（CustomResourceDefinition，自定义资源定义）用于在 Kubernetes 中声明自定义资源类型，例如 InferNexService；RBAC（Role-Based Access Control）指基于角色的访问控制；OCI（Open Container Initiative）是制定容器镜像等规范的组织。推理指标 TTFT（Time To First Token）指首 token 延迟，ITL（Inter-Token Latency）指相邻 token 间延迟，TPOT（Time Per Output Token）指每个输出 token 的平均耗时；ITL 与 TPOT 仍需对齐具体统计口径。其余专用缩写在附近解释。
 
@@ -54,7 +54,7 @@ KDA 是 Kimi Delta Attention，一种带细粒度门控的线性注意力；其 
 
 kagent 的官方示例将 Kubernetes 工具通过 MCP 暴露给 Agent，并以 `requireApproval` 为选定写工具配置人工审批，读工具可直接执行。[官方 HITL 示例](https://www.kagent.dev/docs/kagent/0.x/examples/human-in-the-loop/)
 
-本仓库已有一个最小只读范式：把读取指定 Pod 日志注册为 MCP 工具。以下摘自[现有实现](../../internal/mcpserver/server.go)，只保留关键调用；`podLogInput`、`options`、`readOnly`、`server` 的定义和初始化均已省略，因此不是可直接编译的完整程序：
+本仓库已有一个最小只读范式：把读取指定 Pod 日志注册为 MCP 工具。以下摘自[现有实现](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/mcpserver/server.go)，只保留关键调用；`podLogInput`、`options`、`readOnly`、`server` 的定义和初始化均已省略，因此不是可直接编译的完整程序：
 
 ```go
 mcp.AddTool(server, &mcp.Tool{
@@ -105,7 +105,7 @@ OCI manifest 通过摘要引用配置和有序镜像层，并区分具体平台�
 
 本节来自 alpha.15 仓库实现与说明，不以路线图当作功能证据。“已有”表示实现存在，不代表所有客户硬件均已现场验收。
 
-InferNex Bridge（下文简称 Bridge）是仓库已有的 Kubernetes Controller（按声明状态持续调节资源的控制器）与 Webhook（接收资源请求的扩展接口），基于 InferNexService CRD 管理服务，也可接入 KServe；这里不是泛指“桥接”概念。[Bridge 说明](../../../InferNex-Bridge/README-zh.md)
+InferNex Bridge（下文简称 Bridge）是仓库已有的 Kubernetes Controller（按声明状态持续调节资源的控制器）与 Webhook（接收资源请求的扩展接口），基于 InferNexService CRD 管理服务，也可接入 KServe；这里不是泛指“桥接”概念。[Bridge 说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Bridge/README-zh.md)
 
 | 能力 | 当前基础 | 差距与演进方向 |
 | --- | --- | --- |
@@ -117,7 +117,7 @@ InferNex Bridge（下文简称 Bridge）是仓库已有的 Kubernetes Controller
 | 运维闭环 | Bridge 相关巡检、诊断和受控恢复基础 | O1 通用工作负载闭环，以及修复后 SLO 验收尚待完善 |
 | 经验积累 | 可读报告与记忆文件名、hash 索引 | 需关联实验/版本/环境，保存失败与反证；旧结论不能绕过新环境验证 |
 
-实现依据：[alpha.15 发布说明](../releases/v0.5.0-alpha.15-zh.md)、[渐进实验现状及边界](../guides/progressive-experiments-zh.md)、[实验控制器](../../internal/experiment/controller.go)、[变更保护](../guides/change-safety-zh.md)、[原生能力契约](kubernetes-first-zh.md)、[流量诊断实现](../../internal/kubeops/traffic.go)。
+实现依据：[alpha.15 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.15-zh.md)、[渐进实验现状及边界](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/progressive-experiments-zh.md)、[实验控制器](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/experiment/controller.go)、[变更保护](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/change-safety-zh.md)、[原生能力契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)、[流量诊断实现](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/internal/kubeops/traffic.go)。
 
 当前实验的回退主要是删除本阶段拥有的候选，保留基线；它既不会自动切生产流量，也不等于完成任意软件版本恢复。已有 CI 中的模型请求检查，也不能当作产品运行时已拥有通用 SLO 实验引擎。
 
@@ -170,7 +170,7 @@ flowchart LR
 
 ReleaseManifest 建议关联 Agent 兼容版本、模型权重所在路径、不可变 revision（固定修订号）或存储快照及校验值、推理引擎和通信库版本、镜像 digest（内容摘要）、部署配置、路由配置、Profile、SLO、实验结果及上一稳定发布。这份完整组合清单尚未交付；目前仅有 Bridge 的 InferNexService 状态、变更记录和受管候选回退，不能把它们称作已有的完整配置版本管理。
 
-模型权重不纳入推理镜像。当前主 Chart 可通过 `global.cachePath` 将主机路径挂载到容器 `/root/.cache`，服务也可另配卷；现场生产可使用共享盘，让服务从盘上读取权重。[Chart 挂载模板](../../../../charts/infernex/charts/inference-backend/templates/_helpers.tpl) 仓库另有小模型样例通过初始化容器下载并校验权重，因此具体交付路径仍按部署类型记录。现场的权重版本变化按重新拉起或滚动替换服务实例处理，即使镜像不变也要检查 Ready（就绪状态）并以真实推理请求验收；不预设框架支持热加载。回退前确认旧路径或快照仍可读取。
+模型权重不纳入推理镜像。当前主 Chart 可通过 `global.cachePath` 将主机路径挂载到容器 `/root/.cache`，服务也可另配卷；现场生产可使用共享盘，让服务从盘上读取权重。[Chart 挂载模板](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/charts/infernex/charts/inference-backend/templates/_helpers.tpl) 仓库另有小模型样例通过初始化容器下载并校验权重，因此具体交付路径仍按部署类型记录。现场的权重版本变化按重新拉起或滚动替换服务实例处理，即使镜像不变也要检查 Ready（就绪状态）并以真实推理请求验收；不预设框架支持热加载。回退前确认旧路径或快照仍可读取。
 
 PatchArtifact 记录基础摘要、源码提交、差异、构建依赖和步骤、目标架构/驱动兼容范围、测试证据、目标镜像摘要及恢复方法。临时容器修改只能用于实验，不能作为正式交付状态。保留构建溯源；可重复构建结果需要实际校验，不能仅凭固定 Dockerfile 宣称一致。
 
@@ -200,7 +200,7 @@ PatchArtifact 记录基础摘要、源码提交、差异、构建依赖和步骤
 | T1/R1 发布验收 | 真实分流、摘流排空、灰度、SLO 门禁和稳定晋级 | 业务流量实际经过多个合格实例，退化发布能恢复服务 |
 | O1/O2 持续改进 | 故障恢复与周期性能/成本优化共用闭环 | 故障集与长稳负载中，修复成功率和改进收益可复现 |
 
-完整排期与依赖以[路线图](../development/roadmap-zh.md)为准。E1/E2 可在现有 Bridge 实验环境先交付；原生路径生产灰度依赖 D1/D2/T1；客户已有发布与流量能力可通过适配器接入并单独验收。源码/算子优化随后逐场景接入，不先承诺覆盖所有底层组件。
+完整排期与依赖以[路线图](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/roadmap-zh.md)为准。E1/E2 可在现有 Bridge 实验环境先交付；原生路径生产灰度依赖 D1/D2/T1；客户已有发布与流量能力可通过适配器接入并单独验收。源码/算子优化随后逐场景接入，不先承诺覆盖所有底层组件。
 
 本项目尚无以下收益的现场基线，因此不填宣传数字。每个试点应保存改动前后结果：
 
