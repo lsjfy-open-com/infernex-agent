@@ -26,6 +26,18 @@
 
 上述数字及条件均来自[同一篇官方案例](https://z.ai/blog/glm-built-its-inference-infrastructure)。不能将这些倍数相乘。
 
+### KV 传输为何受同进程线程阻塞影响
+
+Prefill 处理输入并生成供后续使用的 KV，Decode 逐 token 生成输出；KV 传输应尽量与计算重叠。案例中的 DeepEP v1.2.1 `intranode_dispatch` / `intranode_combine` C++ 调用未释放 GIL（Python 全局解释器锁），使同进程 Mooncake 的 Python 提交线程无法及时运行。修复点在 DeepEP 的 Python/C++ 边界：调用期间释放 GIL，再用时间线及相同负载对照验证并发恢复。[智谱案例](https://z.ai/blog/glm-built-its-inference-infrastructure)
+
+### KDA Decode 算子为何能减少重复计算
+
+KDA 是 Kimi Delta Attention，一种带细粒度门控的线性注意力；其 Decode kernel 逐 token 更新状态并计算输出，属于推理计算算子。[KDA 实现](https://github.com/fla-org/flash-linear-attention/blob/main/fla/layers/kda.py)
+
+智谱服务栈使用基于 SGLang 构建的定制推理引擎；这里优化的是引擎调用的底层 KDA Decode 计算内核，不能理解为已发布的 vLLM 通用补丁。[智谱引擎说明](https://www.zhipuai.cn/zh/research/163)
+
+案例中 ReplaySSM 以计算换内存后，计算压力增大；V 维分块会重复归一化与门控工作，合并分块使中间值可复用，减少重复计算。案例未明确披露该优化的具体源码文件或提交。[智谱案例](https://z.ai/blog/glm-built-its-inference-infrastructure)
+
 **我们的设计推论：** 把“等待提交”和“实际网络传输”分别观测，能够检验交换机归因是否成立；随后用可控修改做验证。当前客户栈可能是 Ascend、不同引擎及通信库，不能照搬 DeepEP 修复，更不能仅凭症状认定相同根因。对优化同样需要局部验证与业务验收两层门禁。
 
 ## 3. 业界互补工作
