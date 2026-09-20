@@ -4,6 +4,8 @@
 
 本文是研究与设计建议，不代表后续能力已经实现。排期统一维护在[当前路线图](../development/roadmap-zh.md)，原生部署边界见[Kubernetes 分层契约](kubernetes-first-zh.md)。外部资料按访问日理解；`main`、`latest`、`dev` 文档会变化，接入前必须固定版本重新验证。
 
+术语约定：K8s 指 Kubernetes；SLO（Service Level Objective）指服务级目标；MCP（Model Context Protocol，模型上下文协议）供 Agent 调用工具；CRD（CustomResourceDefinition，自定义资源定义）用于在 Kubernetes 中声明自定义资源类型，例如 InferNexService；RBAC（Role-Based Access Control）指基于角色的访问控制；OCI（Open Container Initiative）是制定容器镜像等规范的组织。推理指标 TTFT（Time To First Token）指首 token 延迟，ITL（Inter-Token Latency）指相邻 token 间延迟，TPOT（Time Per Output Token）指每个输出 token 的平均耗时；ITL 与 TPOT 仍需对齐具体统计口径。其余专用缩写在附近解释。
+
 ## 1. 核心判断
 
 产品应从“帮助定位故障的工具 Agent”演进为“围绕 SLO 交付系统改进的工程 Agent”：发现问题之后，能够构造实验、修复或优化、构建候选制品、发布验证，并在退化时恢复已知稳定状态。自动部署与自动运维仍是两条业务主线，共用目标、证据、实验、版本和变更机制。
@@ -52,23 +54,46 @@ KDA 是 Kimi Delta Attention，一种带细粒度门控的线性注意力；其 
 
 kagent 的官方示例将 Kubernetes 工具通过 MCP 暴露给 Agent，并以 `requireApproval` 为选定写工具配置人工审批，读工具可直接执行。[官方 HITL 示例](https://www.kagent.dev/docs/kagent/0.x/examples/human-in-the-loop/)
 
+本仓库已有一个最小只读范式：把读取指定 Pod 日志注册为 MCP 工具。以下摘自[现有实现](../../internal/mcpserver/server.go)，只保留关键调用；`podLogInput`、`options`、`readOnly`、`server` 的定义和初始化均已省略，因此不是可直接编译的完整程序：
+
+```go
+mcp.AddTool(server, &mcp.Tool{
+    Name:        "k8s_get_pod_logs",
+    Description: "Read bounded, credential-redacted current or previous Pod logs",
+    Annotations: readOnly("Get bounded Kubernetes Pod logs"),
+}, func(ctx context.Context, _ *mcp.CallToolRequest, input podLogInput) (*mcp.CallToolResult, kubeops.PodLogResult, error) {
+    if err := requireScopedNamespace(options, input.Namespace); err != nil {
+        return nil, kubeops.PodLogResult{}, err
+    }
+    output, err := options.kubernetes.GetPodLogs(ctx, kubeops.PodLogRequest{
+        Namespace: input.Namespace, Pod: input.Pod, Container: input.Container,
+        Previous: input.Previous, SinceMinutes: input.SinceMinutes, TailLines: input.TailLines,
+    })
+    return nil, output, err
+})
+```
+
+调用须限定命名空间及明确的 Pod 目标；容器参数可选，未指定时只读取有数量上限的容器日志。实现还限制时间和行数，并对凭据做脱敏。能否读取由所用 kubeconfig（Kubernetes 访问配置）或集群内 ServiceAccount（服务账号）的 RBAC 权限决定，MCP 工具本身不扩权。
+
 **对我们的启发：** 执行接口与推理模型解耦，批准必须落在真实执行边界。root 是身份，full 是运行策略，二者均不自动授予生产变更权限。工具级批准之外，我们还要绑定目标、参数、计划摘要及有效期，避免批准内容与实际变更漂移。示例证明接口存在，没有给出修复率或性能提升，本次不为其虚构收益。
 
 ### 3.3 Dynamo / AIConfigurator：把 SLO 转换成可执行容量决策
 
 AIConfigurator 将模型、硬件、输入输出长度、延迟约束等用于配置搜索，区分实测数据库与估算模式。Dynamo Planner 将 TTFT/ITL 目标与性能模型、负载信号结合进行调节，并支持先只输出建议的 advisory 模式。[AIConfigurator CLI](https://github.com/ai-dynamo/aiconfigurator/blob/main/docs/cli_user_guide.md)、[Dynamo Planner v1.4.0](https://docs.nvidia.com/dynamo/v1.4.0/knowledge-base/modular-components/planner/overview)、[模式与 advisory 说明（dev）](https://docs.nvidia.com/dynamo/dev/knowledge-base/modular-components/planner/choose-a-planner-mode)
 
+advisory 仅输出建议；非 advisory 的 Kubernetes Planner 可修改其有权限管理的本地 DynamoGraphDeployment（DGD，Dynamo 推理部署资源）副本数。DynamoGraphDeploymentRequest（DGDR，Dynamo 自动部署请求资源）的 `autoApply` 可让 operator（Kubernetes 资源控制器）按建议创建 DGD。主机上的 root 身份不等于 Kubernetes API 写权限；集群内 ServiceAccount 及 RBAC 决定 API 权限，operator 按安装时授予的权限执行。因此生产写入必须同时受安装权限、资源归属和现场策略约束，不能假定每次都有人工审批。[Dynamo 安全部署指南](https://docs.nvidia.com/dynamo/dev/security/secure-deployment-guidelines)、[自动部署概览](https://docs.nvidia.com/dynamo/kubernetes/auto-deployment/overview)
+
 **对我们的启发：** 不按“卡数 × 固定吞吐”承诺容量。Profile 需要记录测试负载、硬件/网络、引擎版本、质量要求及容量曲线；估算用于筛选候选，真实请求用于最终验收。已有 Planner 的环境应通过适配器协调，避免两个控制器同时扩缩同一服务。NVIDIA 生态的数据与支持矩阵不能直接当作 Ascend Profile。
 
-其 DGDR 文档将快速模拟搜索描述为约 30 秒、无需占用 GPU 做 profiling，实机搜索约 2–4 小时；后者当时还限定分离部署等条件。这是两种搜索方式的时间/成本差异，不是推理吞吐提升，模拟结果也不能视为现场测量。[官方 DGDR 说明（dev）](https://docs.nvidia.com/dynamo/dev/kubernetes/auto-deployment/dgdr-walkthrough)
+其 DGDR 文档将快速模拟搜索描述为约 30 秒、无需占用 GPU 做性能剖析，实机搜索约 2–4 小时；后者当时还限定分离部署等条件。这是两种搜索方式的时间/成本差异，不是推理吞吐提升，模拟结果也不能视为现场测量。[官方 DGDR 说明（dev）](https://docs.nvidia.com/dynamo/dev/kubernetes/auto-deployment/dgdr-walkthrough)
 
 ### 3.4 Argo Rollouts / Monzo：把发布判断交给可审计指标
 
-Argo Rollouts 使用 AnalysisTemplate/AnalysisRun 驱动晋级、暂停或中止；官方示例中分析失败会把 canary 权重降为零。它是确定性的发布控制器，不负责自行找到代码根因。[官方分析机制](https://argoproj.github.io/argo-rollouts/features/analysis/)
+Argo Rollouts 使用 AnalysisTemplate/AnalysisRun（指标分析模板及其执行记录）驱动晋级、暂停或中止；官方示例中分析失败会把 canary（候选新版本）权重降为零。权重表示新旧版本各自分到的请求比例，不是模型权重。它是确定性的发布控制器，不负责自行找到代码根因。[官方分析机制](https://argoproj.github.io/argo-rollouts/features/analysis/)
 
-Monzo 在 2022 年案例中介绍了向 2,100 多个服务推广自动回退的经历，并报告该机制挡住过不良发布。这个数字体现采用规模，不是故障率降低比例；该文没有提供可用于我们承诺的 MTTR 降幅。[Monzo 工程案例](https://monzo.com/blog/2022/11/02/argo-rollouts-at-scale)
+Monzo 在 2022 年案例中介绍了向 2,100 多个服务推广自动回退的经历，并报告该机制挡住过不良发布。这个数字体现采用规模，不是故障率降低比例；该文没有提供可用于我们承诺的 MTTR（Mean Time To Recovery，平均恢复时间）降幅。本文若衡量 MTTR，以“已记录的 SLO 违约至持续恢复”为起止点。[Monzo 工程案例](https://monzo.com/blog/2022/11/02/argo-rollouts-at-scale)
 
-**对我们的启发：** Agent 负责提出和验证候选，成熟控制器执行灰度和指标门禁。需要分别管理中止候选、恢复流量、恢复声明配置和数据兼容性；canary 权重归零不代表 Git 配置、数据库或驱动均已回退。接入客户 GitOps/Operator 时，变更应经资源拥有者执行。
+**对我们的启发：** Agent 负责提出和验证候选，成熟控制器执行灰度和指标门禁。需要分别管理中止候选、恢复流量、恢复声明配置和数据兼容性；canary 权重归零不代表部署配置、数据库或驱动均已回退。仅当客户用 GitOps（以 Git 为声明配置来源的运维方式）管理部署时，才需同步处理 Git 配置。接入客户 GitOps/Operator 时，变更应经资源拥有者执行。
 
 ### 3.5 OCI：补丁需要固化为可寻址制品
 
@@ -80,11 +105,13 @@ OCI manifest 通过摘要引用配置和有序镜像层，并区分具体平台�
 
 本节来自 alpha.15 仓库实现与说明，不以路线图当作功能证据。“已有”表示实现存在，不代表所有客户硬件均已现场验收。
 
+InferNex Bridge（下文简称 Bridge）是仓库已有的 Kubernetes Controller（按声明状态持续调节资源的控制器）与 Webhook（接收资源请求的扩展接口），基于 InferNexService CRD 管理服务，也可接入 KServe；这里不是泛指“桥接”概念。[Bridge 说明](../../../InferNex-Bridge/README-zh.md)
+
 | 能力 | 当前基础 | 差距与演进方向 |
 | --- | --- | --- |
 | 执行与采集 | Host/SSH/Pod、plog、HCCN/PFC、HCCL/RDMA 工具路径；normal/root 与 manual/full 分离 | 现场依赖权限、工具、驱动和连通性；继续补应用阶段关联，不能将计数器相关性写成因果 |
 | 渐进实验 | Bridge 下批准 Profile、独立候选、Ready/日志回归/浸泡门禁、持久记录和候选回退 | **并非没有实验框架**；缺 TTFT/TPOT、吞吐、质量的业务对照与原生执行适配 |
-| 版本与回退 | Agent 离线发布包、安装恢复点；变更记录及受管候选回退 | Agent 升级与推理服务升级是两回事；缺服务补丁构建、组合版本清单、灰度晋级 |
+| 版本与回退 | Agent 离线发布包、安装恢复点；Bridge 的 InferNexService 状态、变更记录及受管候选回退 | Agent 升级与推理服务升级是两回事；完整组合版本管理仍是规划，缺服务补丁构建、组合版本清单、灰度晋级 |
 | 原生部署 | K8s/Helm 发现、日志/事件、Service 后端检查；Bridge 模板写路径 | D1/D2 尚未实现：规格规划及不依赖 Bridge 的创建、扩缩、回退 |
 | 流量验收 | EndpointSlice 配置风险诊断，`trafficVerified=false` | T1 尚未实现：真实请求分布、异规格容量权重、流式排空 |
 | 运维闭环 | Bridge 相关巡检、诊断和受控恢复基础 | O1 通用工作负载闭环，以及修复后 SLO 验收尚待完善 |
@@ -93,6 +120,8 @@ OCI manifest 通过摘要引用配置和有序镜像层，并区分具体平台�
 实现依据：[alpha.15 发布说明](../releases/v0.5.0-alpha.15-zh.md)、[渐进实验现状及边界](../guides/progressive-experiments-zh.md)、[实验控制器](../../internal/experiment/controller.go)、[变更保护](../guides/change-safety-zh.md)、[原生能力契约](kubernetes-first-zh.md)、[流量诊断实现](../../internal/kubeops/traffic.go)。
 
 当前实验的回退主要是删除本阶段拥有的候选，保留基线；它既不会自动切生产流量，也不等于完成任意软件版本恢复。已有 CI 中的模型请求检查，也不能当作产品运行时已拥有通用 SLO 实验引擎。
+
+修复流程分为采证与资料核对、隔离实验与交付两个步骤。第一步按环境选择知识来源：离线客户使用本地知识、已安装版本和日志，由人手动补入资料或补丁，或通过配套的授权联网工具在其他环境搜集后导入；不能在断网集群里自动对齐上游版本。允许联网且获得授权的客户，可通过只读工具查询上游发布、补丁和兼容矩阵，核验来源、签名或摘要及适用版本。若资料不足，列出缺口并请求补充，不凭猜测选补丁。第二步才将适用的修复候选用于隔离实验；默认先形成建议，实际部署仍走批准的变更流程。这是后续能力规划，不是当前可用的自动升级入口。
 
 ## 5. 统一工程闭环：我们的目标设计
 
@@ -139,7 +168,9 @@ flowchart LR
 
 ### 5.3 补丁、版本与恢复
 
-ReleaseManifest 建议关联 Agent 兼容版本、模型/权重版本、推理引擎和通信库版本、镜像 digest、部署配置、路由配置、Profile、SLO、实验结果及上一稳定发布。模型权重不强制打入补丁镜像。
+ReleaseManifest 建议关联 Agent 兼容版本、模型权重所在路径、不可变 revision（固定修订号）或存储快照及校验值、推理引擎和通信库版本、镜像 digest（内容摘要）、部署配置、路由配置、Profile、SLO、实验结果及上一稳定发布。这份完整组合清单尚未交付；目前仅有 Bridge 的 InferNexService 状态、变更记录和受管候选回退，不能把它们称作已有的完整配置版本管理。
+
+模型权重不纳入推理镜像。当前主 Chart 可通过 `global.cachePath` 将主机路径挂载到容器 `/root/.cache`，服务也可另配卷；现场生产可使用共享盘，让服务从盘上读取权重。[Chart 挂载模板](../../../../charts/infernex/charts/inference-backend/templates/_helpers.tpl) 仓库另有小模型样例通过初始化容器下载并校验权重，因此具体交付路径仍按部署类型记录。现场的权重版本变化按重新拉起或滚动替换服务实例处理，即使镜像不变也要检查 Ready（就绪状态）并以真实推理请求验收；不预设框架支持热加载。回退前确认旧路径或快照仍可读取。
 
 PatchArtifact 记录基础摘要、源码提交、差异、构建依赖和步骤、目标架构/驱动兼容范围、测试证据、目标镜像摘要及恢复方法。临时容器修改只能用于实验，不能作为正式交付状态。保留构建溯源；可重复构建结果需要实际校验，不能仅凭固定 Dockerfile 宣称一致。
 
@@ -164,6 +195,7 @@ PatchArtifact 记录基础摘要、源码提交、差异、构建依赖和步骤
 | --- | --- | --- |
 | E1 目标与实验 | 版本化 SLO、工作负载基线、真实请求指标与对照判定；先复用 Bridge 候选 | 可识别真实改善、退化和证据不足；报告关联原始样本 |
 | E2 修复制品 | 固定基础镜像的补丁构建、离线交付、组合版本记录与实验恢复 | 一次配置或组件修复能被重装、复验、撤销 |
+| E2a/E2b 知识来源 | E2a 离线使用本地证据及经批准导入资料；E2b 在授权联网环境查询上游版本、补丁与兼容矩阵 | 离线不自动在线对齐；联网核验来源及版本后只建议，部署仍需批准 |
 | D1/D2 通用执行 | 批准规格规划、Native K8s 部署事务及执行接口迁移 | 无 Bridge 场景可创建、验收并仅回退自有变更 |
 | T1/R1 发布验收 | 真实分流、摘流排空、灰度、SLO 门禁和稳定晋级 | 业务流量实际经过多个合格实例，退化发布能恢复服务 |
 | O1/O2 持续改进 | 故障恢复与周期性能/成本优化共用闭环 | 故障集与长稳负载中，修复成功率和改进收益可复现 |
