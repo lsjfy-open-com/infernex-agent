@@ -37,6 +37,8 @@ cd infernex-agent-<版本>-linux-<架构>
 sudo ./install.sh
 ```
 
+已经是 root 时直接运行 `./install.sh`。默认无需传 kubeconfig 参数；安装器会跳过不存在的常规路径，对已存在但不可用的自动候选给出提示，并继续寻找可访问的配置。`--admin-kubeconfig` 仅用于明确锁定路径的排查或自动化，显式文件不可用时会立即失败。
+
 安装器会自动：
 
 1. 校验包内所有文件；

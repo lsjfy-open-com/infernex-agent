@@ -38,13 +38,13 @@ kubectl config current-context
 kubectl api-resources | grep -i infernex  # 仅用于识别形态；没有输出也不阻止安装
 ```
 
-若使用 `/etc/kubernetes/admin.conf`：
+普通安装保持无参数；安装器会跳过不存在的常规路径，对已存在但不可用的自动候选给出提示，并继续寻找可访问的 kubeconfig。只有排查时需要锁定 `/etc/kubernetes/admin.conf`，才显式运行：
 
 ```bash
 sudo ./install.sh --admin-kubeconfig /etc/kubernetes/admin.conf
 ```
 
-首次安装失败时，先区分“未找到文件”和“已找到文件但无法访问 API”。后者可能来自网络、认证或 context 错误，不应改找其他集群的配置。使用现场实际文件验证：
+首次安装失败时，先区分“所有自动候选均不可用”和“显式文件无法访问 API”。后者可能来自网络、认证或 context 错误；显式参数会快速失败，不会切换到其他配置。可用现场实际文件排查：
 
 ```bash
 kubectl --kubeconfig /实际路径/kubeconfig config current-context
@@ -52,7 +52,7 @@ kubectl --kubeconfig /实际路径/kubeconfig --request-timeout=10s get --raw=/v
 sudo ./install.sh --admin-kubeconfig /实际路径/kubeconfig
 ```
 
-`sudo` 可能清除原终端的 `KUBECONFIG` 环境变量。自定义路径建议显式传入；多文件配置需保留 `KUBECONFIG` 供 kubectl 合并。不要把推理实例的 Helm values.yaml 当作 kubeconfig。
+`sudo` 可能清除原终端的 `KUBECONFIG` 环境变量，但安装器仍会查找调用 sudo 的用户目录和常见管理路径。自定义路径排查可显式传入；多文件配置可保留 `KUBECONFIG` 供 kubectl 合并。自动发现中的环境配置不可用时会警告并继续。不要把推理实例的 Helm values.yaml 当作 kubeconfig。
 
 已安装 Bridge，且安全策略不允许 systemd 保存当前管理员身份时：
 

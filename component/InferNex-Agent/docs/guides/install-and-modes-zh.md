@@ -25,11 +25,9 @@ curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/
 ```
 
 离线：按 CPU 架构下载唯一的 `infernex-agent-<版本>-linux-<架构>.tar.gz`，校验、解压
-后运行 `sudo ./install.sh`。详情见[离线安装](offline-install-zh.md)。
+后运行 `sudo ./install.sh`；已经是 root 时运行 `./install.sh`。详情见[离线安装](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/offline-install-zh.md)。
 
-安装器优先使用显式 `--admin-kubeconfig` 或 `KUBECONFIG`（多文件由 kubectl 合并）；未指定时，检查实际 HOME、调用 sudo 的用户、已安装 Agent 的 kubeconfig 与已知管理配置路径。明确选择的配置无效或 API 访问失败时停止并报告原因，不静默切换到其他集群。它会把当前上下文展开为只对
-root 可读的 systemd 运行配置。若 kubeconfig 依赖外部 `exec` 凭据插件，则使用自包含
-admin.conf，或选择下述 hardened identity。
+普通安装无需传 kubeconfig 参数。未显式指定时，安装器依次尝试合并后的 `KUBECONFIG`（合并失败时再逐个尝试其中的文件）、已安装 Agent 的配置、调用 sudo 的用户目录、实际 HOME，以及 root 和常见管理路径。不存在的常规路径会跳过；已存在但无效或无法访问 API 的配置会给出提示并继续，最终选择第一个可用配置。只有显式 `--admin-kubeconfig` 会把目标锁定为该文件，并在文件或 API 检查失败时立即退出，不切换到其他集群。选中的当前上下文会展开为只对 root 可读的 systemd 运行配置。若 kubeconfig 依赖外部 `exec` 凭据插件，则使用自包含 admin.conf，或选择下述 hardened identity。
 
 检测到 InferNex Bridge 时，安装器创建一个空的 `infernex-agent-workspace` Namespace，
 供后续被批准的新服务隔离使用；不会在安装阶段创建 Agent 或推理 Pod。未检测到

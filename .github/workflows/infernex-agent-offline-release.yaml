@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.18"
+        default: "0.5.0-alpha.19"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.18' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.19' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -305,7 +305,7 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.18' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.19' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:

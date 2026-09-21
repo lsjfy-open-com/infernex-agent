@@ -290,52 +290,107 @@ trap cleanup EXIT
 
 check_kubeconfig() {
   local candidate="$1" description="$2" context=""
-  [[ -e "$candidate" ]] || bundle_die "${description} does not exist: ${candidate}"
-  [[ -f "$candidate" && -r "$candidate" ]] || bundle_die \
-    "${description} is not a readable file: ${candidate}"
-  kubectl --kubeconfig "$candidate" config view --raw --minify \
-    >/dev/null 2>&1 || bundle_die \
-    "${description} has an invalid kubeconfig or current context: ${candidate}"
-  context="$(kubectl --kubeconfig "$candidate" config current-context 2>/dev/null)" &&
-    [[ -n "$context" ]] || bundle_die \
-    "${description} has no usable current context: ${candidate}"
-  kubectl --kubeconfig "$candidate" --request-timeout=10s get --raw=/version \
-    >/dev/null 2>&1 || bundle_die \
-    "${description} is present but cannot reach the Kubernetes API with its current credentials: ${candidate}; check connectivity, context, and authentication with kubectl"
+  kubeconfig_failure=""
+  kubeconfig_failure_description="$description"
+  kubeconfig_failure_path="$candidate"
+  if [[ ! -e "$candidate" ]]; then
+    kubeconfig_failure="missing"
+    return 1
+  fi
+  if [[ ! -f "$candidate" || ! -r "$candidate" ]]; then
+    kubeconfig_failure="unreadable"
+    return 1
+  fi
+  if ! kubectl --kubeconfig "$candidate" config view --raw --minify \
+    >/dev/null 2>&1; then
+    kubeconfig_failure="invalid"
+    return 1
+  fi
+  if ! context="$(kubectl --kubeconfig "$candidate" config current-context 2>/dev/null)" ||
+    [[ -z "$context" ]]; then
+    kubeconfig_failure="no-context"
+    return 1
+  fi
+  if ! kubectl --kubeconfig "$candidate" --request-timeout=10s get --raw=/version \
+    >/dev/null 2>&1; then
+    kubeconfig_failure="offline"
+    return 1
+  fi
   admin_kubeconfig="$(readlink -f -- "$candidate")"
 }
 
+report_kubeconfig_failure() {
+  local action="$1"
+  case "$kubeconfig_failure" in
+    missing) bundle_warn "${action} ${kubeconfig_failure_description}: file does not exist: ${kubeconfig_failure_path}" ;;
+    unreadable) bundle_warn "${action} ${kubeconfig_failure_description}: not a readable file: ${kubeconfig_failure_path}" ;;
+    invalid) bundle_warn "${action} ${kubeconfig_failure_description}: invalid kubeconfig: ${kubeconfig_failure_path}" ;;
+    no-context) bundle_warn "${action} ${kubeconfig_failure_description}: no usable current context: ${kubeconfig_failure_path}" ;;
+    offline) bundle_warn "${action} ${kubeconfig_failure_description}: Kubernetes API is unavailable for its current context: ${kubeconfig_failure_path}" ;;
+  esac
+}
+
+die_for_kubeconfig_failure() {
+  case "$kubeconfig_failure" in
+    missing) bundle_die "${kubeconfig_failure_description} does not exist: ${kubeconfig_failure_path}" ;;
+    unreadable) bundle_die "${kubeconfig_failure_description} is not a readable file: ${kubeconfig_failure_path}" ;;
+    invalid) bundle_die "${kubeconfig_failure_description} has an invalid kubeconfig or current context: ${kubeconfig_failure_path}" ;;
+    no-context) bundle_die "${kubeconfig_failure_description} has no usable current context: ${kubeconfig_failure_path}" ;;
+    offline) bundle_die "${kubeconfig_failure_description} is present but cannot reach the Kubernetes API with its current credentials: ${kubeconfig_failure_path}; check connectivity, context, and authentication with kubectl" ;;
+    *) bundle_die "${kubeconfig_failure_description} is not usable: ${kubeconfig_failure_path}" ;;
+  esac
+}
+
 known_admin_kubeconfigs() {
+  local root_home="${1:-/root}"
   printf '%s\n' \
+    "${root_home}/.kube/config" \
     /etc/kubernetes/admin.conf \
     /etc/rancher/k3s/k3s.yaml \
     /etc/rancher/rke2/rke2.yaml
 }
 
 discover_kubeconfig() {
-  local operator_home="${1-${HOME:-}}" candidate sudo_home="" installed="" argument="" path="" any_readable="false"
-  local -a candidates=() env_candidates=()
+  local operator_home="${1-${HOME:-}}" root_home="${2:-/root}" home_parent="${3:-/home}"
+  local candidate sudo_home="" installed="" argument="" path="" seen="" duplicate="false" any_present="false"
+  # Seed the array for Bash 3 with nounset enabled; expanding an empty array is
+  # otherwise treated as an unbound variable on older installer hosts.
+  local -a candidates=() env_candidates=() seen_paths=("")
 
   if [[ "$admin_kubeconfig_explicit" == "true" ]]; then
-    check_kubeconfig "$admin_kubeconfig" "--admin-kubeconfig"
-    return
+    if check_kubeconfig "$admin_kubeconfig" "--admin-kubeconfig"; then
+      return
+    fi
+    die_for_kubeconfig_failure
   fi
 
   if [[ -n "${KUBECONFIG:-}" ]]; then
     IFS=: read -r -a env_candidates <<<"$KUBECONFIG"
-    for path in "${env_candidates[@]}"; do
-      [[ -n "$path" ]] || continue
-      if [[ -f "$path" && -r "$path" ]]; then any_readable="true"; fi
-    done
-    [[ "$any_readable" == "true" ]] || bundle_die \
-      "KUBECONFIG has no readable kubeconfig files; check the paths in KUBECONFIG"
     # kubectl merges the list according to its own precedence rules. A single
     # --kubeconfig argument would silently discard contexts from later files.
     discovery_kubeconfig="$(umask 077; mktemp /tmp/infernex-agent-admin-kubeconfig.XXXXXX)"
-    kubectl config view --raw --flatten --minify >"$discovery_kubeconfig" 2>/dev/null || bundle_die \
-      "KUBECONFIG has an invalid kubeconfig or current context"
-    check_kubeconfig "$discovery_kubeconfig" "merged KUBECONFIG"
-    return
+    if KUBECONFIG="$KUBECONFIG" kubectl config view --raw --flatten --minify \
+      >"$discovery_kubeconfig" 2>/dev/null &&
+      check_kubeconfig "$discovery_kubeconfig" "merged KUBECONFIG"; then
+      return
+    fi
+    bundle_warn "merged KUBECONFIG is unavailable; trying its individual files and host defaults"
+    rm -f -- "$discovery_kubeconfig"
+    discovery_kubeconfig=""
+    for path in "${env_candidates[@]}"; do
+      [[ -n "$path" ]] || continue
+      duplicate="false"
+      for seen in "${seen_paths[@]}"; do
+        if [[ "$seen" == "$path" ]]; then duplicate="true"; break; fi
+      done
+      [[ "$duplicate" == "false" ]] || continue
+      seen_paths+=("$path")
+      if check_kubeconfig "$path" "KUBECONFIG entry"; then
+        return
+      fi
+      [[ "$kubeconfig_failure" == "missing" ]] || any_present="true"
+      report_kubeconfig_failure "skipping"
+    done
   fi
 
   # Preserve the installed Agent's cluster on upgrade unless the operator
@@ -348,28 +403,37 @@ discover_kubeconfig() {
   fi
   candidates+=("$(dirname -- "$agent_config_path")/kubeconfig")
 
-  # Under sudo HOME is commonly /root. In that case use the invoking user's
-  # passwd home first; otherwise honor the environment's actual HOME first.
-  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] &&
-    command -v getent >/dev/null 2>&1; then
-    sudo_home="$(getent passwd "$SUDO_USER" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
-  fi
-  if [[ "$operator_home" == "/root" && -n "$sudo_home" ]]; then
+  # Preserve the alpha.15/16 order under sudo, including its passwd lookup
+  # fallback for minimal hosts that do not provide getent.
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
+    if command -v getent >/dev/null 2>&1; then
+      sudo_home="$(getent passwd "$SUDO_USER" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
+    fi
+    [[ -n "$sudo_home" ]] || sudo_home="${home_parent}/${SUDO_USER}"
     candidates+=("${sudo_home}/.kube/config")
   fi
   [[ -z "$operator_home" ]] || candidates+=("${operator_home}/.kube/config")
-  if [[ -n "$sudo_home" && "$operator_home" != "/root" ]]; then
-    candidates+=("${sudo_home}/.kube/config")
-  fi
 
   while IFS= read -r candidate; do candidates+=("$candidate"); done \
-    < <(known_admin_kubeconfigs)
+    < <(known_admin_kubeconfigs "$root_home")
   for candidate in "${candidates[@]}"; do
-    [[ -e "$candidate" ]] || continue
-    check_kubeconfig "$candidate" "discovered kubeconfig"
-    return
+    [[ -n "$candidate" ]] || continue
+    duplicate="false"
+    for seen in "${seen_paths[@]}"; do
+      if [[ "$seen" == "$candidate" ]]; then duplicate="true"; break; fi
+    done
+    [[ "$duplicate" == "false" ]] || continue
+    seen_paths+=("$candidate")
+    if check_kubeconfig "$candidate" "discovered kubeconfig"; then
+      return
+    fi
+    [[ "$kubeconfig_failure" == "missing" ]] || any_present="true"
+    [[ "$kubeconfig_failure" == "missing" ]] || report_kubeconfig_failure "skipping"
   done
-  bundle_die "no management kubeconfig file was found for this operator; pass --admin-kubeconfig /path/to/config (checked HOME, SUDO_USER home, existing Agent config, and known Kubernetes admin paths)"
+  if [[ "$any_present" == "true" ]]; then
+    bundle_die "management kubeconfig files were found, but none had a usable context and Kubernetes API; pass --admin-kubeconfig /path/to/config"
+  fi
+  bundle_die "no management kubeconfig file was found; pass --admin-kubeconfig /path/to/config (checked KUBECONFIG, existing Agent config, SUDO_USER and HOME, root, and known Kubernetes admin paths)"
 }
 
 discover_kubeconfig

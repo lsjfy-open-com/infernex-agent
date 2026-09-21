@@ -1,4 +1,4 @@
-> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.18 的原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.19 的原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
@@ -15,7 +15,7 @@ images, or shell commands.
 The intended management-node installation is one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.18/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.18 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.19/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.19 bash
 ```
 
 The installer discovers the current kubeconfig, CPU architecture, and whether
@@ -43,12 +43,13 @@ Markdown-only Skills without granting shell or cluster permissions; see the
 Alpha.17 fixes direct Host Dashboard access and adds a native Kubernetes overview, including explicit empty, partial-permission, and fetch-error states.
 
 The current public candidate is
-[v0.5.0-alpha.18](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.18).
+[v0.5.0-alpha.19](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.19).
 It includes the Pi TUI, generic Kubernetes reads, guarded Bridge operations,
 host/SSH/Pod diagnostics, compact tool rows, readable report and memory names,
-and manual/full approval modes. Alpha.16 adds optional approved SLO gates in Bridge
+and manual/full approval modes. Alpha.19 restores no-argument kubeconfig discovery
+while retaining the alpha.18 Dashboard live-YAML view. Alpha.16 adds optional approved SLO gates in Bridge
 experiments and local Git/snapshot configuration records; see the
-[SLO and version guide](docs/guides/slo-and-config-versions-zh.md). Native resource-aware deployment and request-level
+[SLO and version guide](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/slo-and-config-versions-zh.md). Native resource-aware deployment and request-level
 load balancing remain planned capabilities.
 
 The management-node installation provides one Agentic terminal:
