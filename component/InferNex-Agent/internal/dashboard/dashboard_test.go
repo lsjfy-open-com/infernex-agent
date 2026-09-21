@@ -125,6 +125,7 @@ func TestDashboardServesExperimentState(t *testing.T) {
 func TestDashboardServesManagementLocations(t *testing.T) {
 	store := supervisor.NewSnapshotStore("test-version", time.Minute, false)
 	handler := New(store, WithManagementInfo(ManagementInfo{
+		AgentConfigPath:        "/etc/infernex-agent/agent.conf",
 		SLOProfileDirectory:    "/etc/infernex-agent/slo-profiles",
 		ConfigVersionDirectory: "/var/lib/infernex-agent/config-versions",
 		SLOEnabled:             true,
@@ -138,7 +139,7 @@ func TestDashboardServesManagementLocations(t *testing.T) {
 	if err := json.NewDecoder(response.Body).Decode(&info); err != nil {
 		t.Fatal(err)
 	}
-	if !info.SLOEnabled || info.SLOProfileDirectory == "" || info.ConfigVersionDirectory == "" {
+	if !info.SLOEnabled || info.AgentConfigPath == "" || info.SLOProfileDirectory == "" || info.ConfigVersionDirectory == "" {
 		t.Fatalf("management = %#v", info)
 	}
 }

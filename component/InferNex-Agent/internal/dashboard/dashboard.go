@@ -44,6 +44,7 @@ type options struct {
 // and summaries only; it never reads or publishes profile prompts, endpoints,
 // credentials, or configuration contents.
 type ManagementInfo struct {
+	AgentConfigPath        string        `json:"agentConfigPath,omitempty"`
 	SLOProfileDirectory    string        `json:"sloProfileDirectory,omitempty"`
 	ConfigVersionDirectory string        `json:"configVersionDirectory,omitempty"`
 	SLOEnabled             bool          `json:"sloEnabled"`
@@ -322,6 +323,7 @@ const indexHTML = `<!doctype html>
     section.append(el("h2", "", "运行配置与版本入口"));
     const rows = el("div", "services");
     const slo = el("article", "service");
+    if (data.agentConfigPath) slo.append(el("div", "meta", "Agent 配置：" + data.agentConfigPath));
     slo.append(el("h3", "", "SLO 对照实验"));
     slo.append(el("div", "meta", data.sloEnabled ? "已启用：仅使用管理员批准的 profile" : "未启用：实验不会发送 SLO 请求"));
     if (data.sloProfileDirectory) slo.append(el("div", "meta", "profile 目录：" + data.sloProfileDirectory));
