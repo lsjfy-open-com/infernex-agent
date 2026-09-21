@@ -38,8 +38,8 @@ openFuyao Helm/BKE 形态，安装静态二进制与 systemd 服务，然后只�
 模型接口。默认复用当前 `kubectl` 身份，不创建 Agent Pod、Controller、CRD、
 ServiceAccount 或 RBAC。
 
-模型接口会在 systemd 首次启动前配置并完成 tool-calling 测试。若默认 Dashboard
-`127.0.0.1:8081` 已被非 Agent 进程占用，安装器不会结束或杀死该进程，而是自动选择
+模型接口会在 systemd 首次启动前配置并完成 tool-calling 测试。新安装的 Dashboard
+默认监听 `0.0.0.0:8081`。若该端口已被非 Agent 进程占用，安装器不会结束或杀死该进程，而是自动选择
 `18081`、`28081` 等空闲端口并在完成信息中打印实际地址。若服务随后仍未 Ready，安装器
 会将经过裁剪的 systemd、journal 和端口证据交给已配置模型，输出不执行变更的诊断建议。
 
@@ -150,6 +150,10 @@ sudo infernex-agent chat
 容器命令或 YAML。只读工具自动执行；任何写操作都必须在本机展示摘要，并由用户输入
 精确的 `yes` 批准。
 
+Host 安装本身不需要 Helm。它直接复用 Host 上已有的 kubeconfig，以本机 systemd 进程提供 MCP、Dashboard 和只读 Kubernetes 观察；因此只想在管理节点打开 Dashboard 时，不需要执行 `helm install`。
+
+只有在希望把 Agent 本身作为集群内 Deployment/Service 安装、复用 Chart 的 ServiceAccount/RBAC，或接入已有 Gateway/NodePort 时，才使用 Helm。此时 Helm 管理的是 Agent 组件，不是被观察的推理实例；推理实例仍由其既有的 Helm、Operator 或平台控制器管理。两种安装方式不要同时启用同一份 Agent 服务。
+
 在 Helm/BKE 模式中，`chat` 会先调用 `openfuyao_detect_environment` 判断当前
 kubeconfig 指向引导/管理控制面还是业务集群，再使用 `helm_list_releases`、
 `k8s_list_workloads`、`k8s_get_events` 和 `k8s_get_pod_logs` 探索现有实例。当前只读
@@ -158,14 +162,26 @@ kubeconfig 指向引导/管理控制面还是业务集群，再使用 `helm_list
 
 ## Web 展示
 
-Dashboard 默认监听 `127.0.0.1:8081`。通过 SSH 隧道访问：
+新安装的 Dashboard 默认监听 `0.0.0.0:8081`。浏览器从管理网络访问 `http://<HostIP>:8081/`，将 `<HostIP>` 换成实际可达的宿主机地址；多网卡主机需选择正确网卡。升级时未显式指定 `--dashboard-listen-address` 会保留旧配置。Dashboard 只读但没有内置认证，请用管理网、ACL 或认证入口控制访问；MCP 和受限诊断端点保持本地监听，安装器不会自动更改防火墙。
+
+旧安装若仍绑定 `127.0.0.1:8081`，可重跑安装器并指定 `--dashboard-listen-address 0.0.0.0:8081`。不重装时，在管理节点备份并修改现有配置，然后重启服务：
+
+```bash
+sudo cp -a /etc/infernex-agent/agent.conf "/etc/infernex-agent/agent.conf.bak.$(date -u +%Y%m%dT%H%M%SZ)"
+sudo sed -i 's/^--dashboard-listen-address=.*/--dashboard-listen-address=0.0.0.0:8081/' /etc/infernex-agent/agent.conf
+sudo systemctl restart infernex-agent
+sudo systemctl status infernex-agent --no-pager
+curl -fsS http://127.0.0.1:8081/healthz
+curl -fsS http://127.0.0.1:8081/api/v1/kubernetes
+```
+
+`/healthz` 检查 Dashboard 进程，`/api/v1/kubernetes` 检查原生集群摘要和权限告警。再从另一台管理机器执行 `curl -fsS http://<HostIP>:8081/healthz`。若本机健康检查成功而远端失败，用 `ss -ltnp` 确认监听地址，检查现有防火墙、ACL 和网络路由。无需开放 MCP 的 `8080` 端口。若继续保持旧的 loopback 绑定，可通过 SSH 隧道访问：
 
 ```bash
 ssh -L 8081:127.0.0.1:8081 <管理节点>
 ```
 
-浏览器打开 `http://127.0.0.1:8081/`。如需绑定管理网地址，重新安装时传入
-`--dashboard-listen-address <IP>:8081`，并自行配置防火墙、ACL 或认证代理。
+转发后浏览器打开 `http://127.0.0.1:8081/`。
 
 通过现有 Istio/Gateway 自动创建外部路由属于 v0.5 计划能力。宿主机进程需要 selector-less Service、
 EndpointSlice 和 HTTPRoute/VirtualService 才能成为 Gateway backend；在 Dashboard 补齐认证、TLS、

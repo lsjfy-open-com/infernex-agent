@@ -1,4 +1,4 @@
-> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.16 的原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.17 的原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
@@ -15,7 +15,7 @@ images, or shell commands.
 The intended management-node installation is one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.16/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.16 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.17/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.17 bash
 ```
 
 The installer discovers the current kubeconfig, CPU architecture, and whether
@@ -40,8 +40,10 @@ HiXL/LLM DataDist diagnostic Skills. Operators can install additional
 Markdown-only Skills without granting shell or cluster permissions; see the
 [Chinese Skill guide](docs/guides/skills-and-cann-hixl-zh.md).
 
+Alpha.17 fixes direct Host Dashboard access and adds a native Kubernetes overview, including explicit empty, partial-permission, and fetch-error states.
+
 The current public candidate is
-[v0.5.0-alpha.16](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.16).
+[v0.5.0-alpha.17](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.17).
 It includes the Pi TUI, generic Kubernetes reads, guarded Bridge operations,
 host/SSH/Pod diagnostics, compact tool rows, readable report and memory names,
 and manual/full approval modes. Alpha.16 adds optional approved SLO gates in Bridge

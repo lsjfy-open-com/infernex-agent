@@ -73,7 +73,7 @@ namespace 后需要重新执行安装器以扩充 allowlist。
 
 ```text
 --admin-kubeconfig FILE       指定发现用 kubeconfig
---dashboard-listen-address A  Dashboard 地址，默认 127.0.0.1:8081
+--dashboard-listen-address A  Dashboard 地址，新安装默认 0.0.0.0:8081；升级保留已有地址
 --diagnostic-subagent-listen-address A 受限诊断 MCP，默认 127.0.0.1:18082
 --diagnostic-subagent-max-concurrency N 委派并发，默认 4
 --disable-diagnostic-subagent 关闭诊断 Subagent 接口

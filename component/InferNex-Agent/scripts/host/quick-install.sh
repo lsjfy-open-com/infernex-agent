@@ -32,7 +32,7 @@ OpenAI-compatible model endpoint used by the Agent.
 Advanced recovery/automation options:
   --admin-kubeconfig FILE       Override kubeconfig discovery
   --bundle-dir DIR              Override the extracted Agent package directory
-  --dashboard-listen-address A  Default: 127.0.0.1:8081
+  --dashboard-listen-address A  Default: 0.0.0.0:8081
   --hardened-identity          Create a dedicated ServiceAccount/RBAC identity
   --generic-kubernetes        Force base Kubernetes/Helm compatibility mode
   --skip-checksums            Skip package-internal checksums after verifying the outer archive
@@ -49,7 +49,8 @@ EOF
 }
 
 admin_kubeconfig=""
-dashboard_listen_address="127.0.0.1:8081"
+agent_config_path="/etc/infernex-agent/agent.conf"
+dashboard_listen_address="0.0.0.0:8081"
 dashboard_listen_address_explicit="false"
 skip_model_setup="false"
 non_interactive="false"
@@ -186,10 +187,26 @@ port_is_listening() {
 }
 
 address_is_current_agent_listener() {
-  local address="$1"
-  systemctl is-active --quiet infernex-agent.service 2>/dev/null &&
-    grep -Fxq -- "--dashboard-listen-address=${address}" \
-      /etc/infernex-agent/agent.conf 2>/dev/null
+  local address="$1" config="${2:-$agent_config_path}"
+  local configured="" argument main_pid listeners row seen="false"
+  systemctl is-active --quiet infernex-agent.service 2>/dev/null || return 1
+  [[ -f "$config" ]] || return 1
+  while IFS= read -r argument; do
+    case "$argument" in --dashboard-listen-address=*) configured="${argument#*=}" ;; esac
+  done <"$config"
+  [[ -n "$configured" && "$(address_port "$configured")" == "$(address_port "$address")" ]] || return 1
+  main_pid="$(systemctl show -p MainPID --value infernex-agent.service 2>/dev/null)"
+  [[ "$main_pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  command -v ss >/dev/null 2>&1 || return 1
+  listeners="$(ss -H -ltnp "sport = :$(address_port "$address")" 2>/dev/null)" || return 1
+  [[ -n "$listeners" ]] || return 1
+  while IFS= read -r row; do
+    [[ "$row" == *"pid=${main_pid},"* ]] || return 1
+    row="${row//pid=${main_pid},/}"
+    [[ "$row" != *'pid='* ]] || return 1
+    seen="true"
+  done <<<"$listeners"
+  [[ "$seen" == "true" ]]
 }
 
 listener_evidence() {
@@ -200,6 +217,27 @@ listener_evidence() {
   else
     printf 'TCP port %s is present in /proc/net/tcp but ss is unavailable\n' "$port"
   fi
+}
+
+select_existing_dashboard_bind() {
+  local requested="$1" explicit="$2" config="$3" argument existing=""
+  if [[ "$explicit" != "true" && -f "$config" ]]; then
+    while IFS= read -r argument; do
+      case "$argument" in --dashboard-listen-address=*) existing="${argument#*=}" ;; esac
+    done <"$config"
+    [[ -z "$existing" ]] || requested="$existing"
+  fi
+  printf '%s' "$requested"
+}
+
+quick_dashboard_access_url() {
+  local address="$1" port="${1##*:}" host="${1%:*}"
+  case "$host" in
+    0.0.0.0) host='<HostIP>' ;;
+    :: | '[::]') host='[<HostIPv6>]' ;;
+    *) [[ "$host" != *:* || "$host" == \[*\] ]] || host="[${host}]" ;;
+  esac
+  printf 'http://%s:%s/' "$host" "$port"
 }
 
 select_dashboard_listener() {
@@ -280,6 +318,15 @@ admin_kubeconfig="$(discover_kubeconfig || true)"
 [[ -n "$admin_kubeconfig" ]] || bundle_die \
   "no working management kubeconfig was found (checked the invoking user's ~/.kube/config, /etc/kubernetes/admin.conf, and k3s)"
 bundle_info "using the current Kubernetes context from: ${admin_kubeconfig}"
+dashboard_listen_address="$(select_existing_dashboard_bind "$dashboard_listen_address" \
+  "$dashboard_listen_address_explicit" "$agent_config_path")"
+# An existing bind is an operator choice. If its port has become occupied,
+# report the conflict instead of silently selecting another port on upgrade.
+if [[ "$dashboard_listen_address_explicit" != "true" && \
+  -f "$agent_config_path" ]] &&
+  grep -q '^--dashboard-listen-address=' "$agent_config_path"; then
+  dashboard_listen_address_explicit="true"
+fi
 dashboard_listen_address="$(select_dashboard_listener "$dashboard_listen_address")"
 
 kubectl_admin=(kubectl --kubeconfig "$admin_kubeconfig" --request-timeout=15s)
@@ -437,4 +484,4 @@ bundle_info "InferNex Agent is ready"
 bundle_info "detected platform mode: ${platform_mode}"
 bundle_info "start the Agentic TUI with: sudo infernex-agent chat"
 bundle_info "legacy line terminal: sudo infernex-agent chat --classic"
-bundle_info "dashboard: http://${dashboard_listen_address}/ (use an SSH tunnel when bound to 127.0.0.1)"
+bundle_info "dashboard access: $(quick_dashboard_access_url "$dashboard_listen_address") (for wildcard binds, use a reachable management IP)"

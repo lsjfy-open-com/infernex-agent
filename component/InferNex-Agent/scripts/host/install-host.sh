@@ -24,7 +24,7 @@ Options:
   --scan-namespace NAMESPACE      Namespace to scan (repeatable)
   --generic-kubernetes            Install without InferNex Bridge CRDs
   --listen-address ADDRESS        MCP bind (default: 127.0.0.1:8080)
-  --dashboard-listen-address ADDR Dashboard bind (default: 127.0.0.1:8081)
+  --dashboard-listen-address ADDR Dashboard bind (default: 0.0.0.0:8081)
   --diagnostic-subagent-listen-address ADDR Restricted MCP bind (default: 127.0.0.1:18082)
   --diagnostic-subagent-max-concurrency N Concurrent delegated requests (default: 4)
   --disable-diagnostic-subagent    Do not expose the restricted diagnostic MCP endpoint
@@ -63,9 +63,9 @@ Options:
   --no-start                        Install files without starting the service
   -h, --help                        Show this help
 
-Use 0.0.0.0:8081 or a specific management IP only with a host firewall rule
-that limits access to the internal operations network. MCP is local-only by
-default and should normally remain so.
+Dashboard binds all IPv4 interfaces by default and has no built-in authentication.
+Limit access through a management network or controlled ingress. MCP and the
+restricted diagnostic endpoint remain local-only by default.
 EOF
 }
 
@@ -73,7 +73,8 @@ bundle_root="$(bundle_default_root || true)"
 binary_source=""
 kubeconfig_source=""
 listen_address="127.0.0.1:8080"
-dashboard_listen_address="127.0.0.1:8081"
+dashboard_listen_address="0.0.0.0:8081"
+dashboard_listen_address_explicit="false"
 diagnostic_subagent_listen_address="127.0.0.1:18082"
 diagnostic_subagent_max_concurrency="4"
 enable_diagnostic_subagent="true"
@@ -158,6 +159,7 @@ while (($#)); do
     --dashboard-listen-address)
       [[ $# -ge 2 ]] || bundle_die "--dashboard-listen-address requires a value"
       dashboard_listen_address="$2"
+      dashboard_listen_address_explicit="true"
       shift 2
       ;;
     --diagnostic-subagent-listen-address)
@@ -440,6 +442,22 @@ validate_listen_address() {
     [[ "$port" =~ ^[0-9]+$ ]] &&
     ((port >= 1024 && port <= 65535))
 }
+# Preserve an existing operator-selected Dashboard bind during upgrades.
+# Only a command-line override changes it; new installations use the public
+# interface default above.
+select_dashboard_bind() {
+  local requested="$1" explicit="$2" config="$3" argument existing=""
+  if [[ "$explicit" != "true" && -f "$config" ]]; then
+    while IFS= read -r argument; do
+      case "$argument" in --dashboard-listen-address=*) existing="${argument#*=}" ;; esac
+    done <"$config"
+    [[ -z "$existing" ]] || requested="$existing"
+  fi
+  printf '%s' "$requested"
+}
+dashboard_listen_address="$(select_dashboard_bind "$dashboard_listen_address" \
+  "$dashboard_listen_address_explicit" /etc/infernex-agent/agent.conf)"
+
 validate_listen_address "$listen_address" ||
   bundle_die "invalid or privileged MCP listen address: ${listen_address}"
 validate_listen_address "$dashboard_listen_address" ||
@@ -466,6 +484,16 @@ health_url_for_address() {
     host="[${host}]"
   fi
   printf 'http://%s:%s' "$host" "$port"
+}
+
+dashboard_access_url() {
+  local address="$1" port="${1##*:}" host="${1%:*}"
+  case "$host" in
+    0.0.0.0) host='<HostIP>' ;;
+    :: | '[::]') host='[<HostIPv6>]' ;;
+    *) [[ "$host" != *:* || "$host" == \[*\] ]] || host="[${host}]" ;;
+  esac
+  printf 'http://%s:%s/' "$host" "$port"
 }
 
 if [[ -n "$openai_base_url" || -n "$openai_model" ]]; then
@@ -1446,6 +1474,7 @@ trap - EXIT
 bundle_info "host installation completed"
 bundle_info "pre-install recovery point: ${install_backup_root}"
 bundle_info "dashboard listener: ${dashboard_listen_address}"
+bundle_info "dashboard access: $(dashboard_access_url "$dashboard_listen_address") (for wildcard binds, use a reachable management IP)"
 bundle_info "MCP listener: ${listen_address}"
 if [[ "$enable_diagnostic_subagent" == "true" && "$execution_mode" != "detect" && ${#scan_namespaces[@]} -gt 0 ]]; then
   bundle_info "restricted diagnostic subagent MCP: ${diagnostic_subagent_listen_address}"

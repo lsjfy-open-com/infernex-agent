@@ -51,6 +51,7 @@ jobs:
           go vet ./...
           bash -n scripts/*.sh scripts/offline/*.sh scripts/host/*.sh test/scripts/*.sh
           bash test/scripts/download-bundle.sh
+          bash test/scripts/host-dashboard-address.sh
 
       - name: Set up Helm
         uses: azure/setup-helm@v5

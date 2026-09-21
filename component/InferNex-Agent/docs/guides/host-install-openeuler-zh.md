@@ -69,13 +69,15 @@ sudo journalctl -u infernex-agent -f
 sudo grep -E -- '^--(listen|dashboard-listen)-address=' /etc/infernex-agent/agent.conf
 ```
 
-Dashboard 默认只监听 `127.0.0.1:8081`，通过 XShell/SSH 做本地端口转发：
+新安装的 Dashboard 默认监听 `0.0.0.0:8081`。在浏览器访问 `http://<HostIP>:8081/`，其中 `<HostIP>` 是管理网络中可达的主机地址；多网卡主机请选择实际可达的地址。安装结果也会打印访问地址占位符。升级时若不传 `--dashboard-listen-address`，安装器保留 `agent.conf` 中已有的 Dashboard 地址。
+
+旧安装若仍监听 `127.0.0.1:8081`，可重新运行 `sudo ./install.sh --dashboard-listen-address 0.0.0.0:8081`；也可直接把 `/etc/infernex-agent/agent.conf` 中的 `--dashboard-listen-address=127.0.0.1:8081` 改成 `--dashboard-listen-address=0.0.0.0:8081`，然后执行 `sudo systemctl restart infernex-agent`，无需重装。若选择继续本机监听，可通过 XShell/SSH 转发：
 
 ```bash
 ssh -L 8081:127.0.0.1:8081 <A2管理节点>
 ```
 
-浏览器访问 `http://127.0.0.1:8081/`。
+转发后浏览器访问 `http://127.0.0.1:8081/`。Dashboard 只读，但没有内置认证；请通过管理网或受控入口限制访问。MCP 与受限诊断端点仍保持本地监听，安装器不会自动修改防火墙。
 
 更新、恢复、卸载和安全边界分别见[安装模式](install-and-modes-zh.md)、
 [变更保护与回退](change-safety-zh.md)和[安全边界](../reference/security-boundaries-zh.md)。

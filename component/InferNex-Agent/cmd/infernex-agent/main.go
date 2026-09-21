@@ -42,6 +42,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	infernexchat "gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/chat"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/configversion"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/dashboard"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/delegation"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
@@ -700,9 +701,15 @@ func serveAgent(opts options) error {
 		var dashboardHandler http.Handler
 		if strings.TrimSpace(opts.dashboardListen) != "" {
 			dashboardOptions := make([]dashboard.Option, 0, 1)
+			management := dashboard.ManagementInfo{ConfigVersionDirectory: configversion.DefaultStateDir, SLOProfileDirectory: opts.sloProfileDirectory}
 			if domainExperiments != nil {
 				dashboardOptions = append(dashboardOptions, dashboard.WithExperiments(domainExperiments))
+				if provider, ok := domainExperiments.(interface{ ListSLOProfiles() []slo.Summary }); ok {
+					management.SLOProfiles = provider.ListSLOProfiles()
+					management.SLOEnabled = len(management.SLOProfiles) > 0
+				}
 			}
+			dashboardOptions = append(dashboardOptions, dashboard.WithKubernetes(platformReader, namespaces), dashboard.WithPublicSummary(true), dashboard.WithManagementInfo(management))
 			dashboardHandler = dashboard.New(snapshotStore, dashboardOptions...)
 		}
 		return serveHTTP(ctx, server, opts.listen, opts.dashboardListen, dashboardHandler, opts.diagnosticDelegateListen, diagnosticDelegateHandler)

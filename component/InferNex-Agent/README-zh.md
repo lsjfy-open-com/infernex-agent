@@ -1,8 +1,8 @@
-> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.16 的原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.17 的原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
-alpha.16 新增可选 SLO 对照实验与 Git / snapshot 版本关联记录，使用方式和能力边界见[SLO 与配置版本指南](docs/guides/slo-and-config-versions-zh.md)。
+alpha.17 延续 alpha.16 的可选 SLO 对照实验与 Git / snapshot 版本关联记录，并修复 Host Dashboard 直访和原生 Kubernetes 空页面问题；使用方式和能力边界见[SLO 与配置版本指南](docs/guides/slo-and-config-versions-zh.md)。
 
 [English](README.md) | 简体中文
 
@@ -41,7 +41,7 @@ Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的�
 联网安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.16/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.16 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.17/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.17 bash
 ```
 
 离线安装：
@@ -108,7 +108,7 @@ Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/guides/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 `v0.5.0-alpha.16`（继承 alpha.12 功能并整合部署/恢复保护），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
+当前 Pi TUI 默认入口测试包为 [`v0.5.0-alpha.17`](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.17)（继承 alpha.12 功能并整合部署/恢复保护），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 
@@ -132,16 +132,11 @@ Agent 的知识库描述 InferNex 组件关系、常见故障模式、稳定变�
 
 ## Web 与持续扫描
 
-本地 systemd 服务持续扫描，Dashboard 默认只监听 `127.0.0.1:8081`：
+alpha.17 新安装的 Dashboard 默认监听 `0.0.0.0:8081`，浏览器访问 `http://<管理节点 IP>:8081/`，无需 SSH 隧道。MCP 和诊断子代理继续默认监听本机回环地址。升级时保留已有 Dashboard 地址；旧安装若仍为 `127.0.0.1`，需显式配置 `--dashboard-listen-address 0.0.0.0:8081`。
 
-```bash
-ssh -L 8081:127.0.0.1:8081 <管理节点>
-```
+页面展示原生 Kubernetes 工作负载概览，以及已启用的 Bridge 巡检和实验。无 Bridge、没有匹配资源、权限不足和接口失败会分别提示。Dashboard 是只读页面，无内置登录，应通过管理网或现有认证入口控制访问；不会自动修改主机防火墙。
 
-然后访问 `http://127.0.0.1:8081/`。
-
-通过现有 Istio/Gateway 自动发布 Dashboard 已进入 v0.5 设计，但必须先提供认证、TLS、Gateway 到
-管理节点的可达性检查、Policy 批准和路由配置回退；当前版本不会默认匿名暴露运维数据。
+配置与排查步骤见[产品使用指南](docs/guides/product-guide-zh.md)。
 
 ## 文档
 
