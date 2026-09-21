@@ -44,6 +44,16 @@ kubectl api-resources | grep -i infernex  # 仅用于识别形态；没有输出
 sudo ./install.sh --admin-kubeconfig /etc/kubernetes/admin.conf
 ```
 
+首次安装失败时，先区分“未找到文件”和“已找到文件但无法访问 API”。后者可能来自网络、认证或 context 错误，不应改找其他集群的配置。使用现场实际文件验证：
+
+```bash
+kubectl --kubeconfig /实际路径/kubeconfig config current-context
+kubectl --kubeconfig /实际路径/kubeconfig --request-timeout=10s get --raw=/version
+sudo ./install.sh --admin-kubeconfig /实际路径/kubeconfig
+```
+
+`sudo` 可能清除原终端的 `KUBECONFIG` 环境变量。自定义路径建议显式传入；多文件配置需保留 `KUBECONFIG` 供 kubectl 合并。不要把推理实例的 Helm values.yaml 当作 kubeconfig。
+
 已安装 Bridge，且安全策略不允许 systemd 保存当前管理员身份时：
 
 ```bash

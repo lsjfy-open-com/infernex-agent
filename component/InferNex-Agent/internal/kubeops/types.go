@@ -134,6 +134,7 @@ type WorkloadSummary struct {
 	Ready       int32             `json:"ready"`
 	Available   int32             `json:"available,omitempty"`
 	Images      []string          `json:"images,omitempty"`
+	LiveYAML    string            `json:"liveYaml,omitempty"`
 	Selector    string            `json:"selector,omitempty"`
 	HelmRelease string            `json:"helmRelease,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`

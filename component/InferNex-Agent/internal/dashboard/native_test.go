@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -14,9 +15,11 @@ import (
 )
 
 type nativeReaderStub struct {
-	calls   atomic.Int32
-	blocked chan struct{}
-	request string
+	calls         atomic.Int32
+	blocked       chan struct{}
+	request       string
+	helmErr       error
+	helmTruncated bool
 }
 
 func (s *nativeReaderStub) ClusterOverview(context.Context) (kubeops.ClusterOverview, error) {
@@ -28,7 +31,27 @@ func (s *nativeReaderStub) ClusterOverview(context.Context) (kubeops.ClusterOver
 }
 func (s *nativeReaderStub) ListWorkloads(_ context.Context, r kubeops.WorkloadRequest) (kubeops.WorkloadInventory, error) {
 	s.request = r.Namespace
-	return kubeops.WorkloadInventory{Total: 1, Workloads: []kubeops.WorkloadSummary{{Kind: "Deployment", Namespace: "models", Name: "qwen", Desired: 2, Ready: 1}}}, nil
+	return kubeops.WorkloadInventory{Total: 1, Workloads: []kubeops.WorkloadSummary{{Kind: "Deployment", Namespace: "models", Name: "qwen", Desired: 2, Ready: 1, HelmRelease: "qwen", Images: []string{"registry.example/qwen:v1"}, LiveYAML: "kind: Deployment\nmetadata:\n  name: qwen\n"}}}, nil
+}
+func (s *nativeReaderStub) ListHelmReleases(_ context.Context, r kubeops.HelmReleaseRequest) (kubeops.HelmReleaseList, error) {
+	if s.helmErr != nil {
+		return kubeops.HelmReleaseList{}, s.helmErr
+	}
+	return kubeops.HelmReleaseList{Namespace: r.Namespace, Total: 1, Truncated: s.helmTruncated, Releases: []kubeops.HelmReleaseSummary{{Namespace: "models", Name: "qwen", Revision: 3, Status: "deployed"}}}, nil
+}
+
+func TestNativeHelmFailureKeepsLiveWorkloads(t *testing.T) {
+	reader := &nativeReaderStub{helmErr: errors.New("forbidden")}
+	value, err := newNativeCache(reader, []string{"models"}).collect(context.Background())
+	if err != nil || len(value.Workloads) != 1 || value.Workloads[0].LiveYAML == "" || value.Workloads[0].HelmRevision != 0 || len(value.Warnings) != 2 {
+		t.Fatalf("Helm failure removed live configuration: %+v %v", value, err)
+	}
+	reader.helmErr = nil
+	reader.helmTruncated = true
+	value, err = newNativeCache(reader, []string{"models"}).collect(context.Background())
+	if err != nil || !value.Truncated {
+		t.Fatalf("Helm truncation was hidden: %+v %v", value, err)
+	}
 }
 func TestNativeKubernetesAPIUsesScopeAndCache(t *testing.T) {
 	store := supervisor.NewSnapshotStore("test", time.Minute, false)
@@ -44,7 +67,7 @@ func TestNativeKubernetesAPIUsesScopeAndCache(t *testing.T) {
 		if err := json.Unmarshal(response.Body.Bytes(), &data); err != nil {
 			t.Fatal(err)
 		}
-		if data.Scope != "配置的巡检命名空间" || len(data.Workloads) != 1 || data.Workloads[0].Name != "qwen" || len(data.Warnings) != 1 {
+		if data.Scope != "配置的巡检命名空间" || len(data.Workloads) != 1 || data.Workloads[0].Name != "qwen" || data.Workloads[0].HelmRevision != 3 || data.Workloads[0].LiveYAML == "" || len(data.Warnings) != 1 {
 			t.Fatalf("bad summary: %+v", data)
 		}
 	}

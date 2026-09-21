@@ -153,6 +153,18 @@ curl --fail --silent --show-error \
   "http://127.0.0.1:${dashboard_local_port}/" |
   grep -q "InferNex"
 
+# Verify that deployment configuration is actual API-derived YAML, rather
+# than an Agent configuration path or an empty dashboard placeholder.
+native_snapshot="$(curl --fail --silent --show-error \
+  "http://127.0.0.1:${dashboard_local_port}/api/v1/kubernetes")"
+jq -e '
+  any(.workloads[];
+    .namespace == "models" and .name == "smoke-engine" and
+    .kind == "Deployment" and .desired == 1 and
+    (.liveYaml | contains("replicas: 1")) and
+    (.liveYaml | contains("registry.k8s.io/pause:3.10")))
+' <<<"${native_snapshot}" >/dev/null
+
 mcp_call() {
   local tool_name="$1"
   local arguments="$2"

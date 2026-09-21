@@ -701,7 +701,7 @@ func serveAgent(opts options) error {
 		var dashboardHandler http.Handler
 		if strings.TrimSpace(opts.dashboardListen) != "" {
 			dashboardOptions := make([]dashboard.Option, 0, 1)
-			management := dashboard.ManagementInfo{AgentConfigPath: "/etc/infernex-agent/agent.conf", ConfigVersionDirectory: configversion.DefaultStateDir, SLOProfileDirectory: opts.sloProfileDirectory}
+			management := dashboard.ManagementInfo{ConfigVersionDirectory: configversion.DefaultStateDir, SLOProfileDirectory: opts.sloProfileDirectory}
 			if domainExperiments != nil {
 				dashboardOptions = append(dashboardOptions, dashboard.WithExperiments(domainExperiments))
 				if provider, ok := domainExperiments.(interface{ ListSLOProfiles() []slo.Summary }); ok {

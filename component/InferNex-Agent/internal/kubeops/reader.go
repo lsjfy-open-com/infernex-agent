@@ -303,6 +303,7 @@ func (r *KubernetesReader) ListWorkloads(ctx context.Context, request WorkloadRe
 				Kind: "Deployment", Namespace: item.Namespace, Name: item.Name,
 				Desired: valueOrOne(item.Spec.Replicas), Ready: item.Status.ReadyReplicas,
 				Available: item.Status.AvailableReplicas, Images: podSpecImages(&item.Spec.Template.Spec),
+				LiveYAML: liveWorkloadYAML("Deployment", item.Namespace, item.Name, item.Spec.Replicas, map[string]*corev1.PodSpec{"": &item.Spec.Template.Spec}),
 				Selector: metav1.FormatLabelSelector(item.Spec.Selector), HelmRelease: helmRelease(item), Labels: selectedLabels(item.Labels),
 			})
 		}
@@ -317,6 +318,7 @@ func (r *KubernetesReader) ListWorkloads(ctx context.Context, request WorkloadRe
 				Kind: "StatefulSet", Namespace: item.Namespace, Name: item.Name,
 				Desired: valueOrOne(item.Spec.Replicas), Ready: item.Status.ReadyReplicas,
 				Available: item.Status.AvailableReplicas, Images: podSpecImages(&item.Spec.Template.Spec),
+				LiveYAML: liveWorkloadYAML("StatefulSet", item.Namespace, item.Name, item.Spec.Replicas, map[string]*corev1.PodSpec{"": &item.Spec.Template.Spec}),
 				Selector: metav1.FormatLabelSelector(item.Spec.Selector), HelmRelease: helmRelease(item), Labels: selectedLabels(item.Labels),
 			})
 		}
@@ -331,6 +333,7 @@ func (r *KubernetesReader) ListWorkloads(ctx context.Context, request WorkloadRe
 				Kind: "DaemonSet", Namespace: item.Namespace, Name: item.Name,
 				Desired: item.Status.DesiredNumberScheduled, Ready: item.Status.NumberReady,
 				Available: item.Status.NumberAvailable, Images: podSpecImages(&item.Spec.Template.Spec),
+				LiveYAML: liveWorkloadYAML("DaemonSet", item.Namespace, item.Name, nil, map[string]*corev1.PodSpec{"": &item.Spec.Template.Spec}),
 				Selector: metav1.FormatLabelSelector(item.Spec.Selector), HelmRelease: helmRelease(item), Labels: selectedLabels(item.Labels),
 			})
 		}
@@ -347,11 +350,16 @@ func (r *KubernetesReader) ListWorkloads(ctx context.Context, request WorkloadRe
 			if item.Spec.LeaderWorkerTemplate.LeaderTemplate != nil {
 				images = mergeStrings(images, podSpecImages(&item.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec))
 			}
+			templates := map[string]*corev1.PodSpec{"workerTemplate": &item.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec}
+			if item.Spec.LeaderWorkerTemplate.LeaderTemplate != nil {
+				templates["leaderTemplate"] = &item.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec
+			}
 			result.Workloads = append(result.Workloads, WorkloadSummary{
 				Kind: "LeaderWorkerSet", Namespace: item.Namespace, Name: item.Name,
 				Desired: valueOrOne(item.Spec.Replicas), Ready: item.Status.ReadyReplicas,
 				Available: item.Status.ReadyReplicas, Images: images, Selector: item.Status.HPAPodSelector,
 				HelmRelease: helmRelease(item), Labels: selectedLabels(item.Labels),
+				LiveYAML: liveWorkloadYAML("LeaderWorkerSet", item.Namespace, item.Name, item.Spec.Replicas, templates),
 			})
 		}
 	}

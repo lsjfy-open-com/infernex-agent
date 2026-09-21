@@ -70,4 +70,4 @@ done < <(tar -tzf "${work_dir}/${asset}")
 tar -C "$work_dir" --no-same-owner --no-same-permissions -xzf "${work_dir}/${asset}"
 [[ -x "${work_dir}/${bundle_name}/install.sh" ]] || die "published bundle lacks the one-command installer"
 
-"${work_dir}/${bundle_name}/install.sh"
+"${work_dir}/${bundle_name}/install.sh" "$@"

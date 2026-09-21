@@ -162,6 +162,8 @@ kubeconfig 指向引导/管理控制面还是业务集群，再使用 `helm_list
 
 ## Web 展示
 
+部署配置指推理实例的 template、Helm values/manifest 与当前资源规格。页面应关联 Helm release/revision、工作负载、镜像和副本状态，并允许展开当前生效对象的裁剪 YAML。`agent.conf` 仅是 Agent 自身运行参数，不能用它代替实例配置。当前生效 YAML 与原始安装模板须分开标识；未登记的 `helm install -f` 文件位置不能从 Kubernetes 推断。
+
 新安装的 Dashboard 默认监听 `0.0.0.0:8081`。浏览器从管理网络访问 `http://<HostIP>:8081/`，将 `<HostIP>` 换成实际可达的宿主机地址；多网卡主机需选择正确网卡。升级时未显式指定 `--dashboard-listen-address` 会保留旧配置。Dashboard 只读但没有内置认证，请用管理网、ACL 或认证入口控制访问；MCP 和受限诊断端点保持本地监听，安装器不会自动更改防火墙。
 
 旧安装若仍绑定 `127.0.0.1:8081`，可重跑安装器并指定 `--dashboard-listen-address 0.0.0.0:8081`。不重装时，在管理节点备份并修改现有配置，然后重启服务：

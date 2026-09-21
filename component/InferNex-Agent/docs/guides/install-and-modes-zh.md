@@ -27,8 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/
 离线：按 CPU 架构下载唯一的 `infernex-agent-<版本>-linux-<架构>.tar.gz`，校验、解压
 后运行 `sudo ./install.sh`。详情见[离线安装](offline-install-zh.md)。
 
-安装器发现顺序为：显式 `--admin-kubeconfig`、调用 sudo 的用户 kubeconfig、root
-kubeconfig、`/etc/kubernetes/admin.conf`、k3s kubeconfig。它会把当前上下文展开为只对
+安装器优先使用显式 `--admin-kubeconfig` 或 `KUBECONFIG`（多文件由 kubectl 合并）；未指定时，检查实际 HOME、调用 sudo 的用户、已安装 Agent 的 kubeconfig 与已知管理配置路径。明确选择的配置无效或 API 访问失败时停止并报告原因，不静默切换到其他集群。它会把当前上下文展开为只对
 root 可读的 systemd 运行配置。若 kubeconfig 依赖外部 `exec` 凭据插件，则使用自包含
 admin.conf，或选择下述 hardened identity。
 

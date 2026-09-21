@@ -49,6 +49,7 @@ EOF
 }
 
 admin_kubeconfig=""
+admin_kubeconfig_explicit="false"
 agent_config_path="/etc/infernex-agent/agent.conf"
 dashboard_listen_address="0.0.0.0:8081"
 dashboard_listen_address_explicit="false"
@@ -71,6 +72,8 @@ while (($#)); do
     --admin-kubeconfig)
       [[ $# -ge 2 ]] || bundle_die "--admin-kubeconfig requires a value"
       admin_kubeconfig="$2"
+      [[ -n "$admin_kubeconfig" ]] || bundle_die "--admin-kubeconfig requires a nonempty file path"
+      admin_kubeconfig_explicit="true"
       shift 2
       ;;
     --bundle-dir)
@@ -277,46 +280,99 @@ if [[ "$hardened_identity" == "true" && ! -x "$create_kubeconfig" ]]; then
   bundle_die "bundle lacks the optional hardened-identity helper"
 fi
 
-kubeconfig_works() {
-  local candidate="$1"
-  [[ -f "$candidate" && -r "$candidate" ]] || return 1
+discovery_kubeconfig=""
+runtime_kubeconfig=""
+cleanup() {
+  [[ -z "$discovery_kubeconfig" ]] || rm -f -- "$discovery_kubeconfig"
+  [[ -z "$runtime_kubeconfig" ]] || rm -f -- "$runtime_kubeconfig"
+}
+trap cleanup EXIT
+
+check_kubeconfig() {
+  local candidate="$1" description="$2" context=""
+  [[ -e "$candidate" ]] || bundle_die "${description} does not exist: ${candidate}"
+  [[ -f "$candidate" && -r "$candidate" ]] || bundle_die \
+    "${description} is not a readable file: ${candidate}"
+  kubectl --kubeconfig "$candidate" config view --raw --minify \
+    >/dev/null 2>&1 || bundle_die \
+    "${description} has an invalid kubeconfig or current context: ${candidate}"
+  context="$(kubectl --kubeconfig "$candidate" config current-context 2>/dev/null)" &&
+    [[ -n "$context" ]] || bundle_die \
+    "${description} has no usable current context: ${candidate}"
   kubectl --kubeconfig "$candidate" --request-timeout=10s get --raw=/version \
-    >/dev/null 2>&1
+    >/dev/null 2>&1 || bundle_die \
+    "${description} is present but cannot reach the Kubernetes API with its current credentials: ${candidate}; check connectivity, context, and authentication with kubectl"
+  admin_kubeconfig="$(readlink -f -- "$candidate")"
+}
+
+known_admin_kubeconfigs() {
+  printf '%s\n' \
+    /etc/kubernetes/admin.conf \
+    /etc/rancher/k3s/k3s.yaml \
+    /etc/rancher/rke2/rke2.yaml
 }
 
 discover_kubeconfig() {
-  local candidate sudo_home=""
-  declare -a candidates=()
-  [[ -z "$admin_kubeconfig" ]] || candidates+=("$admin_kubeconfig")
-  if [[ -n "${KUBECONFIG:-}" ]]; then
-    IFS=: read -r -a env_candidates <<<"${KUBECONFIG}"
-    candidates+=("${env_candidates[@]}")
+  local operator_home="${1-${HOME:-}}" candidate sudo_home="" installed="" argument="" path="" any_readable="false"
+  local -a candidates=() env_candidates=()
+
+  if [[ "$admin_kubeconfig_explicit" == "true" ]]; then
+    check_kubeconfig "$admin_kubeconfig" "--admin-kubeconfig"
+    return
   fi
-  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
-    if command -v getent >/dev/null 2>&1; then
-      sudo_home="$(getent passwd "${SUDO_USER}" | awk -F: '{print $6}')"
-    fi
-    [[ -n "$sudo_home" ]] || sudo_home="/home/${SUDO_USER}"
+
+  if [[ -n "${KUBECONFIG:-}" ]]; then
+    IFS=: read -r -a env_candidates <<<"$KUBECONFIG"
+    for path in "${env_candidates[@]}"; do
+      [[ -n "$path" ]] || continue
+      if [[ -f "$path" && -r "$path" ]]; then any_readable="true"; fi
+    done
+    [[ "$any_readable" == "true" ]] || bundle_die \
+      "KUBECONFIG has no readable kubeconfig files; check the paths in KUBECONFIG"
+    # kubectl merges the list according to its own precedence rules. A single
+    # --kubeconfig argument would silently discard contexts from later files.
+    discovery_kubeconfig="$(umask 077; mktemp /tmp/infernex-agent-admin-kubeconfig.XXXXXX)"
+    kubectl config view --raw --flatten --minify >"$discovery_kubeconfig" 2>/dev/null || bundle_die \
+      "KUBECONFIG has an invalid kubeconfig or current context"
+    check_kubeconfig "$discovery_kubeconfig" "merged KUBECONFIG"
+    return
+  fi
+
+  # Preserve the installed Agent's cluster on upgrade unless the operator
+  # explicitly supplied --admin-kubeconfig or KUBECONFIG.
+  if [[ -f "$agent_config_path" ]]; then
+    while IFS= read -r argument; do
+      case "$argument" in --kubeconfig=*) installed="${argument#*=}" ;; esac
+    done <"$agent_config_path"
+    [[ -z "$installed" ]] || candidates+=("$installed")
+  fi
+  candidates+=("$(dirname -- "$agent_config_path")/kubeconfig")
+
+  # Under sudo HOME is commonly /root. In that case use the invoking user's
+  # passwd home first; otherwise honor the environment's actual HOME first.
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] &&
+    command -v getent >/dev/null 2>&1; then
+    sudo_home="$(getent passwd "$SUDO_USER" 2>/dev/null | awk -F: 'NR == 1 {print $6}' || true)"
+  fi
+  if [[ "$operator_home" == "/root" && -n "$sudo_home" ]]; then
     candidates+=("${sudo_home}/.kube/config")
   fi
-  candidates+=(
-    "/root/.kube/config"
-    "/etc/kubernetes/admin.conf"
-    "/etc/rancher/k3s/k3s.yaml"
-  )
+  [[ -z "$operator_home" ]] || candidates+=("${operator_home}/.kube/config")
+  if [[ -n "$sudo_home" && "$operator_home" != "/root" ]]; then
+    candidates+=("${sudo_home}/.kube/config")
+  fi
+
+  while IFS= read -r candidate; do candidates+=("$candidate"); done \
+    < <(known_admin_kubeconfigs)
   for candidate in "${candidates[@]}"; do
-    [[ -n "$candidate" ]] || continue
-    if kubeconfig_works "$candidate"; then
-      readlink -f -- "$candidate"
-      return 0
-    fi
+    [[ -e "$candidate" ]] || continue
+    check_kubeconfig "$candidate" "discovered kubeconfig"
+    return
   done
-  return 1
+  bundle_die "no management kubeconfig file was found for this operator; pass --admin-kubeconfig /path/to/config (checked HOME, SUDO_USER home, existing Agent config, and known Kubernetes admin paths)"
 }
 
-admin_kubeconfig="$(discover_kubeconfig || true)"
-[[ -n "$admin_kubeconfig" ]] || bundle_die \
-  "no working management kubeconfig was found (checked the invoking user's ~/.kube/config, /etc/kubernetes/admin.conf, and k3s)"
+discover_kubeconfig
 bundle_info "using the current Kubernetes context from: ${admin_kubeconfig}"
 dashboard_listen_address="$(select_existing_dashboard_bind "$dashboard_listen_address" \
   "$dashboard_listen_address_explicit" "$agent_config_path")"
@@ -391,10 +447,6 @@ else
   bundle_info "this mode changes no Kubernetes resources and keeps Bridge-specific deployment disabled"
 fi
 runtime_kubeconfig="$(mktemp /tmp/infernex-agent-runtime-kubeconfig.XXXXXX)"
-cleanup() {
-  rm -f -- "$runtime_kubeconfig"
-}
-trap cleanup EXIT
 
 if [[ "$platform_mode" == "bridge" && "$hardened_identity" == "true" ]]; then
   create_args=(

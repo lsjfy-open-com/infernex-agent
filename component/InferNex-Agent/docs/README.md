@@ -4,13 +4,13 @@
 
 | 你要做什么 | 从这里开始 |
 | --- | --- |
-| 安装/升级实验包 | [alpha.17 发布说明](releases/v0.5.0-alpha.17-zh.md)、[离线安装](guides/offline-install-zh.md)、[安装模式](guides/install-and-modes-zh.md)、[openEuler 管理节点](guides/host-install-openeuler-zh.md) |
+| 安装/升级实验包 | [alpha.18 发布说明](releases/v0.5.0-alpha.18-zh.md)、[离线安装](guides/offline-install-zh.md)、[安装模式](guides/install-and-modes-zh.md)、[openEuler 管理节点](guides/host-install-openeuler-zh.md) |
 | 配模型与使用 TUI | [模型配置](guides/model-configuration-zh.md)、[Pi TUI](guides/pi-tui-zh.md)、[产品使用](guides/product-guide-zh.md) |
 | 看当前到底支持什么 | [通用底座能力矩阵](architecture/kubernetes-first-zh.md)、[MCP 工具目录](reference/mcp-tool-catalog-zh.md) |
 | 看智谱与业界方案、效果及我们的差距 | [基础设施 Agent 洞察（2026-09-20）](architecture/infra-agent-industry-insights-2026-09-20-zh.md) |
 | 设计原生部署/规格/均衡/客户适配 | [Kubernetes 分层契约](architecture/kubernetes-first-zh.md) |
 | 运维、取证和回退 | [运维手册](guides/operations-runbook-zh.md)、[日志报告](guides/local-evidence-and-reports-zh.md)、[变更保护](guides/change-safety-zh.md) |
-| SLO 对照实验 / Git + snapshot 版本记录 / Dashboard 展示 | [alpha.16 操作指南](guides/slo-and-config-versions-zh.md)、[alpha.17 发布说明](releases/v0.5.0-alpha.17-zh.md) |
+| SLO 对照实验 / Git + snapshot 版本记录 / Dashboard 展示 | [alpha.16 操作指南](guides/slo-and-config-versions-zh.md)、[alpha.18 发布说明](releases/v0.5.0-alpha.18-zh.md) |
 | 验证 Mooncake prefix hit 超时 | [网络与交换机同窗取证](guides/mooncake-prefix-hit-network-validation-zh.md) |
 | 参与开发与查优先级 | [当前路线图](development/roadmap-zh.md)、[分支与发布](development/branches-and-releases-zh.md)、[贡献规范](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/CONTRIBUTING.md) |
 | 查内部实现 | [现有代码架构](architecture/architecture.md)、[安全边界](reference/security-boundaries-zh.md) |

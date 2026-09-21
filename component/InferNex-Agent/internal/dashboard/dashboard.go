@@ -269,6 +269,9 @@ const indexHTML = `<!doctype html>
     .analysis { margin-top: 13px; padding: 13px; border: 1px solid rgba(53, 208, 186, .27); border-radius: 10px; background: rgba(53, 208, 186, .055); }
     .analysis-title { color: var(--accent); font-weight: 700; margin-bottom: 5px; }
     .analysis-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.live-yaml { margin-top: 12px; }
+	.live-yaml summary { cursor: pointer; color: var(--accent); }
+	.live-yaml pre { overflow: auto; max-height: 440px; margin: 10px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 	.experiment-stages { margin-top: 10px; }
     .error { color: var(--critical); }
     .empty { padding: 38px; text-align: center; color: var(--muted); }
@@ -315,15 +318,15 @@ const indexHTML = `<!doctype html>
   };
   const badge = (text, tone) => el("span", "badge " + (tone || ""), text);
   const fmtTime = value => value ? new Date(value).toLocaleString() : "尚未完成";
+	const expandedYAML = new Set();
 
   function renderManagement(data) {
     const root = byId("management");
     root.replaceChildren();
     const section = el("section", "namespace");
-    section.append(el("h2", "", "运行配置与版本入口"));
+    section.append(el("h2", "", "Agent 管理入口"));
     const rows = el("div", "services");
     const slo = el("article", "service");
-    if (data.agentConfigPath) slo.append(el("div", "meta", "Agent 配置：" + data.agentConfigPath));
     slo.append(el("h3", "", "SLO 对照实验"));
     slo.append(el("div", "meta", data.sloEnabled ? "已启用：仅使用管理员批准的 profile" : "未启用：实验不会发送 SLO 请求"));
     if (data.sloProfileDirectory) slo.append(el("div", "meta", "profile 目录：" + data.sloProfileDirectory));
@@ -331,7 +334,7 @@ const indexHTML = `<!doctype html>
     slo.append(el("div", "meta", "可用 profile：" + (profiles.length ? profiles.map(p => p.id + " · " + p.version).join("，") : "无")));
     rows.append(slo);
     const versions = el("article", "service");
-    versions.append(el("h3", "", "Git / snapshot 版本记录"));
+    versions.append(el("h3", "", "配置版本记录（CLI）"));
     versions.append(el("div", "meta", "记录目录：" + (data.configVersionDirectory || "未配置")));
     versions.append(el("div", "meta", "使用 host CLI：infernex-agent config-version list/show/verify"));
     rows.append(versions);
@@ -492,7 +495,31 @@ const indexHTML = `<!doctype html>
     const stats=el("div","badges");stats.append(badge("Kubernetes "+(data.kubernetesVersion||"未知")),badge("集群节点 "+(data.overviewPartial?"未知/部分可见":data.nodeCount)),badge("集群 Pod "+(data.overviewPartial?"未知/部分可见":data.podCount)),badge("范围内工作负载 "+data.workloadCount),badge("范围内 Pod "+data.podCountInScope));section.append(stats);
     for(const warning of (data.warnings||[]))section.append(el("p","error","读取受限："+warning));
     if(data.truncated||data.scopeTruncated)section.append(el("p","meta","展示结果或命名空间范围已截断"));
-    const items=el("div","services");for(const work of (data.workloads||[])){const card=el("article","service");card.append(el("h3","",work.namespace+"/"+work.name),el("div","badges",work.kind+" · Ready "+work.ready+"/"+work.desired));items.append(card)}
+	section.append(el("div", "meta", "部署 YAML 来自当前 Kubernetes API 对象的安全字段摘录。原始 Helm 模板、values 文件及 helm -f 本地路径无法从 Kubernetes 元数据还原。"));
+	const items=el("div","services");
+	for(const work of (data.workloads||[])){
+	  const card=el("article","service");
+	  const key=work.kind+"/"+work.namespace+"/"+work.name;
+	  card.append(el("h3","",work.namespace+"/"+work.name));
+	  const facts=el("div","badges");
+	  facts.append(badge(work.kind),badge("Ready "+work.ready+"/"+work.desired,work.ready===work.desired?"good":"warning"));
+	  if(work.helmRelease)facts.append(badge("Helm "+work.helmRelease+(work.helmRevision?" · 最新记录 revision "+work.helmRevision:" · revision 未知")));
+	  for(const image of (work.images||[]))facts.append(badge("镜像 "+image));
+	  card.append(facts);
+	  if(work.liveYaml){
+	    const details=el("details","live-yaml");
+	    details.open=expandedYAML.has(key);
+	    details.ontoggle=()=>{if(details.open)expandedYAML.add(key);else expandedYAML.delete(key)};
+	    details.append(el("summary","","查看当前配置 YAML（只读摘录）"),el("pre","",work.liveYaml));
+	    card.append(details);
+	  }else card.append(el("div","meta","当前配置 YAML 不可用"));
+	  items.append(card);
+	}
+	if((data.helmReleases||[]).length){
+	  const helm=el("article","service");helm.append(el("h3","","Helm release 元数据"));
+	  for(const release of data.helmReleases)helm.append(el("div","meta",release.namespace+"/"+release.name+" · 最新记录 revision "+release.revision+" · "+(release.status||"状态未知")));
+	  items.append(helm);
+	}
     for(const pod of (data.pods||[])){const card=el("article","service");card.append(el("h3","",pod.namespace+"/"+pod.name),el("div","badges","Pod · "+pod.phase+" · "+(pod.ready?"Ready":"Not Ready")+" · 重启 "+pod.restarts));items.append(card)}
     if((data.workloads||[]).length+(data.pods||[]).length===0)items.append(el("div","empty",data.warnings&&data.warnings.length?"权限不足或读取受限，无法确认是否存在资源":"当前范围没有匹配的原生工作负载或 Pod"));section.append(items);root.append(section);
   }
