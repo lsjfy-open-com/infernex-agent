@@ -392,13 +392,9 @@ jobs:
           occupied_dashboard_pid=$!
           sleep 1
           kill -0 "${occupied_dashboard_pid}"
-          # The host install defaults to 0.0.0.0:8081. Use an explicit
-          # isolated loopback port here so this regression remains focused on
-          # generic-mode installation while the occupied 8081 listener is up.
           sudo "${host_bundle}/install.sh" \
             --admin-kubeconfig "${HOME}/.kube/config" \
             --generic-kubernetes \
-            --dashboard-listen-address 127.0.0.1:18081 \
             --skip-model-setup
           sudo systemctl is-active --quiet infernex-agent.service
           sudo grep -q -- '--scan-namespaces=$' /etc/infernex-agent/agent.conf
