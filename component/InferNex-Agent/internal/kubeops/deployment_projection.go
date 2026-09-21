@@ -10,10 +10,17 @@
 package kubeops
 
 import (
+	"regexp"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/yaml"
+)
+
+var (
+	imageDigestPattern   = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
+	imageDomainPattern   = regexp.MustCompile(`^(?:localhost|[a-z0-9]+(?:-[a-z0-9]+)*(?:\.[a-z0-9]+(?:-[a-z0-9]+)*)+)(?::[0-9]{1,5})?$`)
+	imageNamePartPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$`)
 )
 
 // liveWorkloadYAML is a deliberately small projection of the current API object.
@@ -94,14 +101,34 @@ func liveWorkloadYAML(kind, namespace, name string, replicas *int32, pods map[st
 }
 
 func publicImage(image string) string {
-	// URL parameters and @ user-info can carry credentials. Exclude the whole
-	// reference instead of guessing whether @ denotes a digest or user-info.
-	if strings.Contains(image, "://") || strings.ContainsAny(image, "?#") ||
-		strings.Contains(image, "@") ||
-		secretPattern.MatchString(image) {
+	// Only an untagged repository name followed by a full SHA-256 digest may
+	// contain @. This excludes URL user-info and ambiguous user:password forms.
+	if len(image) > 512 || strings.Contains(image, "://") || strings.ContainsAny(image, "?#") ||
+		secretPattern.MatchString(image) ||
+		(strings.Contains(image, "@") && !validImageDigestReference(image)) {
 		return "<redacted image reference>"
 	}
 	return sanitize(image, 512)
+}
+
+func validImageDigestReference(image string) bool {
+	name, digest, found := strings.Cut(image, "@")
+	if !found || !imageDigestPattern.MatchString(digest) || name == "" {
+		return false
+	}
+	parts := strings.Split(name, "/")
+	if len(parts) > 1 && (strings.ContainsAny(parts[0], ".:") || parts[0] == "localhost") {
+		if !imageDomainPattern.MatchString(parts[0]) {
+			return false
+		}
+		parts = parts[1:]
+	}
+	for _, part := range parts {
+		if !imageNamePartPattern.MatchString(part) {
+			return false
+		}
+	}
+	return true
 }
 
 // PublicWorkloadImages applies the same image policy to summary badges.

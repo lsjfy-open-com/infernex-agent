@@ -47,3 +47,37 @@ func TestLiveWorkloadYAMLProjectsSafeCurrentFields(t *testing.T) {
 		t.Fatalf("credential-bearing image leaked: %s", got)
 	}
 }
+
+func TestPublicImageRetainsOnlyStrictDigestReferences(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	cases := []struct {
+		name  string
+		image string
+		keep  bool
+	}{
+		{"repository digest", "registry.example:5000/team/qwen@sha256:" + digest, true},
+		{"short repository digest", "qwen@sha256:" + digest, true},
+		{"tag and digest ambiguous", "qwen:v1@sha256:" + digest, false},
+		{"userinfo form", "https://user:password@registry.example/team/qwen@sha256:" + digest, false},
+		{"credential before digest", "user:password@sha256:" + digest, false},
+		{"extra at sign", "registry.example/user@password/qwen@sha256:" + digest, false},
+		{"short digest", "registry.example/team/qwen@sha256:abcd", false},
+		{"invalid digest", "registry.example/team/qwen@sha256:" + strings.Repeat("g", 64), false},
+		{"invalid repository", "registry.example/../qwen@sha256:" + digest, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := publicImage(tc.image)
+			if tc.keep && got != tc.image {
+				t.Fatalf("valid digest reference was hidden: %s", got)
+			}
+			if !tc.keep && got != "<redacted image reference>" {
+				t.Fatalf("unsafe reference was exposed: %s", got)
+			}
+		})
+	}
+	pod := &corev1.PodSpec{Containers: []corev1.Container{{Name: "model", Image: cases[0].image}}}
+	if got := liveWorkloadYAML("Deployment", "models", "qwen", nil, map[string]*corev1.PodSpec{"": pod}); !strings.Contains(got, cases[0].image) {
+		t.Fatalf("digest missing from YAML projection: %s", got)
+	}
+}

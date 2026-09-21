@@ -13,6 +13,16 @@ eval "$(sed -n '/^check_kubeconfig() {/,/^}/p' "$quick_script")"
 eval "$(sed -n '/^known_admin_kubeconfigs() {/,/^}/p' "$quick_script")"
 eval "$(sed -n '/^discover_kubeconfig() {/,/^}/p' "$quick_script")"
 bundle_die() { printf 'ERROR: %s\n' "$*" >&2; exit 42; }
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+assert_equal() {
+  local expected="$1" actual="$2" label="$3"
+  [[ "$actual" == "$expected" ]] || fail "$label: expected '$expected', got '$actual'"
+}
+assert_selected() {
+  local expected
+  expected="$(readlink -f -- "$1")"
+  assert_equal "$expected" "$admin_kubeconfig" 'selected kubeconfig'
+}
 known_admin_kubeconfigs() { :; }
 getent() {
   [[ "$1" == passwd && "$2" == operator ]] || return 1
@@ -61,6 +71,9 @@ reset_case() {
   admin_kubeconfig_explicit=false
   discovery_kubeconfig=""
   agent_config_path="$test_dir/agent/agent.conf"
+  rm -f -- "$test_dir/agent/agent.conf" "$test_dir/agent/kubeconfig" \
+    "$test_dir/empty-home/.kube/config" \
+    "$test_dir/custom-home/.kube/config" "$test_dir/sudo-home/.kube/config"
   : >"$test_dir/kubectl-calls"
 }
 mkdir -p "$test_dir/empty-home" "$test_dir/agent"
@@ -91,9 +104,9 @@ printf 'part-two\n' >"$test_dir/two"
 merged_sources="$test_dir/one:$test_dir/two"
 export KUBECONFIG="$merged_sources"
 discover_kubeconfig "$test_home"
-[[ "$(<"$admin_kubeconfig")" == merged-context ]]
-[[ "$discovery_kubeconfig" == "$admin_kubeconfig" ]]
-[[ "$(grep -c '^config view --raw --flatten --minify$' "$test_dir/kubectl-calls")" == 1 ]]
+assert_equal merged-context "$(<"$admin_kubeconfig")" 'merged context content'
+assert_selected "$discovery_kubeconfig"
+assert_equal 1 "$(grep -c '^config view --raw --flatten --minify$' "$test_dir/kubectl-calls")" 'merge call count'
 rm -f -- "$discovery_kubeconfig"
 KUBECONFIG="$test_dir/missing"
 assert_error 'KUBECONFIG has no readable kubeconfig files'
@@ -109,22 +122,24 @@ test_sudo_home="$test_dir/sudo-home"
 SUDO_USER=operator
 test_home="$test_dir/custom-home"
 discover_kubeconfig "$test_home"
-[[ "$admin_kubeconfig" == "$test_dir/custom-home/.kube/config" ]]
+assert_selected "$test_dir/custom-home/.kube/config"
 test_home=/root
 discover_kubeconfig "$test_home"
-[[ "$admin_kubeconfig" == "$test_dir/sudo-home/.kube/config" ]]
+assert_selected "$test_dir/sudo-home/.kube/config"
 
 # On upgrade the installed Agent path is checked before machine admin paths.
 reset_case
 printf '%s\n' "--kubeconfig=$test_dir/legacy" >"$agent_config_path"
 printf 'working\n' >"$test_dir/legacy"
+printf 'working\n' >"$test_dir/custom-home/.kube/config"
 test_home="$test_dir/custom-home"
 discover_kubeconfig "$test_home"
-[[ "$admin_kubeconfig" == "$test_dir/legacy" ]]
+assert_selected "$test_dir/legacy"
 rm -f -- "$test_dir/legacy"
 : >"$agent_config_path"
+printf 'working\n' >"$test_dir/agent/kubeconfig"
 discover_kubeconfig "$test_home"
-[[ "$admin_kubeconfig" == "$test_dir/agent/kubeconfig" ]]
+assert_selected "$test_dir/agent/kubeconfig"
 
 # A present kubeconfig with bad API access is a different error from absence.
 rm -f -- "$test_dir/agent/kubeconfig"
@@ -136,5 +151,6 @@ rm -f -- "$test_dir/empty-home/.kube/config" "$test_dir/agent/kubeconfig"
 assert_error 'no management kubeconfig file was found'
 
 # The online entrypoint must preserve caller flags when invoking the bundle.
-grep -Fq '"${work_dir}/${bundle_name}/install.sh" "$@"' "$online_script"
+grep -Fq '"${work_dir}/${bundle_name}/install.sh" "$@"' "$online_script" ||
+  fail 'online installer does not forward arguments'
 printf 'Host kubeconfig discovery and wrapper forwarding pass\n'
