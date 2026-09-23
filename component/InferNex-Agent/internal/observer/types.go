@@ -33,6 +33,7 @@ type ServiceList struct {
 type ServiceSummary struct {
 	Namespace          string             `json:"namespace"`
 	Name               string             `json:"name"`
+	UID                string             `json:"uid,omitempty"`
 	Mode               string             `json:"mode,omitempty"`
 	Ready              bool               `json:"ready"`
 	Generation         int64              `json:"generation"`

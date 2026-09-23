@@ -43,6 +43,7 @@ func TestObserverUsesInferNexStatusAndManagedTopology(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Namespace:  "models",
 			Name:       "llama",
+			UID:        types.UID("llama-uid"),
 			Generation: 7,
 			Annotations: map[string]string{
 				autoRecoveryAnnotation:    "true",
@@ -123,12 +124,23 @@ func TestObserverUsesInferNexStatusAndManagedTopology(t *testing.T) {
 		Build()
 	domainObserver := New(kubeClient)
 
+	list, err := domainObserver.ListServices(context.Background(), "models")
+	if err != nil {
+		t.Fatalf("ListServices returned error: %v", err)
+	}
+	if len(list.Services) != 1 || list.Services[0].UID != "llama-uid" {
+		t.Fatalf("listed service identity = %#v", list.Services)
+	}
+
 	detail, err := domainObserver.InspectService(context.Background(), "models", "llama")
 	if err != nil {
 		t.Fatalf("InspectService returned error: %v", err)
 	}
 	if detail.Service.Ready {
 		t.Fatal("InspectService reported ready; want existing CRD status false")
+	}
+	if detail.Service.UID != "llama-uid" {
+		t.Fatalf("inspected service UID = %q, want llama-uid", detail.Service.UID)
 	}
 	if detail.Service.Model == nil || detail.Service.Model.URI != "https://example.invalid/models/llama" {
 		t.Fatalf("sanitized model URI = %#v", detail.Service.Model)
@@ -149,6 +161,9 @@ func TestObserverUsesInferNexStatusAndManagedTopology(t *testing.T) {
 	topology, err := domainObserver.GetTopology(context.Background(), "models", "llama")
 	if err != nil {
 		t.Fatalf("GetTopology returned error: %v", err)
+	}
+	if topology.Service.UID != "llama-uid" {
+		t.Fatalf("topology service UID = %q, want llama-uid", topology.Service.UID)
 	}
 	if len(topology.Workloads) != 2 {
 		t.Fatalf("workload count = %d, want 2", len(topology.Workloads))

@@ -253,7 +253,10 @@ func Restore(
 				result.Skipped = append(result.Skipped, label)
 				continue
 			}
-			if err := kubeClient.Delete(ctx, service); err != nil && !apierrors.IsNotFound(err) {
+			if err := kubeClient.Delete(ctx, service, client.Preconditions{
+				UID:             &service.UID,
+				ResourceVersion: &service.ResourceVersion,
+			}); err != nil && !apierrors.IsNotFound(err) {
 				return result, fmt.Errorf("delete post-snapshot InferNexService %s: %w", key, err)
 			}
 			result.Deleted = append(result.Deleted, label)

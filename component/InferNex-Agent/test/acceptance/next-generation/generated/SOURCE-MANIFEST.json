@@ -1,0 +1,69 @@
+{
+  "created_at": "2026-09-23T08:30:00.000Z",
+  "generated": [
+    {
+      "bytes": 392,
+      "path": "evaluator/manifest.json",
+      "sha256": "38540307b7c5bec425771794e7a3c27d2375564b554d1a5517732ddfc6e09b7f"
+    },
+    {
+      "bytes": 1365,
+      "path": "evaluator/truth.jsonl",
+      "sha256": "ba914a4956f33bd5f818893a4fea462784888d791ee3f24dfcec21acc959718b"
+    },
+    {
+      "bytes": 5975,
+      "path": "participant/cases/dev-case-01/events.jsonl",
+      "sha256": "3b3049956d3104286acaf684bbcd3852eae74d49ada8782fc2c314b20b2b8c21"
+    },
+    {
+      "bytes": 230,
+      "path": "participant/cases/dev-case-01/metadata.json",
+      "sha256": "ce4987ee3765c3da1f113dd004dc655377f2200e0c62f782b49d50949d89d853"
+    },
+    {
+      "bytes": 6017,
+      "path": "participant/cases/dev-case-02/events.jsonl",
+      "sha256": "8a1430b58687a66a3abebd394d5932e989212f8ed87b8d84780a67f78942d1cb"
+    },
+    {
+      "bytes": 230,
+      "path": "participant/cases/dev-case-02/metadata.json",
+      "sha256": "79b83adb2987e4680d673d3d5a5ca43c8a1f10a4684bcb174cc9483784ebf85a"
+    },
+    {
+      "bytes": 3790,
+      "path": "participant/cases/dev-case-03/events.jsonl",
+      "sha256": "f54fac50de4ba7e290b9594c2f34d018a30df6e1d440686cc8b1cff6c86ac321"
+    },
+    {
+      "bytes": 230,
+      "path": "participant/cases/dev-case-03/metadata.json",
+      "sha256": "74861fe5da14a0ee14f91cb65edb41e2b140f6e2b0ee9ca60ce8501da6e609c7"
+    },
+    {
+      "bytes": 1189,
+      "path": "participant/manifest.json",
+      "sha256": "e8ccc81357f0288ac7ac2e63c82c717c39ac9f04ec40fca90be9e3f92c706b2c"
+    }
+  ],
+  "generator": [
+    {
+      "bytes": 10131,
+      "path": "generate.py",
+      "sha256": "90876fbaacf98dafdf2b40b6bc5875ec6e3ccdb1384d240150f4e70ae3a8ecab"
+    },
+    {
+      "bytes": 2966,
+      "path": "schemas/synthetic-event.schema.json",
+      "sha256": "c0fb4a92581a7c904d96b76c4eaf0e7265525c38e60e192b7daad32f6739f829"
+    }
+  ],
+  "limitations": [
+    "No record is copied from HCCL plog or a real cluster.",
+    "No record proves a real diagnosis, performance result, or repair.",
+    "Evaluator truth must remain outside the participant bundle."
+  ],
+  "schema_version": "infernex.synthetic.acceptance.source-manifest/v1",
+  "synthetic": true
+}

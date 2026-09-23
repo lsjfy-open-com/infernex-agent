@@ -1,0 +1,31 @@
+# 当前开发路线图
+
+本页是唯一当前排期入口。旧 v0.5 提案与多阶段路线图已移入 `archive/`，作为背景保留。
+
+基线：`0.5.0-alpha.19`，保留 alpha.15 能力和 alpha.16 的 SLO／版本记录增量，并包含后续 Dashboard 与安装兼容修复。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕跨环境自动部署完成环境发现、规格规划、受管发布、业务 SLO 验收、升级、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划。
+
+下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
+
+已有 [Bridge 渐进实验](../guides/progressive-experiments-zh.md)包含独立候选、Ready/日志回归/浸泡门禁及失败候选回退。后续复用这套基础，补业务 SLO、补丁制品和通用执行器，不重新建设一套平行实验系统。
+
+| 阶段 | 范围 | 本轮状态 / 验收 |
+| --- | --- | --- |
+| K0 通用底座与治理 | 中立发现入口、Service 后端诊断、文档分层、开发基线收敛 | 已纳入当前基线；只读，不宣称流量已均衡 |
+| E1 SLO 与对照实验 | 版本化目标、固定负载、请求样本、质量/延迟/吞吐对照，首个 Mooncake 场景 | alpha.16 已实现 Bridge 固定串行非流式请求门禁、端到端 p95/成功率/请求吞吐、三态判定和持久证据；TTFT/TPOT、并发和现场 Mooncake 验收待补 |
+| E2 修复与补丁制品 | 隔离构建、固定基础镜像、补丁/组合版本清单、离线交付与实验恢复；以 Git 期望配置、变更前后 snapshot 和 ReleaseManifest 关联版本 | alpha.16 提供 config-version 的 Git commit / 快照 / 文件证据关联及本地完整性校验；补丁构建、语义对齐、全栈快照和执行恢复仍待实现 |
+| E2a 离线知识与补丁 | 本地知识、已安装版本及日志；人工导入经批准的补丁或资料，核验来源、适用版本与校验值 | 待实现；断网可形成有证据的建议并交付可复验补丁，不自动在线对齐 |
+| E2b 授权联网核对 | 经授权的只读工具查询上游发布、补丁及兼容矩阵，核验来源与版本后关联 E2 制品 | 待实现；默认仅建议，实际部署按批准流程；E2 离线交付不依赖 E2b |
+| D1 规格与容量计划 | 批准 Profile、资源快照、用户需求、实例规格/数量/放置、计划 hash | 待实现；资源不足、不可见资源、异规格和多卡边界都有回归 |
+| D2 原生部署事务 | Deployment + Service，计划批准、持久日志、就绪/预热、失败补偿和回退 | 待实现；无 Bridge Kind 全链路以及重启/并发编辑/部分创建失败 |
+| T1 请求级分流 | 对接已有 L7 数据面；纯 K8s 可选网关；容量权重、摘流排空与指标 | 待实现；同一客户端长连接、多后端实际命中、后端故障转移和流式响应 |
+| R1 受控发布与稳定晋级 | 复用成熟发布控制器，SLO 灰度门禁、恢复方案与版本晋级 | 待实现；依赖 E1/E2 及对应环境执行/流量能力，区分流量恢复与配置/数据恢复 |
+| O1 通用故障闭环 | 原生工作负载 Incident、证据关联、处置计划、服务与流量恢复验收 | 待实现；保留 Kubernetes/Operator 管理权，不能绕写子资源 |
+| O2 持续工程优化 | 组件/源码候选、性能与成本实验、跨版本经验检索 | 待实现；质量与稳定性不退化，收益经端到端复验，生产变更按计划批准 |
+| A1 环境适配 | 将现有 Bridge 写路径迁入边界，接入批准 Helm Chart 和首个客户 API/CRD | 按客户真实接口逐个验收；发现存在不等于具备写权限 |
+| D3 分布式与硬件 Profile | StatefulSet/LWS、多节点多卡、GPU/NPU/DRA/网络与调度协同 | 分期；CPU Kind 不代替硬件现场验收 |
+
+主线以 D1 → D2 → T1 → R1 完成 Native、Helm 和客户平台的自动部署、业务 SLO 验收、升级与恢复；客户已有发布能力可通过适配器接入并单独验收。Mooncake prefix hit 超时仅在环境与封存真值具备时作为部署失败／上线保障专项贯穿 E1 → E2，终点是经验证的处置及可恢复制品。E1/E2 可先复用 Bridge 候选环境；O1/O2 复用同一目标、证据、变更、工作负载身份和业务验收。操作深度按配置/组件版本 → 源码/通信 → 算子/底层逐步扩展，环境适配与授权分别处理。
+
+E2a/E2b 是 E2 的知识来源增量验收，不改变 E2 原有的构建、离线交付和恢复范围。完整组合版本管理仍属 E2 规划；alpha.16 的关联记录不等于恢复执行器，当前恢复范围仍是 Bridge 源对象、变更记录与受管候选。
+
+每个阶段拆成可独立验证的 PR；不将规划、创建成功、模型可用和请求分布通过混写成“自动部署已支持”。下一次实验包必须明确本次包含的阶段和未验证项。

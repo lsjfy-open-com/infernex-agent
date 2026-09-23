@@ -1,0 +1,207 @@
+# InferNex Agent 安全与能力边界
+
+## 1. 信任边界
+
+产品包含四个主要信任域：
+
+1. 运维人员和本机 Agent Runtime；
+2. InferNex Agent 进程；
+3. Kubernetes apiserver 与 InferNex 控制器；
+4. 可选的 OpenAI 兼容诊断模型。
+
+Kubernetes 凭据只存在于 Agent 进程和受保护文件中。诊断模型不获得这些
+凭据，也不能直接调用 MCP 工具。
+
+## 2. 默认权限
+
+默认安装复用运维人员当前 kubeconfig，因此 Kubernetes 层的有效权限与该身份一致；
+安装器不额外创建 ServiceAccount 或 RBAC。只读能力采用“广读取、严写入”：模型可先通过
+Kubernetes API discovery 找到当前集群公开的资源，再对当前身份具备 `get/list` 权限的原生资源、
+CRD 和跨命名空间对象进行分页读取。Node 地址、Pod/Service 网络字段等运行事实不再因为缺少
+专用 typed tool 而被隐藏。InferNex/openFuyao 的常用对象仍保留结构化专用工具，便于诊断和归一化。
+
+通用读取不是权限提升：apiserver RBAC 拒绝的对象仍不可见；请求有单页数量上限并支持 continuation
+token；`managedFields` 被删除，疑似凭据字段和超长字符串会脱敏或截断；Secret 只返回 metadata 与
+type，永不返回 `data`/`stringData`。Pod exec、宿主机探针和 SSH 不混入通用 API 读取，而是
+`diagnose` 及以上模式下单独受 Policy 控制的“主动读取”通道；通道本身不等于修改授权。
+
+Helm 3 默认把 Release 存在 Secret 中，因此 `helm_list_releases` 的运行身份需要在目标
+命名空间拥有 `list secrets`（ConfigMap 存储后端则需要 `list configmaps`）。Agent 使用
+Kubernetes metadata client 和 `owner=helm` 标签，只把名称、命名空间、revision、状态和
+存储类型交给模型，不请求 data、values 或 manifest。不过 Kubernetes RBAC 不能做字段级
+授权：持有这份 kubeconfig 的其他程序仍可能利用 `list secrets` 读取完整内容。高合规环境
+应移除该 verb，并接受 Helm Release 工具返回权限警告，或为 Agent 使用单独的非 Secret
+Helm 元数据来源。
+
+无论当前 kubeconfig 权限多大，模型工具都不提供：
+
+- 读取 Secret payload、values 或 manifest（Helm 清单只使用 metadata endpoint）；
+- 创建 Deployment、Pod、Service 或 Namespace；
+- 创建集群级 RBAC；
+- 任意 patch/delete Kubernetes 对象；
+- 任意 shell、任意 SSH 地址/凭据、任意宿主机命令或任意 Pod exec 命令；
+- 读取环境变量、未经登记的宿主机路径，或通过命令参数绕过路径/目标范围。
+
+`diagnose`、`modify`、`install` 和 `recover` 模式可以发布受控主动诊断工具。当前第一批实现只接受
+编译进 Core 的固定探针（系统摘要、文件系统、网络链路、NPU inventory、CANN 版本、HCCN 设备链路、
+PFC 计数以及 HCCL root-info/测试工具布局预检）：
+
+| 通道 | 目标从哪里来 | 允许什么 | 不允许什么 |
+| --- | --- | --- | --- |
+| Pod exec | 已发现的 namespace/Pod/container，受 kubeconfig RBAC | 固定只读诊断探针 | shell 字符串、写文件、kill/restart、包安装 |
+| 宿主机探针 | Agent 所在管理节点 | 固定程序和固定参数 | 模型提供命令、路径或环境变量读取 |
+| root helper | 仅安装节点；受保护 Unix socket | root 身份执行固定 NPU/CANN/HCCN/HCCL-preflight profile | 模型进程成为 root、任意 shell/脚本/路径/参数、远程地址 |
+| SSH 探针 | 运维人员预先写入 OpenSSH config 的 alias allow-list | 在该 alias 上运行相同固定探针 | 模型提供 IP、用户名、密钥、跳板参数或命令 |
+| 交互式宿主机文件 | 启动 TUI 时的当前目录或 `--workspace` | read、glob/find、grep、ls | 越界/符号链接逃逸；write/edit/bash 需本机批准 |
+| 后台宿主机证据 | 运维人员登记的 Evidence Root | glob、grep、有界行读取 | 越界路径、符号链接逃逸、特殊文件和改写源文件 |
+
+这些探针归类为 `active-read`：可能建立 exec/SSH 会话并消耗少量设备或网络资源，但不改变 desired
+state。PFC 计数快照只读取完整 `hccn_tool -stat -g` 输出，不在目标中执行 shell/grep。HCCL 性能测试
+会占用 NPU、建立跨节点通信并可能影响在线推理，因此 `hccl-test-layout` 只做存在性预检；真正测试必须
+作为独立 benchmark task，绑定设备/节点、并发、数据量、时限、维护窗口及启动/停止批准。
+
+高负载互 ping、带流量的 serving/eval 和长时间采集还需要独立预算及启动/停止批准。写配置、
+重启、扩缩容、部署和删除始终属于更高动作等级，不能因为已有 exec/SSH 通道而越权。
+
+一键安装在非 `detect` 模式默认启用 `infernex-agent-collector.service`。主 Agent 继续以
+`infernex-agent` 用户运行；helper 是没有模型、MCP、HTTP、Kubernetes 客户端和通用文件接口的独立
+root 进程，只监听 group `infernex-agent` 可访问的 `/run/infernex-agent/collector.sock`。禁用方法为
+`sudo ./install.sh --no-root-collector`。安装器由 root 启动本身不意味着长期服务继承 root。
+
+通用日志工具要求当前身份已有目标命名空间 `get pods/log`，且调用者必须给出明确 Pod；
+它限制容器数、时间窗、尾部行数和字节数并做常见凭据脱敏。Bridge 专属诊断还通过
+`infernex.io/owner` 标签限定一个服务，只保留分类证据。Pod 日志可能包含 Prompt、
+响应和业务数据，常见凭据脱敏不能替代组织的数据分级和访问审计；不需要日志的环境
+应使用自定义最小权限 kubeconfig 移除该 verb。
+
+高合规或最小权限环境应使用 `sudo ./install.sh --hardened-identity`，由安装器创建
+namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便利路径的权限风险
+必须由部署组织接受；模型工具边界不能替代 Kubernetes 最小权限策略。
+
+## 3. 网络边界
+
+| 端口 | 默认绑定 | 是否自带认证 | 要求 |
+| --- | --- | --- | --- |
+| 8080 MCP | `127.0.0.1` | 否 | 通常只供本机 Runtime |
+| 8081 Dashboard/API | `127.0.0.1` | 否 | 远程开放需 ACL/防火墙/认证代理 |
+| 18082 Diagnostic Subagent MCP | `127.0.0.1` | bearer token | namespace-scoped 诊断工具；跨主机仍需 mTLS、SSH tunnel 或认证代理 |
+| Kubernetes API | 出站 | Kubernetes 身份 | 仅到批准 apiserver |
+| 模型 API | 可选出站 | 可选 Bearer Key | 仅到批准模型端点 |
+
+不要把 MCP 或 Dashboard 直接绑定公网。Dashboard 是只读界面，但其中包含
+集群运行证据，仍属于内部运维信息。
+
+## 4. 凭据边界
+
+宿主机：
+
+- kubeconfig：`/etc/infernex-agent/kubeconfig`，`0600`；
+- 模型密钥：`/etc/infernex-agent/openai-api-key`，`0600`；
+- 诊断 Subagent token：`/etc/infernex-agent/diagnostic-subagent-token`，`0640`，只供本机受限 MCP；
+- 非敏感参数：`/etc/infernex-agent/agent.conf`，`0640`；
+- systemd unit 和进程参数只出现凭据文件路径；
+- 模型配置查看命令不打印密钥；
+- 模型测试通过临时 Header 文件传递密钥，密钥不出现在 curl 进程参数中。
+
+离线包、Helm values、Dashboard 和日志不得包含密钥。可选的专用
+ServiceAccount Token 需要纳入组织凭据轮换和吊销制度；条件允许时优先
+使用企业 PKI/OIDC 的等价最小权限 kubeconfig。
+
+## 5. 模型数据边界
+
+后台 Supervisor 发送给分析模型的是归一化、数量受限的诊断证据。以下数据被排除：
+
+- Kubernetes Token、kubeconfig 和模型 API Key；
+- Secret、环境变量和完整 Pod spec；
+- Event note 原文；
+- 节点名（交互式集群总览工具可按用户请求返回节点名和资源状态）；
+- 模型 URI 中的用户名、密码、query 和 fragment；
+- 超出当前 kubeconfig/RBAC 的 Kubernetes 对象，或 Secret payload；
+
+后台 Supervisor 的分析模型输出仅作为文本建议保存到内存快照，不进入自动恢复
+或回退条件。交互式对话模型可以提出 typed tool 调用和对象名称，但它不持有集群
+凭据；调用仍须通过工具 schema、稳定来源、固定 workspace、RBAC、所有权检查和
+本机批准。模型永远不能提供任意镜像、URL、命令、Patch 或 YAML。
+
+## 6. 写能力边界
+
+### 稳定来源部署
+
+显式启用后，Agent 只能在固定 `infernex-agent-workspace` 创建/删除
+`InferNexService`，且必须满足：
+
+- 来源是 Agent 刚发现并在执行时重新校验的 Ready 既有服务，或包含完整 engine
+  的 Bridge profile；
+- 调用者显式 `confirm=true`；
+- 对象带 Agent 所有权标签；
+- 重名对象的所有权和 spec 必须完全匹配；
+- 来源命名空间只有只读权限，写权限仅存在于独立 workspace；
+- Agent 不直接创建下游 Deployment 或 Service。
+
+### 自动恢复
+
+恢复需要同时满足：
+
+1. 身份具有命名空间级 create 权限；
+2. Agent 全局开关启用；
+3. 源服务显式标注允许恢复；
+4. 源服务指定精确的恢复 profile；
+5. profile 带运维批准标签；
+6. Bridge 已观察当前 generation；
+7. 连续多轮出现临界问题。
+
+恢复只创建一个新 `InferNexService`，不覆盖源服务、不删除源服务、不切流，
+也不创建或修改恢复 profile。
+
+### 渐进实验
+
+实验需要显式启用、命名空间级 `InferNexService create/delete`、日志读取和模板
+命名空间 `InferNexServiceConfig get`。输入只能是现有稳定服务、候选名前缀和带
+批准标签的 profile 名称；不接受 YAML、镜像、URL、命令或任意 patch。Agent
+不修改/删除基线、不切流，回退前必须匹配实验 ID、`changeId` 和所有权。
+
+## 7. 宿主机进程隔离
+
+systemd 服务：
+
+- 使用不可登录的 `infernex-agent` 用户；
+- capability 集合为空；
+- 启用 `NoNewPrivileges`；
+- 保护内核、控制组、主机名、设备和系统目录；
+- 根文件系统只读，只有状态目录可写；
+- 使用私有临时目录和设备视图；
+- 限制地址族和原生系统调用架构。
+
+静态 Agent 不加载 CANN、NPU 驱动或第三方推理插件；它只调用现场已有的只读诊断入口。选择
+`detect` 模式可完全不发布主动执行工具。
+
+## 8. 已知边界与剩余风险
+
+当前产品已经把安装恢复点和写操作变更事件持久化到受保护文件目录；这不是支持
+查询、集中保留和防篡改归档的企业审计数据库。当前产品仍没有内置：
+
+- MCP/Dashboard 用户认证和多租户授权；
+- 集中式、防篡改审计数据库；
+- 跨集群凭据管理；
+- 告警通知渠道；
+- 自动流量切换和业务回滚；
+- 企业 Secret Manager 集成；
+- 完整的 openEuler/A2 硬件资格认证、故障修复和有负载 HCCL benchmark（当前只提供固定
+  NPU/CANN/HCCN/PFC/HCCL-preflight 主动读取探针）；
+- 主动推理请求、SSE/JSON 完整性探针和性能基线比较；
+
+因此生产部署必须由外部网络边界保护入口，并由现有 IAM、堡垒机、日志平台、
+告警平台和 InferNex 控制器补齐相应职责。
+
+## 9. 上线安全检查
+
+- [ ] 使用 `aarch64` 对应的 `linux-arm64` 包并验证外层 SHA256；
+- [ ] systemd 服务未使用 `admin.conf`；
+- [ ] kubeconfig 仅授权目标命名空间；
+- [ ] 凭据和配置文件权限符合要求；
+- [ ] MCP 保持回环地址或位于认证代理之后；
+- [ ] Dashboard 只允许批准管理网 CIDR；
+- [ ] 模型端点属于批准内网地址；
+- [ ] 未需要写能力时不创建 mutation RBAC；
+- [ ] 自动恢复开关、源标注和 profile 批准流程均有责任人；
+- [ ] 日志采集和凭据轮换周期已纳入运维制度。
