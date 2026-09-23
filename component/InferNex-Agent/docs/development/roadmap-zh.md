@@ -2,9 +2,9 @@
 
 本页是唯一当前排期入口。旧 v0.5 提案与多阶段路线图已移入 `archive/`，作为背景保留。
 
-基线：`0.5.0-alpha.19`，保留 alpha.15 能力和 alpha.16 的 SLO／版本记录增量，并包含后续 Dashboard 与安装兼容修复。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕 SLO 完成发现、修复、系统优化、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划。
+基线：`0.5.0-alpha.19`，保留 alpha.15 能力和 alpha.16 的 SLO／版本记录增量，并包含后续 Dashboard 与安装兼容修复。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕跨环境自动部署完成环境发现、规格规划、受管发布、业务 SLO 验收、升级、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划。
 
-下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B11 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。基础能力验收复核参考实现基线，跨环境修复与能力演进验收检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
+下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
 
 已有 [Bridge 渐进实验](../guides/progressive-experiments-zh.md)包含独立候选、Ready/日志回归/浸泡门禁及失败候选回退。后续复用这套基础，补业务 SLO、补丁制品和通用执行器，不重新建设一套平行实验系统。
 
@@ -24,7 +24,7 @@
 | A1 环境适配 | 将现有 Bridge 写路径迁入边界，接入批准 Helm Chart 和首个客户 API/CRD | 按客户真实接口逐个验收；发现存在不等于具备写权限 |
 | D3 分布式与硬件 Profile | StatefulSet/LWS、多节点多卡、GPU/NPU/DRA/网络与调度协同 | 分期；CPU Kind 不代替硬件现场验收 |
 
-优先以 Mooncake prefix hit 超时贯穿 E1 → E2，终点是经验证的修复及可恢复制品，而不只是定位报告。E1/E2 可先复用 Bridge 候选环境；原生 D1 → D2 → T1 仍是跨客户独立部署的必经路径，原生路径的 R1 发布依赖 D1/D2/T1；客户已有发布能力可通过适配器接入并单独验收。O1/O2 复用同一目标、证据、变更、工作负载身份和业务验收。操作深度按配置/组件版本 → 源码/通信 → 算子/底层逐步扩展，环境适配与授权分别处理。
+主线以 D1 → D2 → T1 → R1 完成 Native、Helm 和客户平台的自动部署、业务 SLO 验收、升级与恢复；客户已有发布能力可通过适配器接入并单独验收。Mooncake prefix hit 超时仅在环境与封存真值具备时作为部署失败／上线保障专项贯穿 E1 → E2，终点是经验证的处置及可恢复制品。E1/E2 可先复用 Bridge 候选环境；O1/O2 复用同一目标、证据、变更、工作负载身份和业务验收。操作深度按配置/组件版本 → 源码/通信 → 算子/底层逐步扩展，环境适配与授权分别处理。
 
 E2a/E2b 是 E2 的知识来源增量验收，不改变 E2 原有的构建、离线交付和恢复范围。完整组合版本管理仍属 E2 规划；alpha.16 的关联记录不等于恢复执行器，当前恢复范围仍是 Bridge 源对象、变更记录与受管候选。
 

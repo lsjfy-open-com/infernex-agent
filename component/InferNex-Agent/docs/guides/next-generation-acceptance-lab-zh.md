@@ -1,6 +1,6 @@
 # 下一代验收实验室 starter kit
 
-本文配套[下一代课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)和[环境、数据与量化验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)，给出出题方可复现的 CPU Kind 基线、三组合成开发数据、评估者真值和记录模板。它是 **starter kit，不是完整验收交付**。CPU pause workload 只验证对象发现、管理权线索、数据格式和评估流程，不提供推理服务，不能证明 GPU/NPU、HCCL/RDMA、Mooncake、交换机、吞吐、SLO 修复或生产恢复。
+本文配套[下一代课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)和[环境、数据与量化验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)，给出出题方可复现的 CPU Kind 基线、三组合成开发数据、评估者真值和记录模板。它是 **starter kit，不是完整验收交付**。CPU pause workload 只验证对象发现、管理权线索、数据格式和评估流程，不提供推理服务，不能证明 GPU/NPU、真实模型自动部署、业务 SLO、升级恢复或按条件启用的 HCCL/RDMA、Mooncake、交换机专项。
 
 本次在没有 Docker 的本机只运行 Python 生成与自检；没有创建 Kind 集群、没有 `kubectl apply`、没有安装 Helm release。任何 live 结果须由实际执行者按模板另行记录，不能把本指南或合成数据记为实测通过。
 
@@ -16,7 +16,7 @@
 
 三组数据都在公开仓库，只能算开发集。正式 B9/B11 盲测必须由独立评估者在另一个账号或执行环境保管真值和注入控制，另外生成未公开变体；不得把 `generated/evaluator`、真值故障名称、注入参数或案例答案复制进 participant bundle、Agent 工作区、Skill、模型提示或运行轨迹。评分方法与通过阈值应提前公开，具体答案保持隔离。同仓的两个目录便于审阅打包规则，本身不构成安全隔离。
 
-当前没有准备好 B3 的真实客户 CRD/API 合同用例，也没有 B4/B9 所需 NVIDIA、Ascend、网络设备和交换机现场。B5–B8、B10 仍需要真实服务、流量、批准、恢复和界面产物。本 starter kit 不能据此宣称所有 B 类用例可运行或已经通过。
+当前没有准备好 B3 的真实客户 CRD/API 合同用例，也没有 B4 或已签署 B9 专项所需的 NVIDIA、Ascend、网络设备和交换机现场。B5–B8、B10 仍需要真实服务、流量、批准、恢复和界面产物；B12 所需的三条真实模型部署路径、30 次首部署和至少 20 次升级环境也未提供。本 starter kit 不能据此宣称所有 B 类用例可运行或已经通过。
 
 ## 2. 文件和数据合同
 
