@@ -1,6 +1,6 @@
 # 下一代验收实验室 starter kit
 
-本文配套[下一代课题与验收建议](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)，给出出题方可复现的 CPU Kind 基线、三组合成开发数据、评估者真值和记录模板。它是 **starter kit，不是完整验收交付**。CPU pause workload 只验证对象发现、管理权线索、数据格式和评估流程，不提供推理服务，不能证明 GPU/NPU、HCCL/RDMA、Mooncake、交换机、吞吐、SLO 修复或生产恢复。
+本文配套[下一代课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)和[环境、数据与量化验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)，给出出题方可复现的 CPU Kind 基线、三组合成开发数据、评估者真值和记录模板。它是 **starter kit，不是完整验收交付**。CPU pause workload 只验证对象发现、管理权线索、数据格式和评估流程，不提供推理服务，不能证明 GPU/NPU、HCCL/RDMA、Mooncake、交换机、吞吐、SLO 修复或生产恢复。
 
 本次在没有 Docker 的本机只运行 Python 生成与自检；没有创建 Kind 集群、没有 `kubectl apply`、没有安装 Helm release。任何 live 结果须由实际执行者按模板另行记录，不能把本指南或合成数据记为实测通过。
 

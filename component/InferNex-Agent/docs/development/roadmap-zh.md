@@ -4,7 +4,7 @@
 
 基线：`0.5.0-alpha.19`，保留 alpha.15 能力和 alpha.16 的 SLO／版本记录增量，并包含后续 Dashboard 与安装兼容修复。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕 SLO 完成发现、修复、系统优化、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划。
 
-下一大版本的背景、轻量领域模型、能力包、异构资源、联网/离线制品及量化门槛见[课题与两阶段验收建议](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)。第一阶段复核 alpha.19，第二阶段验收跨环境闭环；指标为待确认的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
+下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B11 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。基础能力验收复核参考实现基线，跨环境修复与能力演进验收检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
 
 已有 [Bridge 渐进实验](../guides/progressive-experiments-zh.md)包含独立候选、Ready/日志回归/浸泡门禁及失败候选回退。后续复用这套基础，补业务 SLO、补丁制品和通用执行器，不重新建设一套平行实验系统。
 
