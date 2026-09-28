@@ -134,6 +134,8 @@ func run() error {
 			return runClusterState(os.Args[2:])
 		case "config-version":
 			return runConfigVersion(os.Args[2:])
+		case "deployment-plan":
+			return runDeploymentPlan(os.Args[2:])
 		case "chat":
 			return runChat(os.Args[2:])
 		case "tui":

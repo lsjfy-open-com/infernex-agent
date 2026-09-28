@@ -25,6 +25,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deploymentplan"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
@@ -53,6 +54,9 @@ with the exact groupVersion and plural resource name. Generic reads follow kubec
 paginate large lists, omit managedFields, redact credential-like values, and return Secret metadata
 without Secret payloads. When available, use k8s_inspect_service_backends for native Service
 backend and traffic-policy risks; it does not measure request distribution or configure balancing.
+Use k8s_plan_deployment to estimate whether an inline workload profile fits the currently visible
+nodes. Its hashes and resource estimate are a read-only snapshot, not a reservation, applyable
+manifest, deployment authorization, or proof of traffic and performance behavior.
 Use helm_list_releases for installed Helm release metadata. Generic
 API reads do not implicitly execute commands. Host evidence and active diagnostic execution are
 separate policy-controlled channels when configured. InferNex Bridge is optional; use InferNexService tools only
@@ -689,6 +693,18 @@ func New(domainObserver observer.Observer, version string, optionFunctions ...Op
 				return nil, output, err
 			})
 		}
+
+		mcp.AddTool(server, &mcp.Tool{
+			Name:        "k8s_plan_deployment",
+			Description: "Estimate whether an inline workload profile fits the current visible Kubernetes nodes. Returns resource estimates and profile/snapshot hashes; does not create a reservation, emit applyable YAML, authorize a write, or verify traffic or performance.",
+			Annotations: readOnly("Plan Kubernetes deployment capacity"),
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, input deploymentplan.Request) (*mcp.CallToolResult, deploymentplan.Plan, error) {
+			if err := requireScopedNamespace(options, input.Namespace); err != nil {
+				return nil, deploymentplan.Plan{}, err
+			}
+			output, err := options.kubernetes.PlanDeployment(ctx, input)
+			return nil, output, err
+		})
 
 		mcp.AddTool(server, &mcp.Tool{
 			Name:        "k8s_cluster_overview",

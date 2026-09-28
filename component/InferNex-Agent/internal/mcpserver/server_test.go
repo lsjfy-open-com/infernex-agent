@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/collectorrun"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deployer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deploymentplan"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnosticexec"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
@@ -102,6 +104,20 @@ func (stubKubernetes) DiscoverResources(_ context.Context, request kubeops.Resou
 
 func (stubKubernetes) ReadResources(_ context.Context, request kubeops.ResourceReadRequest) (kubeops.ResourceReadResult, error) {
 	return kubeops.ResourceReadResult{GroupVersion: request.GroupVersion, Resource: request.Resource, Objects: []map[string]any{}}, nil
+}
+
+func (stubKubernetes) PlanDeployment(_ context.Context, request deploymentplan.Request) (deploymentplan.Plan, error) {
+	return deploymentplan.Plan{
+		Version: deploymentplan.PlanVersion, Status: deploymentplan.StatusSchedulable,
+		Namespace: request.Namespace, RequestedReplicas: request.Replicas, PlaceableReplicas: request.Replicas,
+		ProfileHash: "profile-hash", SnapshotHash: "snapshot-hash", PlanHash: "plan-hash",
+		ResourceEstimate: deploymentplan.ResourceEstimate{
+			PerReplica:     map[string]string{"cpu": "4", "memory": "16Gi"},
+			TotalRequested: map[string]string{"cpu": "8", "memory": "32Gi"},
+		},
+		Placements: []deploymentplan.Placement{},
+		Warnings:   []string{}, TrafficVerified: false, PerformanceVerified: false, ReservationCreated: false,
+	}, nil
 }
 
 func (stubDeployer) ListSources(context.Context) (deployer.SourceList, error) {
@@ -334,13 +350,14 @@ func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
 	}
-	if len(list.Tools) != 10 {
-		t.Fatalf("tool count = %d, want 10", len(list.Tools))
+	if len(list.Tools) != 11 {
+		t.Fatalf("tool count = %d, want 11", len(list.Tools))
 	}
 	want := map[string]bool{
 		"openfuyao_detect_environment": false,
 		"k8s_detect_environment":       false,
 		"k8s_inspect_service_backends": false,
+		"k8s_plan_deployment":          false,
 		"k8s_cluster_overview":         false,
 		"k8s_list_workloads":           false,
 		"k8s_discover_api_resources":   false,
@@ -378,6 +395,45 @@ func TestServerPublishesGeneralKubernetesAndHelmToolsWhenEnabled(t *testing.T) {
 	}
 	if environment.Platform != "openfuyao" {
 		t.Fatalf("environment = %#v", environment)
+	}
+
+	planned, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "k8s_plan_deployment",
+		Arguments: map[string]any{
+			"namespace": "models", "replicas": 2,
+			"profile": map[string]any{"version": deploymentplan.ProfileVersion, "image": "example.invalid/model:1", "cpu": "4", "memory": "16Gi"},
+		},
+	})
+	if err != nil || planned.IsError {
+		t.Fatalf("plan deployment call failed: err=%v result=%#v", err, planned)
+	}
+	payload, err = json.Marshal(planned.StructuredContent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plan deploymentplan.Plan
+	if err := json.Unmarshal(payload, &plan); err != nil {
+		t.Fatal(err)
+	}
+	if plan.Namespace != "models" || plan.RequestedReplicas != 2 || plan.ProfileHash == "" || plan.SnapshotHash == "" || plan.TrafficVerified || plan.PerformanceVerified || plan.ReservationCreated {
+		t.Fatalf("unexpected deployment plan: %#v", plan)
+	}
+
+	unknownConstraint, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+		Name: "k8s_plan_deployment",
+		Arguments: map[string]any{
+			"namespace": "models", "replicas": 2,
+			"profile": map[string]any{
+				"version": deploymentplan.ProfileVersion, "image": "example.invalid/model:1", "cpu": "4", "memory": "16Gi",
+				"topologySpreadConstraints": []map[string]any{{"topologyKey": "kubernetes.io/hostname"}},
+			},
+		},
+	})
+	if err == nil && !unknownConstraint.IsError {
+		t.Fatalf("unknown profile constraint was silently ignored: %#v", unknownConstraint)
+	}
+	if err != nil && !strings.Contains(err.Error(), "unexpected additional properties") {
+		t.Fatalf("unknown profile constraint failed for the wrong reason: %v", err)
 	}
 }
 
@@ -878,6 +934,21 @@ func TestDiagnosticDelegatePublishesRestrictedScopedContract(t *testing.T) {
 		}
 		if result.IsError != (namespace != "models") {
 			t.Fatalf("backend scope %q: %#v", namespace, result)
+		}
+	}
+	for _, namespace := range []string{"", "kube-system", "models"} {
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{
+			Name: "k8s_plan_deployment",
+			Arguments: map[string]any{
+				"namespace": namespace, "replicas": 1,
+				"profile": map[string]any{"version": deploymentplan.ProfileVersion, "image": "example.invalid/model:1", "cpu": "1", "memory": "1Gi"},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.IsError != (namespace != "models") {
+			t.Fatalf("deployment plan scope %q: %#v", namespace, result)
 		}
 	}
 	collectorList, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: "infernex_list_collector_runs", Arguments: map[string]any{}})

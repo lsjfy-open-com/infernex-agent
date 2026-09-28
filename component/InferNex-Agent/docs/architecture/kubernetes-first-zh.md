@@ -1,6 +1,6 @@
 # Kubernetes 通用底座与环境适配
 
-状态：架构决策与分期验收契约。本文明确区分已实现能力和待实现能力；不把设计中的接口、调度器或路由器写成产品已有功能。
+状态：架构决策与分期验收契约。alpha.20 只交付 D1 的第一个只读资源规划切片；本文明确区分该切片、完整 D1 目标和后续能力，不把设计中的接口、调度器或路由器写成产品已有功能。
 
 ## 当前结论
 
@@ -11,7 +11,7 @@
 | 原生 Kubernetes/Helm 发现、状态、日志、事件 | 已有 | 增加中立环境发现名称，兼容旧工具名 | 持续完善 |
 | Pi、记忆、历史证据、固定诊断探针与采集 | 已有；具体探针有硬件/权限前提 | 保持现有功能 | 按能力探测显示 |
 | 原生 Service 后端与分流风险检查 | 可通用读取原始资源，未有专用诊断 | 新增 EndpointSlice 逐端口就绪后端检查 | 实际请求分布验收 |
-| 按需求、资源与批准规格生成部署计划 | 未实现 | 明确输入、约束、容量语义 | D1 |
+| 按需求、资源与批准规格生成部署计划 | 未实现 | alpha.20 可按调用方提供的单一 Profile、namespace、replicas 和可见快照做只读放置估算；不代表 Profile 已批准，不预留或写入资源 | D1 继续补齐异构组合、复杂调度、硬件现场和需求/SLO 选型 |
 | 不依赖 Bridge 的受控实例创建/扩缩/回退 | 未实现；现有写路径是 InferNexService | 明确 Native 适配边界 | D2 |
 | 请求级均衡、异规格容量权重、流式排空 | 未实现 | 明确不能用 Service Ready 代替 | T1 |
 | 原生工作负载的持续故障闭环 | 原生证据可读取；Supervisor/恢复仍以 Bridge 对象为主 | 明确通用故障对象和恢复契约 | O1 |
@@ -56,6 +56,10 @@ Core 不导入客户 CRD，也不规定必须存在 InferNexService。Agent 不�
 ## 规格与容量规划
 
 “单实例规格”和“服务实例数”分开：一个 TP=4 实例可占 4 张卡；两个这样的实例需至少两组可满足拓扑约束的四卡资源，不能只把 replicas 写成 8。
+
+alpha.20 已实现的范围仅是：由 CLI JSON 文件或 MCP 内联参数接收一种同构的单实例 Profile，读取调用身份可见的 Node、Pod 与支持的 namespace 范围，估算 `replicas` 个实例的资源可容纳性和逐节点放置，并返回 `profileHash`、`snapshotHash` 与绑定 namespace/replicas/两者的 `planHash`。读取或认证/RBAC 失败时不生成 Plan；读取成功但遇到 PVC、affinity、ResourceClaim、Pod-level resources、无法可靠扣除的占用等未建模条件时返回 `blocked`。`resource-fit` 仍不等于调度、预留、批准、Ready、流量或性能验证。alpha.20 不支持异构 Profile 组合，也不创建或修改 Kubernetes 对象。操作边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
+
+以下条目描述完整 D1 及其后续衔接目标；没有标为 alpha.20 已实现的内容仍是待交付契约：
 
 1. 用户描述模型/版本、精度、上下文、并发或吞吐目标、TTFT/TPOT、可用性、副本上下限和预算。
 2. 管理员提供经验证的运行 Profile：镜像摘要、启动参数、探针、模型访问方式、CPU/内存、GPU/NPU 资源键、每实例卡数、并行方式、节点/驱动/网络约束及基准容量。实例可选不同 Profile，但必须语义兼容。

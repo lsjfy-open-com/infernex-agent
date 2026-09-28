@@ -2,7 +2,7 @@
 
 本页是唯一当前排期入口。旧 v0.5 提案与多阶段路线图已移入 `archive/`，作为背景保留。
 
-基线：`0.5.0-alpha.19`，保留 alpha.15 能力和 alpha.16 的 SLO／版本记录增量，并包含后续 Dashboard 与安装兼容修复。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕跨环境自动部署完成环境发现、规格规划、受管发布、业务 SLO 验收、升级、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划。
+基线：`0.5.0-alpha.20`，保留 alpha.19 的安装兼容修复、alpha.18 Dashboard 和 alpha.16 SLO／版本记录能力，并增加 D1 的第一个只读资源规划切片。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕跨环境自动部署完成环境发现、规格规划、受管发布、业务 SLO 验收、升级、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划；alpha.20 不代表 D1 已全部完成。
 
 下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
 
@@ -15,7 +15,7 @@
 | E2 修复与补丁制品 | 隔离构建、固定基础镜像、补丁/组合版本清单、离线交付与实验恢复；以 Git 期望配置、变更前后 snapshot 和 ReleaseManifest 关联版本 | alpha.16 提供 config-version 的 Git commit / 快照 / 文件证据关联及本地完整性校验；补丁构建、语义对齐、全栈快照和执行恢复仍待实现 |
 | E2a 离线知识与补丁 | 本地知识、已安装版本及日志；人工导入经批准的补丁或资料，核验来源、适用版本与校验值 | 待实现；断网可形成有证据的建议并交付可复验补丁，不自动在线对齐 |
 | E2b 授权联网核对 | 经授权的只读工具查询上游发布、补丁及兼容矩阵，核验来源与版本后关联 E2 制品 | 待实现；默认仅建议，实际部署按批准流程；E2 离线交付不依赖 E2b |
-| D1 规格与容量计划 | 批准 Profile、资源快照、用户需求、实例规格/数量/放置、计划 hash | 待实现；资源不足、不可见资源、异规格和多卡边界都有回归 |
+| D1 规格与容量计划 | 批准 Profile、资源快照、用户需求、实例规格/数量/放置、计划 hash | alpha.20 已交付第一个只读切片：调用方提供单一同构 Profile，按 namespace、replicas 和当前可见快照估算资源与逐节点放置，输出 profile/snapshot/plan hash；它不批准 Profile、不预留资源、不写 Kubernetes、不验证性能。复杂调度未知时 blocked，读取权限失败时拒绝生成计划。异构组合、完整配额/拓扑/成组调度和硬件现场回归仍待实现，D1 尚未完成 |
 | D2 原生部署事务 | Deployment + Service，计划批准、持久日志、就绪/预热、失败补偿和回退 | 待实现；无 Bridge Kind 全链路以及重启/并发编辑/部分创建失败 |
 | T1 请求级分流 | 对接已有 L7 数据面；纯 K8s 可选网关；容量权重、摘流排空与指标 | 待实现；同一客户端长连接、多后端实际命中、后端故障转移和流式响应 |
 | R1 受控发布与稳定晋级 | 复用成熟发布控制器，SLO 灰度门禁、恢复方案与版本晋级 | 待实现；依赖 E1/E2 及对应环境执行/流量能力，区分流量恢复与配置/数据恢复 |

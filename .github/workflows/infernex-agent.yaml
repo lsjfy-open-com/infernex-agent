@@ -139,6 +139,9 @@ jobs:
             --image "${KIND_NODE_IMAGE}" \
             --wait 120s
 
+      - name: Test Bridge-free native deployment planning
+        run: bash component/InferNex-Agent/test/e2e/deployment-plan.sh
+
       - name: Build and load control-plane images
         run: |
           docker build \

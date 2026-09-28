@@ -171,6 +171,9 @@ install -m 0755 \
   "${agent_dir}/scripts/host/verify-host.sh" \
   "${bundle_root}/bin/"
 cp -a -- "${agent_dir}/skills/." "${bundle_root}/skills/"
+install -d -m 0755 "${bundle_root}/examples"
+install -m 0644 "${agent_dir}/examples/deployment-profile-alpha20.json" \
+  "${bundle_root}/examples/deployment-profile-alpha20.json"
 if [[ -n "$pi_runtime_source" ]]; then
   bundle_info "including pinned Pi TUI runtime"
   install -d -m 0755 "${bundle_root}/payload/pi-runtime"

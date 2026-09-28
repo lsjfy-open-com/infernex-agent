@@ -9,7 +9,11 @@
 
 package kubeops
 
-import "context"
+import (
+	"context"
+
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/deploymentplan"
+)
 
 // Reader is the read-only Kubernetes/openFuyao boundary exposed to the agent.
 // Generic discovery follows the active kubeconfig's RBAC and redacts Secret payloads.
@@ -22,6 +26,7 @@ type Reader interface {
 	ListHelmReleases(context.Context, HelmReleaseRequest) (HelmReleaseList, error)
 	DiscoverResources(context.Context, ResourceDiscoveryRequest) (ResourceDiscovery, error)
 	ReadResources(context.Context, ResourceReadRequest) (ResourceReadResult, error)
+	PlanDeployment(context.Context, deploymentplan.Request) (deploymentplan.Plan, error)
 }
 
 type ResourceDiscoveryRequest struct {

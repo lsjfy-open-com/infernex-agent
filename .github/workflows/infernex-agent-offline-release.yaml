@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.19"
+        default: "0.5.0-alpha.20"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -42,7 +42,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.19' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.20' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -263,6 +263,8 @@ jobs:
             source ./bin/bundle-lib.sh
             bundle_verify_checksums "$PWD"
             test -x ./install.sh
+            test -s ./examples/deployment-profile-alpha20.json
+            test -s ./docs/guides/deployment-planning-zh.md
               test -x ./bin/configure-evidence.sh
               test -x ./bin/configure-skills.sh
               test -f ./skills/cann-runtime-diagnosis/SKILL.md
@@ -305,7 +307,7 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.19' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.20' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:

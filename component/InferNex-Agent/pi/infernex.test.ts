@@ -54,8 +54,8 @@ function installMockFetch() {
 				result: {
 					tools: [
 						{
-							name: "cluster_overview",
-							description: "Read cluster facts",
+							name: "k8s_plan_deployment",
+							description: "Estimate deployment resource fit without reserving capacity",
 							inputSchema: { type: "object", properties: {} },
 							annotations: { readOnlyHint: true },
 						},
@@ -69,7 +69,7 @@ function installMockFetch() {
 				},
 			});
 		}
-		if (mockLargeResponse && request.params.name === "cluster_overview") {
+		if (mockLargeResponse && request.params.name === "k8s_plan_deployment") {
 			return Response.json({
 				jsonrpc: "2.0",
 				id: request.id,
@@ -90,7 +90,7 @@ test("loads MCP tools and executes read-only calls without approval", async () =
 	const mock = mockAPI();
 	await infernexExtension(mock.api);
 	assert.deepEqual(mock.tools.map((tool) => tool.name), [
-		"cluster_overview",
+		"k8s_plan_deployment",
 		"deploy_service",
 		"infernex_read_artifact",
 		"infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test", "infernex_task_status",
@@ -98,7 +98,7 @@ test("loads MCP tools and executes read-only calls without approval", async () =
 	assert.deepEqual(mock.commands, ["mode_change", "infernex-tools"]);
 	assert.ok(mock.events.includes("session_start"));
 	const result = await mock.tools[0].execute("call-1", {}, undefined, undefined, { hasUI: false });
-	assert.match(result.content[0].text, /cluster_overview/);
+	assert.match(result.content[0].text, /k8s_plan_deployment/);
 });
 
 test("denies write-capable tools without interactive approval", async () => {
