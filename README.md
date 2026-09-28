@@ -10,7 +10,7 @@ alpha.20 keeps no-argument kubeconfig discovery for `sudo ./install.sh` and the 
 
 ## Install the experimental release
 
-When the release CI has published it, download the archive and matching SHA256 for your management host's CPU architecture from [v0.5.0-alpha.20](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.20). Extract it and run `sudo ./install.sh`, then `sudo infernex-agent chat`. When already logged in as root, run `./install.sh`. The full package includes Pi, rg and fd; no Node or Go installation is needed.
+Download the archive and matching SHA256 for your management host's CPU architecture from [v0.5.0-alpha.20](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.20). Extract it and run `sudo ./install.sh`, then `sudo infernex-agent chat`. When already logged in as root, run `./install.sh`. The full package includes Pi, rg and fd; no Node or Go installation is needed.
 
 Use the [installation guide](component/InferNex-Agent/docs/guides/offline-install-zh.md) for exact verification and upgrade steps. A release tag identifies an immutable experimental package, not a main-branch merge or hardware certification.
 
