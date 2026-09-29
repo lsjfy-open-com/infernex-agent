@@ -3,7 +3,7 @@ name: InferNex Agent offline bundle
 on:
   push:
     branches:
-      - agent/pi-agent-foundation
+      - develop
     paths:
       - ".github/infernex-agent-release"
   pull_request:
@@ -37,8 +37,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validation:
+    name: Full Agent and Kind validation
+    uses: ./.github/workflows/infernex-agent.yaml
+
   build:
     name: Build linux/${{ matrix.architecture }}
+    needs:
+      - validation
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -54,6 +60,20 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Validate release request
+        if: ${{ github.event_name == 'push' }}
+        env:
+          VERSION: ${{ env.BUNDLE_VERSION }}
+        run: |
+          marker=.github/infernex-agent-release
+          mapfile -t request < <(grep -Ev '^(#|$)' "${marker}")
+          test "${#request[@]}" -eq 2
+          [[ "${request[0]}" =~ ^version=([0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?)$ ]]
+          test "${BASH_REMATCH[1]}" = "${VERSION}"
+          [[ "${request[1]}" =~ ^request=([1-9][0-9]*)$ ]]
 
       - name: Validate version
         env:
@@ -314,6 +334,8 @@ jobs:
     steps:
       - name: Check out release notes
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Download architecture bundles
         uses: actions/download-artifact@v4
@@ -322,20 +344,161 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Publish GitHub prerelease
+      - name: Validate release assets and prepare notes
         env:
-          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ env.BUNDLE_VERSION }}
           INCLUDE_PI_TUI: ${{ env.INCLUDE_PI_TUI }}
         run: |
           release_notes="component/InferNex-Agent/docs/releases/v${VERSION}-zh.md"
           test -s "${release_notes}"
           test "${INCLUDE_PI_TUI}" = "true"
-          gh release create "infernex-agent-v${VERSION}" \
-            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz \
-            release-assets/infernex-agent-${VERSION}-linux-*.tar.gz.sha256 \
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+          expected_assets=()
+          for architecture in amd64 arm64; do
+            archive="infernex-agent-${VERSION}-linux-${architecture}.tar.gz"
+            checksum="${archive}.sha256"
+            expected_assets+=("${archive}" "${checksum}")
+            test -s "release-assets/${archive}"
+            test -s "release-assets/${checksum}"
+            checksum_line="$(<"release-assets/${checksum}")"
+            checksum_digest="${checksum_line%%  *}"
+            checksum_asset="${checksum_line#*  }"
+            [[ "${checksum_digest}" =~ ^[0-9a-f]{64}$ ]]
+            test "${checksum_asset}" = "${archive}"
+            test "${checksum_line}" = "${checksum_digest}  ${archive}"
+            (
+              cd release-assets
+              sha256sum --check "${checksum}"
+            )
+          done
+          mapfile -t actual_assets < <(
+            find release-assets -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          mapfile -t expected_assets < <(printf '%s\n' "${expected_assets[@]}" | sort)
+          test "${#actual_assets[@]}" -eq 4
+          test "$(printf '%s\n' "${actual_assets[@]}")" = \
+            "$(printf '%s\n' "${expected_assets[@]}")"
+
+          pending='alpha.21 安装包尚待构建与校验；'
+          completed='alpha.21 已完成 Linux 身份测试与双架构安装包构建校验；'
+          test "$(grep -oF "${pending}" "${release_notes}" | wc -l)" -eq 1
+          sed "0,/${pending}/s//${completed}/" "${release_notes}" \
+            >"${RUNNER_TEMP}/release-notes.md"
+          cat >>"${RUNNER_TEMP}/release-notes.md" <<EOF
+
+          ## 发布验证证据
+
+          - Commit: \`${GITHUB_SHA}\`
+          - GitHub Actions: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          EOF
+
+      - name: Create, verify, and publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ env.BUNDLE_VERSION }}
+        run: |
+          set -euo pipefail
+          tag="infernex-agent-v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+            echo "Tag ${tag} already exists; refusing to overwrite it."
+            exit 1
+          fi
+          existing_release_id="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${tag}\") | .id"
+          )"
+          if [[ -n "${existing_release_id}" ]]; then
+            echo "Release ${tag} already exists; refusing to overwrite it."
+            exit 1
+          fi
+
+          gh release create "${tag}" \
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
+            --draft \
             --prerelease \
             --title "InferNex Agent v${VERSION}" \
-            --notes-file "${release_notes}"
+            --notes-file "${RUNNER_TEMP}/release-notes.md"
+          release_id="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"${tag}\") | .id"
+          )"
+          test -n "${release_id}"
+          published=false
+          cleanup_draft() {
+            if [[ "${published}" != true ]]; then
+              if ! release_state="$(
+                gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}" 2>/dev/null
+              )"; then
+                echo "Could not confirm draft state; preserving release ${release_id}."
+                return 0
+              fi
+              if jq -e '.draft == true' <<<"${release_state}" >/dev/null; then
+                gh api --method DELETE \
+                  "repos/${GITHUB_REPOSITORY}/releases/${release_id}" || true
+              else
+                echo "Release ${release_id} is not a draft; preserving it."
+              fi
+            fi
+          }
+          trap cleanup_draft EXIT
+
+          gh release upload "${tag}" release-assets/* \
+            --repo "${GITHUB_REPOSITORY}"
+
+          gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+            >"${RUNNER_TEMP}/remote-assets.json"
+          test "$(jq length "${RUNNER_TEMP}/remote-assets.json")" -eq 4
+          mkdir "${RUNNER_TEMP}/downloaded-release-assets"
+          for local_asset in release-assets/*; do
+            asset_name="$(basename "${local_asset}")"
+            local_size="$(stat -c %s "${local_asset}")"
+            local_digest="sha256:$(sha256sum "${local_asset}" | awk '{print $1}')"
+            remote_matches="$(
+              jq --arg name "${asset_name}" \
+                '[.[] | select(.name == $name)] | length' \
+                "${RUNNER_TEMP}/remote-assets.json"
+            )"
+            test "${remote_matches}" -eq 1
+            remote_size="$(
+              jq -r --arg name "${asset_name}" \
+                '.[] | select(.name == $name) | .size' \
+                "${RUNNER_TEMP}/remote-assets.json"
+            )"
+            remote_digest="$(
+              jq -r --arg name "${asset_name}" \
+                '.[] | select(.name == $name) | .digest' \
+                "${RUNNER_TEMP}/remote-assets.json"
+            )"
+            remote_url="$(
+              jq -r --arg name "${asset_name}" \
+                '.[] | select(.name == $name) | .url' \
+                "${RUNNER_TEMP}/remote-assets.json"
+            )"
+            test "${remote_size}" = "${local_size}"
+            test "${remote_digest}" = "${local_digest}"
+            gh api -H 'Accept: application/octet-stream' "${remote_url}" \
+              >"${RUNNER_TEMP}/downloaded-release-assets/${asset_name}"
+          done
+
+          test "$(find "${RUNNER_TEMP}/downloaded-release-assets" -maxdepth 1 -type f | wc -l)" -eq 4
+          for architecture in amd64 arm64; do
+            archive="infernex-agent-${VERSION}-linux-${architecture}.tar.gz"
+            checksum="${archive}.sha256"
+            (
+              cd "${RUNNER_TEMP}/downloaded-release-assets"
+              sha256sum --check "${checksum}"
+            )
+          done
+
+          publish_response="$(
+            gh api --method PATCH \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}" \
+              -F draft=false \
+              -F prerelease=true
+          )"
+          published=true
+          jq -e '.draft == false and .prerelease == true' \
+            <<<"${publish_response}" >/dev/null
+          trap - EXIT

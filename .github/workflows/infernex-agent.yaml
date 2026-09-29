@@ -1,6 +1,7 @@
 name: InferNex Agent
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - ".github/workflows/infernex-agent.yaml"
@@ -21,7 +22,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: infernex-agent-${{ github.ref }}
+  group: infernex-agent-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -37,6 +38,8 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -528,6 +531,8 @@ jobs:
     steps:
       - name: Check out tested source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
 
       - name: Set up Go
         uses: actions/setup-go@v6

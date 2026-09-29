@@ -82,7 +82,10 @@ test("real UID drop, root file denial, environment isolation, timeout and cancel
   const state = registerHostTools({ registerCommand: (n: string, c: any) => commands.set(n, c), registerTool: () => {}, on: () => {} } as unknown as ExtensionAPI);
   const ctx = { hasUI: true, ui: { notify: (s: string) => notices.push(s), setStatus: () => {} } };
   await commands.get("mode_change").handler("root", ctx); assert.equal(state.mode(), "root", notices.join('\n'));
+  await commands.get("mode_change").handler("root risk", ctx);
+  assert.equal(state.mode(), "root", notices.join('\n')); assert.equal(state.access(), "risk", notices.join('\n'));
   await commands.get("mode_change").handler("normal", ctx); assert.equal(state.mode(), "normal", notices.join('\n'));
+  assert.equal(state.access(), "manual", notices.join('\n'));
  } finally { delete process.env.BASH_ENV; delete process.env.INFERNEX_PI_API_KEY; await rm(dir, { recursive: true, force: true }); }
 });
 
