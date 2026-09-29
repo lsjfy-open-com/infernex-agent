@@ -110,7 +110,7 @@ export function hcclCommand(input: { executable: string; ranks: number; devicesP
 	return (input.setupScript ? `source ${quote(absolutePath(input.setupScript))} && ` : "") + "exec " + args.map(quote).join(" ");
 }
 
-export type AccessMode = "manual" | "full";
+export type AccessMode = "manual" | "full" | "risk";
 export type HostRiskAssessment = ReturnType<typeof classifyHostCommand>;
 
 const riskLevels = new Set<HostRiskAssessment["level"]>(["read-only", "bounded-diagnostic", "cluster-change", "unknown"]);
@@ -142,19 +142,21 @@ export function hostCommandDecision(command: string, advisory?: unknown) {
  return { ruleAssessment, modelAssessment, requiresApproval: ruleRequiresApproval || modelEscalates };
 }
 
-// Explicit local-only mutations. Unknown MCP writes always retain approval;
-// model-supplied risk labels or confirm=true cannot bypass this policy.
+// Explicit local-only mutations are automatic in full access. Risk access is
+// entered only by the operator's exact root-risk command, never by tool input.
 const autonomousLocalTools = new Set([
  "infernex_create_markdown_report", "infernex_remember", "infernex_forget_memory",
  "infernex_start_plog_capture", "infernex_stop_plog_capture",
  "infernex_start_collector_run", "infernex_stop_collector_run",
 ]);
 export function needsMCPApproval(access: AccessMode, name: string, readOnly: boolean): boolean {
+ if (access === "risk") return false;
  if (["infernex_deploy_model", "infernex_delete_model", "infernex_start_experiment"].includes(name)) return true;
  if (readOnly) return false;
  return access !== "full" || !autonomousLocalTools.has(name);
 }
 export function needsHostApproval(access: AccessMode, name: string, input: any): boolean {
+ if (access === "risk") return false;
  if (access !== "full") return true;
  if (name === "infernex_sample_pfc") return false;
  if (name === "infernex_network_probe") return !["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats"].includes(input.probe);
@@ -166,20 +168,24 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 	let mode: HostMode = "normal", access: AccessMode = "manual", busy = 0, denied = false;
 	const normalUser = process.env.INFERNEX_HOST_USER || "infernex-agent";
 	const rootWorkspace = process.env.INFERNEX_WORKSPACE_ROOT || process.cwd();
-	const modeLabel = () => `${mode} · ${access === "full" ? "完全访问（集群影响需批准）" : "逐次批准"} · local commands as ${mode === "root" ? "root" : normalUser}`;
+	const modeLabel = () => `${mode} · ${access === "risk" ? "⚠ RISK：无逐次批准" : access === "full" ? "完全访问（集群影响需批准）" : "逐次批准"} · local commands as ${mode === "root" ? "root" : normalUser}`;
 	pi.registerCommand("mode_change", {
-		description: "Set identity and access: /mode_change [root|normal] [full|manual] | status",
+		description: "Set identity and access: /mode_change [root|normal] [full|manual] | root risk | status",
 		handler: async (args, ctx) => {
    const tokens = args.trim().toLowerCase().split(/\s+/).filter(Boolean);
    if (!tokens.length || tokens.join(" ") === "status") { ctx.ui.notify(`${modeLabel()}; background MCP and Pod/SSH remote identity are separate`, "info"); return; }
-   if (tokens.length > 2 || new Set(tokens).size !== tokens.length || tokens.some(t => !["normal", "root", "full", "manual"].includes(t)) || (tokens.includes("root") && tokens.includes("normal")) || (tokens.includes("full") && tokens.includes("manual"))) { ctx.ui.notify("Usage: /mode_change [root|normal] [full|manual] | status", "error"); return; }
+   const usage = "Usage: /mode_change [root|normal] [full|manual] | root risk | status";
+   if (tokens.length > 2 || new Set(tokens).size !== tokens.length || tokens.some(t => !["normal", "root", "full", "manual", "risk"].includes(t)) || (tokens.includes("root") && tokens.includes("normal")) || ["full", "manual", "risk"].filter(t => tokens.includes(t)).length > 1 || (tokens.includes("risk") && tokens.join(" ") !== "root risk")) { ctx.ui.notify(usage, "error"); return; }
    if (!ctx.hasUI || busy || (ctx.isIdle && !ctx.isIdle())) { ctx.ui.notify("Wait for active operations to finish; mode changes require an idle interactive terminal", "error"); return; }
    const next = (tokens.find(t => t === "root" || t === "normal") || mode) as HostMode;
-   const nextAccess = (tokens.find(t => t === "full" || t === "manual") || access) as AccessMode;
+   const requestedAccess = tokens.find(t => t === "full" || t === "manual" || t === "risk") as AccessMode | undefined;
+   const nextAccess = (requestedAccess || (next === "normal" && mode === "root" && access === "risk" ? "manual" : access)) as AccessMode;
+			if (next === "normal" && nextAccess === "risk") { ctx.ui.notify(usage, "error"); return; }
 			try {
 				busy++;
-				const check = next === mode ? undefined : await executeCommand(next, "/usr/bin/id -u", 5, undefined, normalUser, rootWorkspace);
-				if (check && (check.exitCode !== 0 || !/^\d+\n$/.test(check.stdout) || Number(check.stdout.trim()) !== check.uid)) throw new Error(check.stderr || "UID check failed");
+				const enteringRisk = nextAccess === "risk" && access !== "risk";
+				const check = next === mode && !enteringRisk ? undefined : await executeCommand(next, "/usr/bin/id -u", 5, undefined, normalUser, rootWorkspace);
+				if (check && (check.exitCode !== 0 || check.timedOut || check.cancelled || !/^\d+\n$/.test(check.stdout) || Number(check.stdout.trim()) !== check.uid || (enteringRisk && check.uid !== 0))) throw new Error(check.stderr || "UID check failed");
 				mode = next; access = nextAccess;
 				ctx.ui.setStatus("host-mode", modeLabel());
 				ctx.ui.notify(`${modeLabel()}; uid=${check?.uid ?? "unchanged"}. Existing collectors are not stopped by a mode switch.`, "info");
@@ -203,9 +209,11 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 			const command = (params as { command: string }).command;
 			if (typeof command !== "string" || !command.trim() || command.length > 32768) throw new Error("command is required and must be at most 32768 characters");
 			const assessment = ruleRiskAssessment(command);
-			const requiresApproval = access !== "full" || !automaticRiskLevels.has(assessment.level);
-			const decision = requiresApproval ? "operator-approval-required" : "automatic-in-full-access";
-			const advice = automaticRiskLevels.has(assessment.level)
+			const requiresApproval = access !== "risk" && (access !== "full" || !automaticRiskLevels.has(assessment.level));
+			const decision = access === "risk" ? "automatic-in-risk-access" : requiresApproval ? "operator-approval-required" : "automatic-in-full-access";
+			const advice = access === "risk"
+				? "The operator explicitly preauthorized invocation in root risk access. Review the exact command and parameters, then invoke it without another UI approval; backend and remote authorization guards still apply."
+				: automaticRiskLevels.has(assessment.level)
 				? "Use the exact command with infernex_host_exec. In full access, do not ask for prose confirmation before invoking it."
 				: "If the intended operation is diagnostic, prefer a recognized read-only command or a typed bounded diagnostic tool. Do not rewrite or execute this command automatically.";
 			return {
@@ -234,13 +242,13 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
  if (requiresApproval && !await ctx.ui.confirm(`Run ${name} · ${modeLabel()}`, `${command}\n\n${reason}`)) { denied = true; throw new Error("Operator denied host command; do not retry or bypass this decision"); }
 					const output = await executeCommand(selected, command, (params as any).timeoutSeconds ?? defaultTimeout, signal, normalUser, rootWorkspace);
 					const formatted = await formatResult(JSON.stringify(output));
-					return { content: [{ type: "text", text: formatted.text }], details: { access, approval: requiresApproval ? "operator" : "automatic", ruleAssessment: commandDecision?.ruleAssessment, modelAssessment: commandDecision?.modelAssessment, mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
+					return { content: [{ type: "text", text: formatted.text }], details: { access, approval: requiresApproval ? "operator" : access === "risk" ? "risk-preauthorized" : "automatic", ruleAssessment: commandDecision?.ruleAssessment, modelAssessment: commandDecision?.modelAssessment, mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
 				} finally { busy--; }
 			},
 		});
 	};
 	const string = { type: "string" }, number = { type: "integer" };
-	register("infernex_host_exec", "Execute a host shell command as the current /mode_change user. Deterministic policy auto-runs recognized read-only and bounded diagnostic commands in full access; cluster-changing and unknown commands require approval. riskAssessment is an optional model advisory that may escalate but never downgrade the rule decision. Returns actual local UID, command, exit code and bounded output; never assume remote UID or RBAC from local mode.", { command: string, riskAssessment: { type: "object", properties: { level: { enum: ["read-only", "bounded-diagnostic", "cluster-change", "unknown"] }, reason: { type: "string", minLength: 1, maxLength: 1000 } }, required: ["level", "reason"], additionalProperties: false } }, ["command"], input => input.command, 60);
+	register("infernex_host_exec", "Execute a host shell command as the current /mode_change user. Deterministic policy auto-runs recognized read-only and bounded diagnostic commands in full access; cluster-changing and unknown commands require approval unless the operator explicitly selected root risk access. riskAssessment is an optional model advisory that may escalate but never downgrade the rule decision or enable risk access. Returns actual local UID, command, exit code and bounded output; local root/risk does not grant remote UID or Kubernetes RBAC.", { command: string, riskAssessment: { type: "object", properties: { level: { enum: ["read-only", "bounded-diagnostic", "cluster-change", "unknown"] }, reason: { type: "string", minLength: 1, maxLength: 1000 } }, required: ["level", "reason"], additionalProperties: false } }, ["command"], input => input.command, 60);
 	register("infernex_network_probe", "Inspect addresses, routes, sockets, TCP/RDMA counters, DNS, ping, traceroute, TCP connectivity or ethtool statistics locally or via SSH. iperf-client generates 10 seconds of traffic. Tools must be installed on the execution target.", { probe: { enum: ["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats", "iperf-client"] }, target: string, port: number, iface: string, sshTarget: string }, ["probe"], networkCommand, 60);
 	register("infernex_sample_pfc", "Collect timestamped hccn_tool -stat -g snapshots for selected devices locally or over SSH. Compare counter deltas; a nonzero lifetime counter alone does not prove current backpressure. Raw fields vary by driver. Long Pod collection remains available through CollectorRun.", { deviceIds: { type: "array", items: number, minItems: 1, maxItems: 64 }, samples: number, intervalSeconds: number, sshTarget: string }, ["deviceIds"], pfcCommand, 600);
 	register("infernex_run_hccl_test", "Run an approved HCCL collective benchmark using installed mpirun and an explicit test binary. Consumes NPU/network resources. Optional hostfile enables multi-node execution; optional CANN setupScript prepares libraries. Timeout stops the local process group; verify remote MPI ranks have exited before retrying. Exit success alone is not a performance acceptance result.", { executable: string, ranks: number, devicesPerNode: number, minBytes: number, maxBytes: number, hostfile: string, setupScript: string }, ["executable", "ranks", "devicesPerNode"], hcclCommand, 300);

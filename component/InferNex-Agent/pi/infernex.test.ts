@@ -252,7 +252,7 @@ test("Pi's real tool execution component renders a single content row and expand
 });
 
 test("continuous tasks resume progress endings but respect completion, blockers, cancel and denial", async () => {
- const mock = mockAPI(); let access: 'manual'|'full' = 'full', denied = false;
+ const mock = mockAPI(); let access: 'manual'|'full'|'risk' = 'full', denied = false;
  const task = registerAutonomousTask(mock.api,{access:()=>access,wasDenied:()=>denied,resetDenied:()=>{denied=false;}});
  const notices: string[] = [];
  const ctx = {hasUI:true,hasPendingMessages:()=>false,ui:{notify:(s:string)=>notices.push(s)}};
@@ -269,7 +269,11 @@ test("continuous tasks resume progress endings but respect completion, blockers,
  await input(); await mock.tools[0].execute('blocked',{state:'blocked',summary:'Target cluster credentials are missing'},undefined,undefined,ctx); await ended(); assert.equal(mock.sent.length,1);
  await input(); await ended(); await ended(); await ended(); assert.equal(mock.sent.length,3); assert.match(notices.at(-1)!,/三次/);
  access='manual'; await input(); await ended(); assert.equal(mock.sent.length,3);
- access='full'; await input(); await emit('session_start',{}); await ended(); assert.equal(mock.sent.length,3);
+ access='risk'; await input(); await ended(); assert.equal(mock.sent.length,4);
+ assert.match(mock.sent.at(-1)![0].content,/root risk access/);
+ assert.match(mock.sent.at(-1)![0].content,/without additional approval dialogs/);
+ assert.doesNotMatch(mock.sent.at(-1)![0].content,/Keep operator approval/);
+ access='full'; await input(); await emit('session_start',{}); await ended(); assert.equal(mock.sent.length,4);
 });
 
 test("continuous tasks count only successful tool results as new evidence", async () => {
@@ -312,6 +316,38 @@ test("full mode skips local report approval while cluster mutations still requir
  assert.equal(confirmations,0);
  await assert.rejects(mock.tools.find(t=>t.name==='deploy_service')!.execute('2',{name:'model',confirm:true,risk:'safe'},undefined,undefined,ctx),/denied/);
  assert.equal(confirmations,1);
+ installMockFetch();
+});
+
+test("root risk sends MCP writes unchanged without dialogs and preserves backend errors", async () => {
+ const calls: any[] = [];
+ globalThis.fetch = (async (_input:any, init:any) => {
+  const request = JSON.parse(String(init.body));
+  if (request.method === 'tools/list') return Response.json({jsonrpc:'2.0',id:request.id,result:{tools:[{name:'write_cluster',description:'Write cluster state',inputSchema:{type:'object',properties:{name:{type:'string'},confirm:{type:'boolean'}},required:['name','confirm'],additionalProperties:false},annotations:{readOnlyHint:false}}]}});
+  calls.push(request.params);
+  if (request.params.arguments.name === 'rejected') return Response.json({jsonrpc:'2.0',id:request.id,result:{isError:true,content:[{type:'text',text:'backend validation rejected fake target'}]}});
+  return Response.json({jsonrpc:'2.0',id:request.id,result:{structuredContent:{ok:true}}});
+ }) as typeof fetch;
+ const execute = async (mode:any, command:string) => ({mode,uid:0,cwd:'/tmp',command,exitCode:0,stdout:'0\n',stderr:'',truncated:false,timedOut:false,cancelled:false});
+ const mock=mockAPI(); await infernexExtension(mock.api,execute);
+ let confirmations=0;
+ const ctx={hasUI:true,isIdle:()=>true,ui:{notify:()=>{},setStatus:()=>{},confirm:async()=>{confirmations++;return false;}}};
+ await mock.commandHandlers.get('mode_change').handler('root risk',ctx);
+ const tool=mock.tools.find(t=>t.name==='write_cluster')!;
+ const params={name:'accepted',confirm:true};
+ const success:any=await tool.execute('risk-ok',params,undefined,undefined,ctx);
+ assert.equal(success.details.access,'risk'); assert.equal(success.details.approval,'risk-preauthorized');
+ assert.deepEqual(calls[0],{name:'write_cluster',arguments:params});
+ await assert.rejects(tool.execute('risk-error',{name:'rejected',confirm:true},undefined,undefined,ctx),/backend validation rejected fake target/);
+ assert.deepEqual(calls[1],{name:'write_cluster',arguments:{name:'rejected',confirm:true}});
+ assert.equal(confirmations,0);
+
+ const before=mock.handlers.get('before_agent_start')?.[0]; assert.ok(before);
+ const prompt=await before({systemPrompt:'base'},ctx) as {systemPrompt:string};
+ assert.match(prompt.systemPrompt,/ROOT RISK ACCESS/);
+ assert.match(prompt.systemPrompt,/supply confirm:true/);
+ assert.match(prompt.systemPrompt,/does not bypass backend validation, snapshots, ownership, scope, timeouts, cancellation, errors, remote identity, or Kubernetes RBAC/);
+ assert.doesNotMatch(prompt.systemPrompt,/Cluster mutations, HCCL\/iperf load tests and unclassified shell commands still require fresh operator approval/);
  installMockFetch();
 });
 

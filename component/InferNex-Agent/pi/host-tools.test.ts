@@ -123,6 +123,84 @@ test("full access classifies effects rather than trusting risk claims or shell t
  for (const name of ['infernex_create_markdown_report','infernex_remember','infernex_forget_memory','infernex_start_plog_capture','infernex_start_collector_run']) assert.equal(needsMCPApproval('full',name,false),false);
  for (const name of ['infernex_deploy_model','infernex_delete_model','infernex_start_experiment','unknown_write']) assert.equal(needsMCPApproval('full',name,false),true);
  assert.equal(needsMCPApproval('full','infernex_delete_model',true),true);
+ for (const name of ['infernex_deploy_model','unknown_write']) assert.equal(needsMCPApproval('risk',name,false),false);
+ for (const [name, params] of [['infernex_host_exec',{command:'kubectl delete pod p',riskAssessment:{level:'unknown',reason:'unknown'}}],['infernex_network_probe',{probe:'iperf-client'}],['infernex_run_hccl_test',{}]] as const) assert.equal(needsHostApproval('risk',name,params),false);
+});
+
+test("root risk requires exact interactive selection and a verified root UID", async () => {
+ const commands = new Map<string,any>(), notices: string[] = [];
+ let executions = 0;
+ const nonRoot = async (mode: any, command: string) => { executions++; return {mode,uid:1000,cwd:'/tmp',command,exitCode:0,stdout:'1000\n',stderr:'',truncated:false,timedOut:false,cancelled:false}; };
+ const state = registerHostTools({registerCommand:(n:string,c:any)=>commands.set(n,c),registerTool:()=>{},on:()=>{}} as unknown as ExtensionAPI, undefined, undefined, nonRoot);
+ const ctx = {hasUI:true,isIdle:()=>true,ui:{notify:(s:string)=>notices.push(s),setStatus:()=>{},confirm:async()=>true}};
+ for (const args of ['risk','normal risk','risk root','root risk full','root full risk']) {
+  await commands.get('mode_change').handler(args,ctx);
+  assert.equal(state.access(),'manual',args);
+  assert.equal(state.mode(),'normal',args);
+ }
+ assert.equal(executions,0);
+ await commands.get('mode_change').handler('root risk',{...ctx,isIdle:()=>false});
+ await commands.get('mode_change').handler('root risk',{...ctx,hasUI:false});
+ assert.equal(executions,0);
+ await commands.get('mode_change').handler('root risk',ctx);
+ assert.equal(executions,1);
+ assert.equal(state.mode(),'normal');
+ assert.equal(state.access(),'manual');
+ assert.match(notices.at(-1)!,/unchanged/);
+
+ const commands2 = new Map<string,any>(); let probes = 0;
+ const changingUID = async (mode:any, command:string) => {
+  probes++; const uid = probes === 1 ? 0 : 1000;
+  return {mode,uid,cwd:'/tmp',command,exitCode:0,stdout:`${uid}\n`,stderr:'',truncated:false,timedOut:false,cancelled:false};
+ };
+ const alreadyRoot = registerHostTools({registerCommand:(n:string,c:any)=>commands2.set(n,c),registerTool:()=>{},on:()=>{}} as unknown as ExtensionAPI, undefined, undefined, changingUID);
+ await commands2.get('mode_change').handler('root',ctx);
+ assert.equal(alreadyRoot.mode(),'root'); assert.equal(alreadyRoot.access(),'manual');
+ await commands2.get('mode_change').handler('root risk',ctx);
+ assert.equal(probes,2, 'risk entry must recheck UID even when identity is already root');
+ assert.equal(alreadyRoot.mode(),'root'); assert.equal(alreadyRoot.access(),'manual');
+});
+
+test("root risk skips host dialogs while preserving execution, audit and reset gates", async () => {
+ const commands = new Map<string,any>(), tools = new Map<string,any>(), events = new Map<string,any>();
+ const executed: string[] = [], notices: string[] = [];
+ let confirmations = 0;
+ const execute = async (mode: any, command: string) => {
+  executed.push(command);
+  const identity = command === '/usr/bin/id -u';
+  const uid = mode === 'root' ? 0 : 1000;
+  return {mode,uid,cwd:'/tmp',command,exitCode:0,stdout:identity ? `${uid}\n` : 'fake result\n',stderr:'',truncated:false,timedOut:false,cancelled:false};
+ };
+ const state = registerHostTools({registerCommand:(n:string,c:any)=>commands.set(n,c),registerTool:(t:any)=>tools.set(t.name,t),on:(n:string,f:any)=>events.set(n,f)} as unknown as ExtensionAPI, undefined, undefined, execute);
+ const ctx = {hasUI:true,isIdle:()=>true,ui:{notify:(s:string)=>notices.push(s),setStatus:()=>{},confirm:async()=>{confirmations++;return false;}}};
+ await commands.get('mode_change').handler('root risk',ctx);
+ assert.equal(state.mode(),'root'); assert.equal(state.access(),'risk'); assert.match(state.label(),/RISK.*无逐次批准/);
+
+ const calls: Array<[string,any]> = [
+  ['infernex_host_exec',{command:'kubectl delete pod fake-pod',riskAssessment:{level:'unknown',reason:'Deliberately unclassified advisory.'}}],
+  ['infernex_network_probe',{probe:'iperf-client',target:'fake-node'}],
+  ['infernex_run_hccl_test',{executable:'/opt/fake/all_reduce_test',ranks:1,devicesPerNode:1}],
+ ];
+ for (const [name, params] of calls) {
+  const result = await tools.get(name).execute('risk',params,undefined,undefined,ctx);
+  assert.equal(result.details.access,'risk'); assert.equal(result.details.approval,'risk-preauthorized');
+ }
+ assert.equal(confirmations,0);
+ assert.equal(executed.length,4, 'UID probe plus three fake operations');
+
+ const preflight = await tools.get('infernex_classify_command').execute('preflight',{command:'custom-dangerous-command --fake'},undefined,undefined,ctx);
+ assert.equal(preflight.details.decision,'automatic-in-risk-access');
+ assert.equal(preflight.details.executed,false); assert.equal(preflight.details.approvalRequested,false);
+
+ await commands.get('mode_change').handler('normal',ctx);
+ assert.equal(state.mode(),'normal'); assert.equal(state.access(),'manual');
+ await assert.rejects(tools.get('infernex_host_exec').execute('manual',{command:'id'},undefined,undefined,ctx),/denied/);
+ assert.equal(confirmations,1);
+
+ await commands.get('mode_change').handler('root risk',ctx);
+ assert.equal(state.access(),'risk');
+ events.get('session_start')({},ctx);
+ assert.equal(state.mode(),'normal'); assert.equal(state.access(),'manual');
 });
 
 test("full access executes safe commands without dialogs but preserves gates and busy identity", async () => {
