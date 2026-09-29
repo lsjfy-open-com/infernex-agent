@@ -93,7 +93,7 @@ test("loads MCP tools and executes read-only calls without approval", async () =
 		"k8s_plan_deployment",
 		"deploy_service",
 		"infernex_read_artifact",
-		"infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test", "infernex_task_status",
+		"infernex_classify_command", "infernex_host_exec", "infernex_network_probe", "infernex_sample_pfc", "infernex_run_hccl_test", "infernex_task_status",
 	]);
 	assert.deepEqual(mock.commands, ["mode_change", "infernex-tools"]);
 	assert.ok(mock.events.includes("session_start"));
@@ -281,6 +281,7 @@ test("continuous tasks count only successful tool results as new evidence", asyn
  const ended = ()=>emit('agent_end',{messages:[{role:'assistant',stopReason:'stop',content:[{type:'text',text:'progress'}]}]});
  const result = (details:any, text='{}') => ({toolName:'infernex_host_exec',isError:false,result:{details,content:[{type:'text',text}]}});
  await emit('input',{source:'interactive',text:'diagnose timeout'});
+ await emit('tool_execution_end',{toolName:'infernex_classify_command',isError:false,result:{details:{executed:false},content:[{type:'text',text:'{"assessment":{"level":"read-only"}}'}]}});
  await emit('tool_execution_end',result({exitCode:1})); await ended();
  await emit('tool_execution_end',result({timedOut:true})); await ended();
  await emit('tool_execution_end',result({cancelled:true})); await ended();
@@ -312,4 +313,17 @@ test("full mode skips local report approval while cluster mutations still requir
  await assert.rejects(mock.tools.find(t=>t.name==='deploy_service')!.execute('2',{name:'model',confirm:true,risk:'safe'},undefined,undefined,ctx),/denied/);
  assert.equal(confirmations,1);
  installMockFetch();
+});
+
+test("full-access prompt directs exact-command preflight and fresh impact approval", async () => {
+ installMockFetch(); const mock=mockAPI(); await infernexExtension(mock.api);
+ const ctx={hasUI:true,isIdle:()=>true,ui:{notify:()=>{},setStatus:()=>{},confirm:async()=>true}};
+ await mock.commandHandlers.get('mode_change').handler('full',ctx);
+ const before=mock.handlers.get('before_agent_start')?.[0]; assert.ok(before);
+ const result=await before({systemPrompt:'base'},ctx) as {systemPrompt:string};
+ assert.match(result.systemPrompt,/exact command and its effects/);
+ assert.match(result.systemPrompt,/infernex_classify_command/);
+ assert.match(result.systemPrompt,/Invoke rule-automatic commands directly without asking for prose confirmation/);
+ assert.match(result.systemPrompt,/approval is not cached/);
+ assert.match(result.systemPrompt,/reversible operation can still restart services/);
 });

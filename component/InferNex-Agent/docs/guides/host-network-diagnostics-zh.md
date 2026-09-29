@@ -1,6 +1,6 @@
 # Host 权限切换与跨节点网络诊断
 
-本页描述 develop 新增能力，尚未包含在 alpha.13 安装包中。入口为 Pi TUI：
+本页描述 Host 权限和网络诊断能力；命令分类增强当前在 develop，尚未包含在已发布的 alpha.20 安装包中。入口为 Pi TUI：
 
 ```bash
 sudo /opt/infernex-agent/bin/tui.sh
@@ -12,6 +12,8 @@ sudo /opt/infernex-agent/bin/tui.sh
 /mode_change status
 /mode_change root
 /mode_change normal
+/mode_change root full
+/mode_change normal manual
 ```
 
 每次打开或恢复 TUI 默认 normal；root 不跨会话保存。切换先执行 `id -u` 验证，失败保持原模式；
@@ -28,7 +30,7 @@ normal 模式不会在执行失败后偷偷回退为 root；用户不具备 root
 
 TUI 控制进程仍由启动用户运行，模式约束的是本机工具命令的 OS 身份；这不是把整个控制进程变成
 一个抵御恶意扩展的隔离沙箱。Pi 内置文件/bash 工具被拦截，本机文件读写、搜索、SSH 和 kubectl
-统一经过 `infernex_host_exec`，避免 normal 模式绕过 UID 切换。每条命令展示完整预览并由本地终端批准。
+统一经过 `infernex_host_exec`，避免 normal 模式绕过 UID 切换。manual 模式逐次批准；full 模式依据实际命令分类自动执行已识别的只读和有界诊断，其他命令展示预览并由本地终端批准。
 大的输出进入现有 Artifact Store 分页读取，不直接灌入上下文。不会把模型密钥和 `BASH_ENV` 传入命令。
 
 后台 `infernex-agent.service` 继续使用原服务账户，执行模式 detect/diagnose/modify 等和 Kubernetes

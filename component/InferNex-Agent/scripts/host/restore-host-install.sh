@@ -175,11 +175,24 @@ case "$manifest_count" in
       /opt/infernex-agent/pi/host-tools.ts
     )
     ;;
+  24)
+    legacy_manifest="false"
+    host_targets=(
+      "${collector_host_targets[@]}"
+      /etc/infernex-agent/diagnostic-subagent-token
+      /opt/infernex-agent/tools
+      /opt/infernex-agent/pi/host-tools.ts
+      /opt/infernex-agent/pi/command-policy.ts
+    )
+    ;;
   *) bundle_die "recovery manifest has an unsupported target count" ;;
 esac
 if ((manifest_count < 23)); then
   # This module did not exist in older schemas; remove it when restoring them.
   host_targets+=(/opt/infernex-agent/pi/host-tools.ts)
+fi
+if ((manifest_count < 24)); then
+  host_targets+=(/opt/infernex-agent/pi/command-policy.ts)
 fi
 for target_index in "${!host_targets[@]}"; do
   target="${host_targets[$target_index]}"

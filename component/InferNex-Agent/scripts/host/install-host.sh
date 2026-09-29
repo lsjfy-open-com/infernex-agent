@@ -626,6 +626,7 @@ installed_pi_runtime="${install_root}/pi-runtime"
 installed_pi="${installed_pi_runtime}/pi"
 installed_pi_extension="${install_root}/pi/infernex.ts"
 installed_pi_host_tools="${install_root}/pi/host-tools.ts"
+installed_pi_command_policy="${install_root}/pi/command-policy.ts"
 installed_pi_license="${install_root}/pi/LICENSE.pi.txt"
 installed_tool_runtime="${install_root}/tools"
 installed_cli="/usr/local/bin/infernex-agent"
@@ -708,6 +709,7 @@ host_backup_targets=(
   "$installed_delegate_token"
   "$installed_tool_runtime"
   "$installed_pi_host_tools"
+  "$installed_pi_command_policy"
 )
 host_backup_manifest="${install_backup_root}/host/manifest"
 : >"$host_backup_manifest"
@@ -867,12 +869,17 @@ if [[ -n "$bundle_root" && -x "${bundle_root}/payload/pi-runtime/pi" &&
   else
     rm -f -- "$installed_pi_host_tools"
   fi
+  if [[ -f "${bundle_root}/pi/command-policy.ts" ]]; then
+    install -m 0644 -o root -g root "${bundle_root}/pi/command-policy.ts" "$installed_pi_command_policy"
+  else
+    rm -f -- "$installed_pi_command_policy"
+  fi
   install -m 0644 -o root -g root "${bundle_root}/pi/LICENSE.pi.txt" "$installed_pi_license"
 else
   if [[ -d "$installed_pi_runtime" ]]; then
     rm -rf -- "$installed_pi_runtime"
   fi
-  rm -f -- "$installed_pi_extension" "$installed_pi_host_tools" "$installed_pi_license"
+  rm -f -- "$installed_pi_extension" "$installed_pi_host_tools" "$installed_pi_command_policy" "$installed_pi_license"
 fi
 
 if [[ -n "$bundle_root" &&

@@ -37,14 +37,15 @@ test("HCCL benchmark validates topology, bytes and root launcher", () => {
 });
 
 test("mode command does not change identity when verification fails; builtins cannot bypass", async () => {
- const commands = new Map<string, any>(); const tools: any[] = []; const events = new Map<string, any>(); const notices: string[] = [];
- const state = registerHostTools({ registerCommand: (name: string, cmd: any) => commands.set(name, cmd), registerTool: (tool: any) => tools.push(tool), on: (name: string, cb: any) => events.set(name, cb) } as unknown as ExtensionAPI);
- const ctx = { hasUI: true, ui: { notify: (s: string) => notices.push(s), setStatus: () => {}, confirm: async () => false } };
+ const commands = new Map<string, any>(); const tools = new Map<string, any>(); const events = new Map<string, any>(); const notices: string[] = [], approvals: string[] = [];
+ const state = registerHostTools({ registerCommand: (name: string, cmd: any) => commands.set(name, cmd), registerTool: (tool: any) => tools.set(tool.name, tool), on: (name: string, cb: any) => events.set(name, cb) } as unknown as ExtensionAPI);
+ const ctx = { hasUI: true, ui: { notify: (s: string) => notices.push(s), setStatus: () => {}, confirm: async (_title: string, body: string) => { approvals.push(body); return false; } } };
  assert.equal(state.mode(), "normal");
  await commands.get("mode_change").handler("invalid", ctx);
  assert.equal(state.mode(), "normal");
  for (const toolName of ["bash", "read", "write", "edit", "grep", "find", "ls"]) assert.equal((await events.get("tool_call")({ toolName })).block, true);
- await assert.rejects(tools[0].execute("1", { command: "id" }, undefined, undefined, ctx), /denied/);
+ await assert.rejects(tools.get("infernex_host_exec").execute("1", { command: "id" }, undefined, undefined, ctx), /denied/);
+ assert.match(approvals[0], /Manual access requires operator approval for every host call/);
  if (process.getuid?.() !== 0) {
   await commands.get("mode_change").handler("root", ctx);
   assert.equal(state.mode(), "normal");
@@ -142,4 +143,57 @@ test("full access executes safe commands without dialogs but preserves gates and
  await commands.get('mode_change').handler('normal manual',ctx); assert.equal(state.mode(),'normal'); assert.equal(state.access(),'manual');
  await commands.get('mode_change').handler('full',{...ctx,hasUI:false}); assert.equal(state.access(),'manual');
  await commands.get('mode_change').handler('full',ctx); events.get('session_start')({},ctx); assert.equal(state.access(),'manual'); assert.equal(state.mode(),'normal');
+});
+
+test("host_exec combines deterministic risk with escalation-only model advice", async () => {
+ const commands = new Map<string,any>(), tools = new Map<string,any>();
+ const executed: string[] = [], previews: string[] = [];
+ const execute = async (mode: any, command: string) => { executed.push(command); return {mode,uid:1000,cwd:'/tmp',command,exitCode:0,stdout:'ok\n',stderr:'',truncated:false,timedOut:false,cancelled:false}; };
+ registerHostTools({registerCommand:(n:string,c:any)=>commands.set(n,c),registerTool:(t:any)=>tools.set(t.name,t),on:()=>{}} as unknown as ExtensionAPI, undefined, undefined, execute);
+ const ctx = {hasUI:true,isIdle:()=>true,ui:{notify:()=>{},setStatus:()=>{},confirm:async(_title:string,body:string)=>{previews.push(body);return false;}}};
+ await commands.get('mode_change').handler('full',ctx);
+ for (const command of [
+  'kubectl get pods -A',
+  'helm list -A',
+  'kubectl -n models logs pod-a --tail=100 | grep -i timeout | tail -n 20',
+ ]) {
+  const result = await tools.get('infernex_host_exec').execute('safe',{command},undefined,undefined,ctx);
+  assert.equal(result.details.approval,'automatic',command);
+  assert.ok(['read-only','bounded-diagnostic'].includes(result.details.ruleAssessment.level),command);
+ }
+ assert.equal(previews.length,0);
+
+ const advised = await tools.get('infernex_host_exec').execute('advised',{command:'id -u',riskAssessment:{level:'bounded-diagnostic',reason:'Identity inspection is bounded.'}},undefined,undefined,ctx);
+ assert.equal(advised.details.ruleAssessment.level,'read-only');
+ assert.equal(advised.details.modelAssessment.level,'bounded-diagnostic');
+ assert.equal(advised.details.approval,'automatic');
+
+ await assert.rejects(tools.get('infernex_host_exec').execute('unknown',{command:'custom-cluster-helper inspect'},undefined,undefined,ctx),/denied/);
+ await assert.rejects(tools.get('infernex_host_exec').execute('downgrade',{command:'kubectl delete pod pod-a',riskAssessment:{level:'read-only',reason:'The deletion is reversible.'}},undefined,undefined,ctx),/denied/);
+ await assert.rejects(tools.get('infernex_host_exec').execute('escalate',{command:'kubectl get pods -A',riskAssessment:{level:'cluster-change',reason:'This exact invocation is wrapped by an environment-specific mutating plugin.'}},undefined,undefined,ctx),/denied/);
+ assert.equal(executed.length,4);
+ assert.equal(previews.length,3);
+ assert.match(previews[0],/unknown/i);
+ assert.match(previews[1],/cluster-change/);
+ assert.match(previews[1],/reversible/);
+ assert.match(previews[2],/environment-specific/);
+});
+
+test("command preflight classifies without execution, confirmation, or command rewriting", async () => {
+ const commands = new Map<string,any>(), tools = new Map<string,any>();
+ let executions = 0, confirmations = 0;
+ const execute = async () => { executions++; throw new Error('preflight executed a command'); };
+ registerHostTools({registerCommand:(n:string,c:any)=>commands.set(n,c),registerTool:(t:any)=>tools.set(t.name,t),on:()=>{}} as unknown as ExtensionAPI, undefined, undefined, execute as any);
+ const ctx = {hasUI:true,isIdle:()=>true,ui:{notify:()=>{},setStatus:()=>{},confirm:async()=>{confirmations++;return true;}}};
+ await commands.get('mode_change').handler('full',ctx);
+ const command = 'kubectl get pods -A | grep Running';
+ const result = await tools.get('infernex_classify_command').execute('classify',{command},undefined,undefined,ctx);
+ const payload = JSON.parse(result.content[0].text);
+ assert.equal(payload.command,command);
+ assert.equal(payload.access,'full');
+ assert.match(payload.decision,/automatic/);
+ assert.equal(result.details.executed,false);
+ assert.equal(result.details.approvalRequested,false);
+ assert.equal(executions,0);
+ assert.equal(confirmations,0);
 });

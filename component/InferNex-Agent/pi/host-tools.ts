@@ -1,6 +1,9 @@
 import { execFileSync, spawn } from "node:child_process";
 import { userInfo } from "node:os";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { classifyHostCommand } from "./command-policy.ts";
+
+export { classifyHostCommand, readOnlyHostCommand } from "./command-policy.ts";
 
 export type HostMode = "normal" | "root";
 const safePath = "/opt/infernex-agent/tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/Ascend/driver/tools";
@@ -108,66 +111,35 @@ export function hcclCommand(input: { executable: string; ranks: number; devicesP
 }
 
 export type AccessMode = "manual" | "full";
+export type HostRiskAssessment = ReturnType<typeof classifyHostCommand>;
 
-// Deliberately parse a single simple command, not the shell language. Unknown
-// syntax, scripts, redirects and compound commands keep the operator gate.
-export function readOnlyHostCommand(command: string, depth = 0): boolean {
- if (depth > 2 || /[\x00-\x1f\x7f$`;|&<>\\*?{}\[\]!~]/.test(command)) return false;
- const words: string[] = [];
- let previous = 0;
- for (const match of command.matchAll(/'[^']*'|"[^"]*"|[^\s'"]+/g)) {
-  if (match.index! > previous && !/^\s+$/.test(command.slice(previous, match.index))) return false;
-  if (match.index === previous && previous !== 0) return false;
-  words.push(match[0].replace(/^(['"])(.*)\1$/, "$2"));
-  previous = match.index! + match[0].length;
+const riskLevels = new Set<HostRiskAssessment["level"]>(["read-only", "bounded-diagnostic", "cluster-change", "unknown"]);
+const automaticRiskLevels = new Set<HostRiskAssessment["level"]>(["read-only", "bounded-diagnostic"]);
+
+function ruleRiskAssessment(command: string): HostRiskAssessment {
+ try {
+  const assessment = classifyHostCommand(command);
+  if (riskLevels.has(assessment.level) && typeof assessment.reason === "string" && assessment.reason.trim()) return assessment;
+ } catch {}
+ return { level: "unknown", reason: "The deterministic command policy could not classify this command." };
+}
+
+function modelRiskAssessment(value: unknown): HostRiskAssessment | undefined {
+ if (value === undefined) return undefined;
+ if (!value || typeof value !== "object") return { level: "unknown", reason: "Model risk assessment was malformed." };
+ const assessment = value as { level?: unknown; reason?: unknown };
+ if (!riskLevels.has(assessment.level as HostRiskAssessment["level"]) || typeof assessment.reason !== "string" || !assessment.reason.trim() || assessment.reason.length > 1000) {
+  return { level: "unknown", reason: "Model risk assessment was malformed or exceeded the 1000-character reason limit." };
  }
- if (!/^\s*$/.test(command.slice(previous)) || !words.length) return false;
- const [raw, ...args] = words;
- if (raw.includes("/") && !/^\/(?:usr\/)?bin\/[a-z0-9_-]+$/.test(raw)) return false;
- const executable = raw.split("/").at(-1)!;
- if (args.some(a => a.startsWith("/dev/") || a === "/proc/kcore")) return false;
- const flags = (allowed: RegExp) => args.every(a => !a.startsWith("-") || allowed.test(a));
- switch (executable) {
-  case "id": return args.length === 0 || (args.length === 1 && /^-[ugGn]$/.test(args[0]));
-  case "uname": return flags(/^-[asnrvmop]+$/);
-  case "hostname": case "uptime": case "whoami": return args.length === 0;
-  case "sleep": return args.length === 1 && /^[0-9]+(?:\.[0-9]+)?$/.test(args[0]) && Number(args[0]) > 0 && Number(args[0]) <= 60;
-  case "date": return args.length === 0 || (args.length === 1 && args[0] === "-u");
-  case "ls": return flags(/^(?:--|-[lahndtSr]+|--color=never)$/);
-  case "cat": return args.length > 0 && flags(/^(?:--|-[nbsETv]+)$/);
-  case "head": case "tail": return flags(/^(?:--|-[nc]|-[nc]?[0-9]+)$/);
-  case "grep": return flags(/^(?:--|-[nEiFHv]+|-[ABC][0-9]+)$/);
-  case "ps": return args.length === 0 || (args.length === 1 && ["aux", "-ef", "-e"].includes(args[0]));
-  case "ip": return ["-brief address", "address show", "addr show", "route show", "route show table all", "link show"].includes(args.join(" "));
-  case "ss": return args.length === 1 && /^-[santulp]+$/.test(args[0]);
-  case "nstat": return args.join(" ") === "-az";
-  case "rdma": return ["link show", "statistic show"].includes(args.join(" "));
-  case "ethtool": return args.length === 2 && args[0] === "-S" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,14}$/.test(args[1]);
-  case "ssh": {
-   // No caller-supplied SSH options (ProxyCommand, forwarding, config files).
-   if (!/^[a-zA-Z0-9][a-zA-Z0-9._@:-]{0,252}$/.test(args[0] || "") || args.length < 2) return false;
-   return readOnlyHostCommand(args.slice(1).join(" "), depth + 1);
-  }
-  case "kubectl": {
-   let index = 0;
-   while (["-n", "--namespace", "--context"].includes(args[index])) {
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]*$/.test(args[index+1] || "")) return false;
-    index += 2;
-   }
-   const verb = args[index++], rest = args.slice(index);
-   if (verb === "exec") {
-    const separator = rest.indexOf("--");
-    if (separator < 1) return false;
-    const prefix = rest.slice(0,separator);
-    if (!/^[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(prefix[0])) return false;
-    if (prefix.length !== 1 && !(prefix.length === 3 && prefix[1] === "-c" && /^[a-zA-Z0-9][a-zA-Z0-9.-]*$/.test(prefix[2]))) return false;
-    return readOnlyHostCommand(rest.slice(separator+1).join(" "), depth+1);
-   }
-   if (!["get", "describe", "logs", "top", "version", "api-resources"].includes(verb)) return false;
-   return rest.every(a => !a.startsWith("-") || /^(?:-A|--all-namespaces|--previous|-p|--timestamps|--all-containers|--no-headers|-n|--namespace|-c|--container|-l|--selector|-o|--output|--tail|--since|--limit-bytes|--field-selector)(?:=[a-zA-Z0-9_.,:/=-]+)?$/.test(a));
-  }
-  default: return false;
- }
+ return { level: assessment.level as HostRiskAssessment["level"], reason: assessment.reason.trim() };
+}
+
+export function hostCommandDecision(command: string, advisory?: unknown) {
+ const ruleAssessment = ruleRiskAssessment(command);
+ const modelAssessment = modelRiskAssessment(advisory);
+ const ruleRequiresApproval = !automaticRiskLevels.has(ruleAssessment.level);
+ const modelEscalates = modelAssessment?.level === "cluster-change" || modelAssessment?.level === "unknown";
+ return { ruleAssessment, modelAssessment, requiresApproval: ruleRequiresApproval || modelEscalates };
 }
 
 // Explicit local-only mutations. Unknown MCP writes always retain approval;
@@ -186,7 +158,7 @@ export function needsHostApproval(access: AccessMode, name: string, input: any):
  if (access !== "full") return true;
  if (name === "infernex_sample_pfc") return false;
  if (name === "infernex_network_probe") return !["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats"].includes(input.probe);
- if (name === "infernex_host_exec") return !readOnlyHostCommand(input.command);
+ if (name === "infernex_host_exec") return hostCommandDecision(input.command, input.riskAssessment).requiresApproval;
  return true; // HCCL benchmarks, future tools, and unknown commands.
 }
 
@@ -221,6 +193,27 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 	pi.on("tool_call", async (event) => {
 		if (["bash", "read", "write", "edit", "grep", "find", "ls"].includes(event.toolName)) return { block: true, reason: "Use infernex_host_exec so /mode_change controls the actual command UID" };
 	});
+	pi.registerTool({
+		...renderer?.("命令风险预检"),
+		name: "infernex_classify_command",
+		label: "Classify host command",
+		description: "Classify an exact host shell command with the local deterministic policy without executing it or requesting approval. Use this before host_exec when command syntax or impact is uncertain; it never rewrites the command.",
+		parameters: { type: "object", properties: { command: { type: "string", minLength: 1, maxLength: 32768 } }, required: ["command"], additionalProperties: false } as any,
+		async execute(_id, params) {
+			const command = (params as { command: string }).command;
+			if (typeof command !== "string" || !command.trim() || command.length > 32768) throw new Error("command is required and must be at most 32768 characters");
+			const assessment = ruleRiskAssessment(command);
+			const requiresApproval = access !== "full" || !automaticRiskLevels.has(assessment.level);
+			const decision = requiresApproval ? "operator-approval-required" : "automatic-in-full-access";
+			const advice = automaticRiskLevels.has(assessment.level)
+				? "Use the exact command with infernex_host_exec. In full access, do not ask for prose confirmation before invoking it."
+				: "If the intended operation is diagnostic, prefer a recognized read-only command or a typed bounded diagnostic tool. Do not rewrite or execute this command automatically.";
+			return {
+				content: [{ type: "text", text: JSON.stringify({ command, assessment, access, decision, advice }) }],
+				details: { access, decision, ruleAssessment: assessment, executed: false, approvalRequested: false },
+			};
+		},
+	});
 	const register = (name: string, description: string, properties: Record<string, unknown>, required: string[], build: (input: any, selected: HostMode) => string, defaultTimeout: number) => {
 		pi.registerTool({ ...renderer?.(({ infernex_host_exec: "本机命令", infernex_network_probe: "网络探测", infernex_sample_pfc: "PFC 采样", infernex_run_hccl_test: "HCCL 测试" } as Record<string, string>)[name] || name), name, label: name, description, parameters: { type: "object", properties: { ...properties, timeoutSeconds: { type: "integer", minimum: 1, maximum: 600 } }, required, additionalProperties: false } as any,
 			async execute(_id, params, signal, _update, ctx) {
@@ -230,17 +223,24 @@ export function registerHostTools(pi: ExtensionAPI, formatResult: (text: string)
 				const selected = mode;
 				try {
 					const command = build(params, selected);
+					const commandDecision = name === "infernex_host_exec" ? hostCommandDecision(command, (params as any).riskAssessment) : undefined;
 					const requiresApproval = needsHostApproval(access, name, params);
- if (requiresApproval && !await ctx.ui.confirm(`Run ${name} · ${modeLabel()}`, `${command}\n\n人工判定：此操作可能改变运行状态、产生压测负载，或无法可靠判定影响。`)) { denied = true; throw new Error("Operator denied host command; do not retry or bypass this decision"); }
+					const policyReason = commandDecision
+						? `规则判定 ${commandDecision.ruleAssessment.level}: ${commandDecision.ruleAssessment.reason}${commandDecision.modelAssessment ? `\n模型建议 ${commandDecision.modelAssessment.level}: ${commandDecision.modelAssessment.reason}` : ""}`
+						: name === "infernex_run_hccl_test" ? "HCCL benchmark consumes NPU and network resources and can affect running workloads."
+						: name === "infernex_network_probe" ? "This network probe generates traffic or is outside the bounded diagnostic allowlist."
+						: "This operation may change running state, generate diagnostic load, or is outside the automatic policy.";
+					const reason = `${access === "manual" ? "Manual access requires operator approval for every host call.\n" : ""}${policyReason}`;
+ if (requiresApproval && !await ctx.ui.confirm(`Run ${name} · ${modeLabel()}`, `${command}\n\n${reason}`)) { denied = true; throw new Error("Operator denied host command; do not retry or bypass this decision"); }
 					const output = await executeCommand(selected, command, (params as any).timeoutSeconds ?? defaultTimeout, signal, normalUser, rootWorkspace);
 					const formatted = await formatResult(JSON.stringify(output));
-					return { content: [{ type: "text", text: formatted.text }], details: { access, approval: requiresApproval ? "operator" : "automatic", mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
+					return { content: [{ type: "text", text: formatted.text }], details: { access, approval: requiresApproval ? "operator" : "automatic", ruleAssessment: commandDecision?.ruleAssessment, modelAssessment: commandDecision?.modelAssessment, mode: output.mode, uid: output.uid, exitCode: output.exitCode, timedOut: output.timedOut, cancelled: output.cancelled, truncated: output.truncated } };
 				} finally { busy--; }
 			},
 		});
 	};
 	const string = { type: "string" }, number = { type: "integer" };
-	register("infernex_host_exec", "Execute an approved host shell command as the current /mode_change user. Supports SSH, kubectl exec/plog, files and installed diagnostic tools. Returns actual local UID, command, exit code and bounded output; never assume remote UID or RBAC from local mode.", { command: string }, ["command"], input => input.command, 60);
+	register("infernex_host_exec", "Execute a host shell command as the current /mode_change user. Deterministic policy auto-runs recognized read-only and bounded diagnostic commands in full access; cluster-changing and unknown commands require approval. riskAssessment is an optional model advisory that may escalate but never downgrade the rule decision. Returns actual local UID, command, exit code and bounded output; never assume remote UID or RBAC from local mode.", { command: string, riskAssessment: { type: "object", properties: { level: { enum: ["read-only", "bounded-diagnostic", "cluster-change", "unknown"] }, reason: { type: "string", minLength: 1, maxLength: 1000 } }, required: ["level", "reason"], additionalProperties: false } }, ["command"], input => input.command, 60);
 	register("infernex_network_probe", "Inspect addresses, routes, sockets, TCP/RDMA counters, DNS, ping, traceroute, TCP connectivity or ethtool statistics locally or via SSH. iperf-client generates 10 seconds of traffic. Tools must be installed on the execution target.", { probe: { enum: ["addresses", "routes", "sockets", "tcp-counters", "rdma-links", "rdma-counters", "ping", "dns", "traceroute", "tcp-connect", "ethtool-stats", "iperf-client"] }, target: string, port: number, iface: string, sshTarget: string }, ["probe"], networkCommand, 60);
 	register("infernex_sample_pfc", "Collect timestamped hccn_tool -stat -g snapshots for selected devices locally or over SSH. Compare counter deltas; a nonzero lifetime counter alone does not prove current backpressure. Raw fields vary by driver. Long Pod collection remains available through CollectorRun.", { deviceIds: { type: "array", items: number, minItems: 1, maxItems: 64 }, samples: number, intervalSeconds: number, sshTarget: string }, ["deviceIds"], pfcCommand, 600);
 	register("infernex_run_hccl_test", "Run an approved HCCL collective benchmark using installed mpirun and an explicit test binary. Consumes NPU/network resources. Optional hostfile enables multi-node execution; optional CANN setupScript prepares libraries. Timeout stops the local process group; verify remote MPI ranks have exited before retrying. Exit success alone is not a performance acceptance result.", { executable: string, ranks: number, devicesPerNode: number, minBytes: number, maxBytes: number, hostfile: string, setupScript: string }, ["executable", "ranks", "devicesPerNode"], hcclCommand, 300);
