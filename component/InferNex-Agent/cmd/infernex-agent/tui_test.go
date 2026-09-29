@@ -62,6 +62,10 @@ func TestPreparePiStateUsesEnvironmentCredentialReference(t *testing.T) {
 	if hidden, ok := settings["hideThinkingBlock"].(bool); !ok || !hidden {
 		t.Fatalf("hideThinkingBlock=%#v, want true", settings["hideThinkingBlock"])
 	}
+	compaction, ok := settings["compaction"].(map[string]any)
+	if !ok || compaction["enabled"] != true || compaction["reserveTokens"] != float64(13108) || compaction["keepRecentTokens"] != float64(20000) {
+		t.Fatalf("compaction=%#v", settings["compaction"])
+	}
 	artifactInfo, err := os.Stat(filepath.Join(dir, "artifacts"))
 	if err != nil || !artifactInfo.IsDir() {
 		t.Fatalf("artifact directory is unavailable: info=%v err=%v", artifactInfo, err)
@@ -104,11 +108,24 @@ func TestPreparePiStateUsesPlaceholderForKeylessLocalEndpoint(t *testing.T) {
 	if settings["hideThinkingBlock"] != false {
 		t.Fatalf("visible display settings=%#v", settings)
 	}
+	compaction, ok := settings["compaction"].(map[string]any)
+	if !ok || compaction["enabled"] != true || compaction["reserveTokens"] != float64(8192) || compaction["keepRecentTokens"] != float64(12288) {
+		t.Fatalf("default compaction=%#v", settings["compaction"])
+	}
 }
 
 func TestPreparePiStatePreservesUnrelatedSettings(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte("{\"theme\":\"light\",\"hideThinkingBlock\":false}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(`{
+  "theme": "light",
+  "hideThinkingBlock": false,
+  "compaction": {
+    "enabled": false,
+    "reserveTokens": 1,
+    "keepRecentTokens": 2,
+    "strategy": "durable"
+  }
+}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := preparePiState(dir, modelFileOptions{baseURL: "http://model.internal:8000/v1", model: "ops-model"}, "", "hidden"); err != nil {
@@ -124,6 +141,56 @@ func TestPreparePiStatePreservesUnrelatedSettings(t *testing.T) {
 	}
 	if settings["theme"] != "light" || settings["hideThinkingBlock"] != true {
 		t.Fatalf("settings=%#v", settings)
+	}
+	compaction, ok := settings["compaction"].(map[string]any)
+	if !ok || compaction["enabled"] != true || compaction["reserveTokens"] != float64(8192) || compaction["keepRecentTokens"] != float64(12288) || compaction["strategy"] != "durable" {
+		t.Fatalf("migrated compaction=%#v", settings["compaction"])
+	}
+}
+
+func TestResolvePiCompactionSettings(t *testing.T) {
+	tests := []struct {
+		name          string
+		opts          modelFileOptions
+		reserveTokens int
+		keepRecent    int
+		threshold     string
+	}{
+		{
+			name:          "default 32K window uses output budget floor",
+			reserveTokens: 8192, keepRecent: 12288, threshold: "75",
+		},
+		{
+			name:          "explicit threshold",
+			opts:          modelFileOptions{contextWindowTokens: 65536, maxOutputTokens: 8192, contextThreshold: 75},
+			reserveTokens: 16384, keepRecent: 20000, threshold: "75",
+		},
+		{
+			name:          "large window caps recent context at Pi default",
+			opts:          modelFileOptions{contextWindowTokens: 200000, maxOutputTokens: 8192, contextThreshold: 80},
+			reserveTokens: 40000, keepRecent: 20000, threshold: "80",
+		},
+		{
+			name:          "small window rounds reserve up and leaves compressible history",
+			opts:          modelFileOptions{contextWindowTokens: 4096, maxOutputTokens: 512, contextThreshold: 80},
+			reserveTokens: 820, keepRecent: 1638, threshold: "79.98046875",
+		},
+		{
+			name:          "large output budget lowers effective trigger",
+			opts:          modelFileOptions{contextWindowTokens: 65536, maxOutputTokens: 16384, contextThreshold: 90},
+			reserveTokens: 16384, keepRecent: 20000, threshold: "75",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := resolvePiCompactionSettings(test.opts)
+			if !got.Enabled || got.ReserveTokens != test.reserveTokens || got.KeepRecentTokens != test.keepRecent {
+				t.Fatalf("settings=%#v, want reserve=%d keepRecent=%d enabled", got, test.reserveTokens, test.keepRecent)
+			}
+			if threshold := piCompactionThreshold(test.opts); threshold != test.threshold {
+				t.Fatalf("effective threshold=%q, want %q", threshold, test.threshold)
+			}
+		})
 	}
 }
 

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import infernexExtension, { registerAutonomousTask } from "./infernex.ts";
+import infernexExtension, { registerAutonomousTask, registerTurnBoundaryCompaction } from "./infernex.ts";
 
 type RegisteredTool = {
 	name: string;
@@ -18,12 +20,14 @@ function mockAPI() {
 	const commands: string[] = [];
  const commandHandlers = new Map<string, any>();
  const sent: any[] = [];
+	const users: any[] = [];
 	const events: string[] = [];
 	const handlers = new Map<string, Array<(...args: any[]) => unknown>>();
 	return {
 		tools,
 		api: {
  sendMessage: (...args: any[]) => sent.push(args),
+			sendUserMessage: (...args: any[]) => users.push(args),
 			registerTool(tool: RegisteredTool) {
 				tools.push(tool);
 			},
@@ -38,7 +42,7 @@ function mockAPI() {
 				handlers.set(name, registered);
 			},
 		} as unknown as ExtensionAPI,
-		commands, commandHandlers, sent,
+		commands, commandHandlers, sent, users,
 		events,
 		handlers,
 	};
@@ -249,6 +253,217 @@ test("Pi's real tool execution component renders a single content row and expand
  assert.match(expanded, /long command/); assert.match(expanded, /network-counter=123/);
  component.setExpanded(false);
  assert.equal(component.render(60).filter(line => line.trim()).length, 1);
+});
+
+test("tool-loop boundary compaction is single-flight and resumes only after success", async () => {
+ const mock = mockAPI();
+ const state = registerTurnBoundaryCompaction(mock.api, 80);
+ let callbacks: any; let compactCalls = 0; let percent: number | null = 96;
+ const statuses: Array<string | undefined> = [];
+ const ctx: any = {
+  signal: new AbortController().signal, isIdle: () => true, hasPendingMessages: () => false,
+  getContextUsage: () => ({tokens: percent === null ? null : 960, contextWindow: 1000, percent}),
+  compact: (options: any) => { compactCalls++; callbacks = options; },
+  ui: {setStatus: (_key: string, value: string | undefined) => statuses.push(value), notify() {}},
+ };
+ const emit = async(name: string, event: any) => {
+  const results = [];
+  for (const handler of mock.handlers.get(name) || []) results.push(await handler(event, ctx));
+  return results;
+ };
+ const boundary = {message: {role: "assistant", stopReason: "toolUse"}, toolResults: [{role: "toolResult"}]};
+ await emit("turn_end", boundary); await emit("turn_end", boundary);
+ assert.equal(compactCalls, 1); assert.equal(state.isActive(), true);
+ assert.deepEqual((await emit("session_before_compact", {reason: "threshold"}))[0], {cancel: true});
+ assert.equal((await emit("session_before_compact", {reason: "manual"}))[0], undefined);
+ percent = null; callbacks.onComplete({summary: "probe finished"}); callbacks.onComplete({summary: "duplicate"});
+ await new Promise(resolve => setTimeout(resolve, 10));
+ assert.equal(state.isActive(), false); assert.equal(mock.sent.length, 1);
+ assert.deepEqual(mock.sent[0][1], {triggerTurn: true, deliverAs: "followUp"});
+ assert.match(mock.sent[0][0].content, /compacted context/);
+ assert.equal(statuses.at(-1), undefined);
+});
+
+test("input racing with compaction is replayed, while newer user intent takes priority", async () => {
+ const mock = mockAPI(); let callbacks: any; let pending = false; const notices: string[] = [];
+ registerTurnBoundaryCompaction(mock.api, 80);
+ const ctx: any = {
+  signal: new AbortController().signal, isIdle: () => true, hasPendingMessages: () => pending,
+  getContextUsage: () => ({tokens: 960, contextWindow: 1000, percent: 96}),
+  compact: (options: any) => { callbacks = options; }, ui: {setStatus() {}, notify: (message: string) => notices.push(message)},
+ };
+ const emit = async(name: string, event: any) => {
+  const results = [];
+  for (const handler of mock.handlers.get(name) || []) results.push(await handler(event, ctx));
+  return results;
+ };
+ const ordinary = await emit("input", {source: "interactive", text: "ordinary steering", streamingBehavior: "steer"});
+ assert.equal(ordinary[0], undefined);
+ await emit("turn_end", {message: {role: "assistant", stopReason: "stop"}, toolResults: []});
+ assert.equal(callbacks, undefined, "input must not be captured when no boundary compaction will own it");
+
+ await emit("turn_end", {message: {role: "assistant", stopReason: "toolUse"}, toolResults: [{}]});
+ assert.ok(callbacks);
+ const firstImage = {type: "image", data: "first", mimeType: "image/png"};
+ const secondImage = {type: "image", data: "second", mimeType: "image/png"};
+ const racing = await emit("input", {source: "interactive", text: "new target while compacting", images: [firstImage], streamingBehavior: "steer"});
+ assert.deepEqual(racing[0], {action: "handled"});
+ const second = await emit("input", {source: "interactive", text: "second target", images: [secondImage], streamingBehavior: "followUp"});
+ assert.deepEqual(second[0], {action: "handled"});
+ callbacks.onComplete({summary: "done"}); await new Promise(resolve => setTimeout(resolve, 10));
+ assert.equal(mock.sent.length, 0); assert.equal(mock.users.length, 1);
+ assert.deepEqual(mock.users[0], [[
+  {type: "text", text: "new target while compacting"}, firstImage,
+  {type: "text", text: "second target"}, secondImage,
+ ], {deliverAs: "steer"}]);
+
+ callbacks = undefined; await emit("turn_end", {message: {role: "assistant", stopReason: "toolUse"}, toolResults: [{}]});
+ await emit("input", {source: "interactive", text: "preserve this target", streamingBehavior: "followUp"});
+ pending = true; callbacks.onComplete({summary: "done again"}); await new Promise(resolve => setTimeout(resolve, 10));
+ assert.equal(mock.users.length, 2); assert.equal(mock.sent.length, 0);
+ assert.deepEqual(mock.users[1], ["preserve this target", {deliverAs: "followUp"}]);
+
+ pending = false; callbacks = undefined;
+ await emit("turn_end", {message: {role: "assistant", stopReason: "toolUse"}, toolResults: [{}]});
+ await emit("input", {source: "interactive", text: "older queued target", streamingBehavior: "followUp"});
+ callbacks.onComplete({summary: "done before stop"});
+ await emit("input", {source: "interactive", text: "stop"});
+ await new Promise(resolve => setTimeout(resolve, 10));
+ assert.equal(mock.users.length, 2, "a newer user action must block replay of older held input");
+ assert.equal(mock.sent.length, 1);
+ assert.match(mock.sent[0][0].content, /Not executed.*older queued target/s);
+ assert.match(notices.at(-1) || "", /preserved but not executed/);
+});
+
+test("boundary compaction failure, cancellation, user input and pending input never force a continuation", async (t) => {
+ for (const scenario of ["failure", "cancel", "new-input", "pending-input", "aborted-signal"] as const) {
+  await t.test(scenario, async () => {
+   const mock = mockAPI(); let callbacks: any; let pending = false; const notices: string[] = [];
+   registerTurnBoundaryCompaction(mock.api, 80);
+   const controller = new AbortController(); if (scenario === "aborted-signal") controller.abort();
+   const ctx: any = {
+    signal: controller.signal, isIdle: () => true, hasPendingMessages: () => pending,
+    getContextUsage: () => ({tokens: 960, contextWindow: 1000, percent: 96}),
+    compact: (options: any) => { callbacks = options; },
+    ui: {setStatus() {}, notify: (message: string) => notices.push(message)},
+   };
+   const emit = async(name: string, event: any) => {
+    for (const handler of mock.handlers.get(name) || []) await handler(event, ctx);
+   };
+   await emit("turn_end", {message: {role: "assistant", stopReason: "toolUse"}, toolResults: [{}]});
+   if (scenario === "aborted-signal") { assert.equal(callbacks, undefined); return; }
+   if (scenario === "failure" || scenario === "cancel") {
+    await emit("input", {source: "interactive", text: `${scenario} held input`, streamingBehavior: "steer"});
+    callbacks.onError(new Error(scenario === "cancel" ? "Compaction cancelled" : "summary endpoint unavailable"));
+   }
+   else {
+    if (scenario === "new-input") await emit("input", {source: "interactive", text: "stop"});
+    if (scenario === "pending-input") pending = true;
+    callbacks.onComplete({summary: "done"});
+   }
+   await new Promise(resolve => setTimeout(resolve, 10));
+   assert.equal(mock.sent.length, scenario === "failure" || scenario === "cancel" ? 1 : 0);
+   if (mock.sent.length) assert.match(mock.sent[0][0].content, /Not executed.*held input/s);
+   assert.equal(mock.users.length, 0);
+   if (scenario === "failure") assert.match(notices.at(-1) || "", /failed/);
+   if (scenario === "cancel") assert.match(notices.at(-1) || "", /cancelled/);
+  });
+ }
+});
+
+test("pinned Pi AgentSession compacts the real tool loop without duplicate continuation or deadlock", async (t) => {
+ const codingAgentEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
+ const codingAgentRoot = dirname(dirname(codingAgentEntry));
+ const dependency = (name: string) => pathToFileURL(join(codingAgentRoot, "..", name, "dist", "index.js")).href;
+ const [coding, ai] = await Promise.all([import(pathToFileURL(codingAgentEntry).href), import(dependency("pi-ai"))]);
+
+ for (const summaryFails of [false, true]) {
+  await t.test(summaryFails ? "summary failure stops and preserves held input" : "queued steering resumes from one compaction", async () => {
+   const timeline: string[] = []; const notifications: string[] = []; const compactionStarts: string[] = [];
+   const provider = `boundary-session-${summaryFails ? "failure" : "success"}-${Date.now()}-${Math.random()}`;
+   const faux = ai.fauxProvider({provider, models: [{id: "boundary", contextWindow: 1000, maxTokens: 200}]});
+   faux.setResponses([
+    () => { timeline.push("model:tool"); return ai.fauxAssistantMessage(ai.fauxToolCall("probe", {}, {id: "probe-1"}), {stopReason: "toolUse"}); },
+    (context: any) => {
+     assert.match(JSON.stringify(context.messages), /queued correction/); timeline.push("model:steered");
+     return ai.fauxAssistantMessage(ai.fauxToolCall("checkpoint", {}, {id: "checkpoint-1"}), {stopReason: "toolUse"});
+    },
+    () => {
+     timeline.push("model:summary");
+     return summaryFails
+      ? ai.fauxAssistantMessage([], {stopReason: "error", errorMessage: "summary endpoint unavailable"})
+      : ai.fauxAssistantMessage("Summary: probe completed and queued correction remains the next instruction.");
+    },
+    () => { timeline.push("model:turn-prefix-summary"); return ai.fauxAssistantMessage("Turn prefix: queued correction requested the checkpoint."); },
+    (context: any) => {
+     const serialized = JSON.stringify(context.messages);
+     assert.match(serialized, /Summary: probe completed/); assert.match(serialized, /queued correction/);
+     timeline.push("model:continued"); return ai.fauxAssistantMessage("task complete");
+    },
+   ]);
+   const modelRuntime = await coding.ModelRuntime.create({refreshOnCreate: false, modelsPath: null});
+   modelRuntime.registerNativeProvider(faux.provider); await modelRuntime.setRuntimeApiKey(provider, "test");
+   const settingsManager = coding.SettingsManager.inMemory({
+    retry: {enabled: false}, compaction: {enabled: true, reserveTokens: 200, keepRecentTokens: 0},
+   });
+   let releaseTool!: () => void; let finishTool!: () => void;
+   const toolStarted = new Promise<void>(resolve => { releaseTool = resolve; });
+   const toolMayFinish = new Promise<void>(resolve => { finishTool = resolve; });
+   let toolRuns = 0;
+   const probe = {
+    name: "probe", label: "probe", description: "bounded diagnostic probe", parameters: {type: "object", properties: {}},
+    execute: async () => { toolRuns++; timeline.push("tool:probe"); releaseTool(); await toolMayFinish; return {content: [{type: "text", text: "probe completed"}], details: {}}; },
+   };
+   const checkpoint = {
+    name: "checkpoint", label: "checkpoint", description: "record the next diagnostic step", parameters: {type: "object", properties: {}},
+    execute: async () => { toolRuns++; timeline.push("tool:checkpoint"); return {content: [{type: "text", text: "checkpoint recorded"}], details: {}}; },
+   };
+   const resourceLoader = new coding.DefaultResourceLoader({
+    cwd: process.cwd(), agentDir: process.cwd(), settingsManager,
+    extensionFactories: [(pi: ExtensionAPI) => registerTurnBoundaryCompaction(pi, 80)],
+    skillsOverride: () => ({skills: [], diagnostics: []}), agentsFilesOverride: () => ({agentsFiles: []}),
+    promptsOverride: () => ({prompts: [], diagnostics: []}),
+   });
+   await resourceLoader.reload();
+   const {session} = await coding.createAgentSession({
+    cwd: process.cwd(), agentDir: process.cwd(), model: faux.getModel(), modelRuntime, resourceLoader, settingsManager,
+    sessionManager: coding.SessionManager.inMemory(), customTools: [probe, checkpoint], tools: ["probe", "checkpoint"],
+   });
+   await session.bindExtensions({mode: "tui", uiContext: {
+    setStatus() {}, notify(message: string) { notifications.push(message); },
+   } as any});
+   let agentEnds = 0; let manualCompactionEnded = false; let finalRunEnded = summaryFails;
+   let settle!: () => void;
+   const settled = new Promise<void>(resolve => { settle = resolve; });
+   session.subscribe((event: any) => {
+    if (event.type === "agent_end") { agentEnds++; if (!summaryFails && agentEnds === 2) finalRunEnded = true; }
+    if (event.type === "compaction_start") compactionStarts.push(event.reason);
+    if (event.type === "compaction_end" && event.reason === "manual") {
+     manualCompactionEnded = true;
+     if (event.result) settingsManager.setCompactionEnabled(false);
+    }
+    if (manualCompactionEnded && finalRunEnded && !session.isStreaming && !session.isCompacting) settle();
+   });
+   try {
+    const initialRun = session.prompt("x".repeat(4000));
+    await toolStarted;
+    await session.prompt("queued correction", {streamingBehavior: "steer"});
+    finishTool(); await initialRun;
+    await Promise.race([settled, new Promise((_, reject) => setTimeout(() => reject(new Error(`AgentSession compaction timed out: ${JSON.stringify({timeline, compactionStarts, agentEnds, streaming: session.isStreaming, compacting: session.isCompacting, calls: faux.state.callCount})}`)), 3000))]);
+
+    assert.equal(toolRuns, 2); assert.equal(session.isStreaming, false); assert.equal(session.isCompacting, false);
+    assert.ok(compactionStarts.includes("manual"), JSON.stringify({compactionStarts, timeline}));
+    assert.equal(session.sessionManager.getBranch().filter((entry: any) => entry.type === "compaction").length, summaryFails ? 0 : 1);
+    if (summaryFails) {
+     assert.equal(faux.state.callCount, 3); assert.match(notifications.at(-1) || "", /failed/);
+     assert.match(JSON.stringify(session.sessionManager.getBranch()), /queued correction/);
+    } else {
+     assert.equal(faux.state.callCount, 5, "two tool turns, two split-summary calls, and one resumed turn only");
+     assert.deepEqual(timeline, ["model:tool", "tool:probe", "model:steered", "tool:checkpoint", "model:summary", "model:turn-prefix-summary", "model:continued"]);
+    }
+   } finally { session.dispose(); }
+  });
+ }
 });
 
 test("continuous tasks resume progress endings but respect completion, blockers, cancel and denial", async () => {

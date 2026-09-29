@@ -1,5 +1,17 @@
 # InferNex Agent 上下文管理
 
+## Pi TUI 与兼容终端的区别
+
+默认 `infernex-agent chat` 使用 Pi TUI；`chat --classic` 使用兼容 Go 终端。两者的运行循环不同，下面“默认策略”及其后各节描述的是兼容终端，不能据此认为 Pi 已使用同一套预算检查。
+
+本次 develop 修复（尚未包含在 alpha.21 安装包）补齐 Pi 的配置与工具循环检查：启动 TUI 时，将 `/etc/infernex-agent/agent.conf` 中的上下文窗口、输出预算和 `context-compaction-threshold` 同步为 Pi 模型与压缩设置。默认百分比为 80%；若输出预留需要更多空间，会提前触发。例如 32,768 窗口、8,192 输出预算时，最迟在输入约占 75% 时触发。保留的近期上下文也会随可用窗口缩小，避免小窗口沿用 Pi 固定的 20,000 token 保留量。
+
+连续工具调用在每批工具完成后的边界检查上下文占用，先完成摘要压缩，再继续原任务。工具结果和未完成事项通过 Pi 的会话摘要保留；不会为了压缩重新执行已完成的工具。压缩失败或取消时暂停自动续行并显示原因，用户可处理模型接口问题后使用 `/compact`。压缩不改变 `normal/root` 身份或 `manual/full/risk` 审批策略。
+
+升级后需重开 TUI 才会同步新设置。窗口应填写实际模型或网关支持的上下文大小；TUI 百分比仍依赖服务端 usage 与本地估算，不能把错误的窗口配置当作可用容量。现场验收可连续执行有界只读查询，确认达到阈值后出现压缩提示、摘要后原任务继续、已完成工具不重复执行，并验证取消压缩不会自行恢复执行。
+
+详见 [Pi TUI 使用与边界](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/pi-tui-zh.md)。
+
 InferNex Agent 不会把整个对话和所有日志无限追加后直接发给模型。交互终端为每个会话维护
 明确的 token 预算，在每次模型调用前执行预算、压缩和硬上限检查。
 

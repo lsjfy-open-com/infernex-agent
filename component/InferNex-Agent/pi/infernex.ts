@@ -22,6 +22,10 @@ type MCPResponse<T> = {
 	error?: { code: number; message: string; data?: unknown };
 };
 
+type BoundaryCompactionState = {
+	isActive(): boolean;
+};
+
 const endpoint = process.env.INFERNEX_MCP_URL || "http://127.0.0.1:8080/mcp";
 const artifactThresholdBytes = 16 * 1024;
 const artifactPreviewBytes = 4 * 1024;
@@ -164,10 +168,154 @@ function successfulToolEvidence(event: { isError: boolean; result?: any }): bool
   (typeof payload.exitCode === "number" && payload.exitCode !== 0));
 }
 
+function configuredCompactionThreshold(): number {
+	const configured = Number(process.env.INFERNEX_CONTEXT_COMPACTION_THRESHOLD ?? "80");
+	return Number.isFinite(configured) && configured > 0 && configured < 100 ? configured : 80;
+}
+
+const boundaryContinuation =
+	"Context compaction completed at a tool-loop boundary. Continue the current user task from the compacted context. Do not repeat completed tool actions; inspect the summary and proceed with the next necessary step.";
+
+// Pi 0.84.1 checks its built-in threshold only after agent_end. A model that
+// keeps requesting tools never reaches that check, so stop it after the current
+// tool batch and use Pi's public compaction API before resuming exactly once.
+export function registerTurnBoundaryCompaction(
+	pi: ExtensionAPI,
+	thresholdPercent = configuredCompactionThreshold(),
+	resumeAllowed: () => boolean = () => true,
+): BoundaryCompactionState {
+	let compacting = false;
+	let operation = 0;
+	let inputGeneration = 0;
+	let heldInputs: Array<{ text: string; images?: any[]; deliverAs: "steer" | "followUp" }> = [];
+
+	const reset = () => {
+		compacting = false;
+		operation += 1;
+		inputGeneration += 1;
+		heldInputs = [];
+	};
+	const preserveWithoutRunning = (inputs: typeof heldInputs) => {
+		for (const input of inputs) {
+			const text = `Not executed because context compaction stopped. Resubmit when ready:\n\n${input.text}`;
+			pi.sendMessage({
+				customType: "infernex-compaction-held-input",
+				display: true,
+				content: input.images?.length ? [{ type: "text", text }, ...input.images] : text,
+			});
+		}
+	};
+	pi.on("session_start", reset);
+	pi.on("input", (event, ctx) => {
+		if (event.source === "extension") return;
+		if (compacting && event.streamingBehavior) {
+			heldInputs.push({ text: event.text, images: event.images, deliverAs: event.streamingBehavior });
+			return { action: "handled" };
+		}
+		inputGeneration += 1;
+	});
+	pi.on("session_before_compact", (event) => {
+		// compact() first aborts and waits for the active run. Older Pi runtimes
+		// may concurrently reach their post-agent auto check; let only our manual
+		// compaction own this boundary.
+		if (compacting && event.reason !== "manual") return { cancel: true };
+	});
+	pi.on("turn_end", (event, ctx) => {
+		if (compacting || event.toolResults.length === 0 || ctx.signal?.aborted || ctx.hasPendingMessages() || !resumeAllowed()) return;
+		const message = event.message as { stopReason?: string; errorMessage?: string };
+		if (["aborted", "error", "length"].includes(message.stopReason || "") || message.errorMessage) return;
+		const usage = ctx.getContextUsage();
+		if (usage?.percent === null || usage?.percent === undefined || usage.percent < thresholdPercent) return;
+
+		compacting = true;
+		const currentOperation = ++operation;
+		const generationAtStart = inputGeneration;
+		ctx.ui.setStatus("infernex-compaction", `InferNex context · compacting at ${usage.percent.toFixed(1)}%`);
+		try {
+			ctx.compact({
+				onComplete: () => {
+					if (!compacting || operation !== currentOperation) return;
+					compacting = false;
+					ctx.ui.setStatus("infernex-compaction", undefined);
+					const inputsToReplay = heldInputs;
+					heldInputs = [];
+					// Pi's TUI flushes messages entered during compaction from its own
+					// queue on compaction_end. Yield once so that user input wins and
+					// does not receive a duplicate automatic continuation.
+					setTimeout(() => {
+						if (operation !== currentOperation) return;
+						if (inputGeneration !== generationAtStart || !resumeAllowed()) {
+							if (inputsToReplay.length > 0) {
+								preserveWithoutRunning(inputsToReplay);
+								ctx.ui.notify(
+									`Automatic continuation stopped because a newer user action or pause took priority. ${inputsToReplay.length} queued message${inputsToReplay.length === 1 ? " was" : "s were"} preserved but not executed; resubmit when ready.`,
+									"warning",
+								);
+							}
+							return;
+						}
+						if (inputsToReplay.length > 0) {
+							const hasImages = inputsToReplay.some((input) => input.images?.length);
+							const content = hasImages
+								? inputsToReplay.flatMap((input) => [{ type: "text" as const, text: input.text }, ...(input.images ?? [])])
+								: inputsToReplay.map((input) => input.text).join("\n\n");
+							const deliverAs = inputsToReplay.some((input) => input.deliverAs === "steer") ? "steer" : "followUp";
+							pi.sendUserMessage(content, { deliverAs });
+							return;
+						}
+						if (!ctx.isIdle() || ctx.hasPendingMessages()) {
+							return;
+						}
+						pi.sendMessage(
+							{ customType: "infernex-compaction-continue", display: false, content: boundaryContinuation },
+							{ triggerTurn: true, deliverAs: "followUp" },
+						);
+					}, 0);
+				},
+				onError: (error) => {
+					if (!compacting || operation !== currentOperation) return;
+					compacting = false;
+					operation += 1;
+					ctx.ui.setStatus("infernex-compaction", undefined);
+					const preservedCount = heldInputs.length;
+					preserveWithoutRunning(heldInputs);
+					heldInputs = [];
+					const cancelled = /cancel/i.test(error.message);
+					ctx.ui.notify(
+						(cancelled
+							? "Context compaction was cancelled; automatic continuation stopped."
+							: `Context compaction failed; automatic continuation stopped: ${error.message}`) +
+							(preservedCount > 0 ? ` ${preservedCount} queued message${preservedCount === 1 ? " was" : "s were"} preserved but not executed; resubmit when ready.` : ""),
+						cancelled ? "warning" : "error",
+					);
+				},
+			});
+		} catch (error) {
+			compacting = false;
+			operation += 1;
+			ctx.ui.setStatus("infernex-compaction", undefined);
+			const preservedCount = heldInputs.length;
+			preserveWithoutRunning(heldInputs);
+			heldInputs = [];
+			ctx.ui.notify(
+				`Context compaction failed; automatic continuation stopped: ${error instanceof Error ? error.message : String(error)}` +
+					(preservedCount > 0 ? ` ${preservedCount} queued message${preservedCount === 1 ? " was" : "s were"} preserved but not executed; resubmit when ready.` : ""),
+				"error",
+			);
+		}
+	});
+
+	return { isActive: () => compacting };
+}
+
 // An explicit completion checkpoint keeps a partial report from silently ending
 // a continuous-access task. Cancellation, denial and terminal model errors never queue
 // a continuation. Three endings without new tool evidence pause a stuck model.
-export function registerAutonomousTask(pi: ExtensionAPI, host: Pick<ReturnType<typeof registerHostTools>, "access" | "wasDenied" | "resetDenied">) {
+export function registerAutonomousTask(
+	pi: ExtensionAPI,
+	host: Pick<ReturnType<typeof registerHostTools>, "access" | "wasDenied" | "resetDenied">,
+	boundaryCompaction?: BoundaryCompactionState,
+) {
  let active = false, paused = false, stagnant = 0, progress = false;
  const seen = new Set<string>();
  const continuous = () => host.access() === "full" || host.access() === "risk";
@@ -194,6 +342,7 @@ export function registerAutonomousTask(pi: ExtensionAPI, host: Pick<ReturnType<t
  });
  pi.on("agent_end", (event, ctx) => {
   if (!active || paused || host.wasDenied() || !continuous() || !ctx.hasUI) return;
+	 if (boundaryCompaction?.isActive()) return;
   const last = [...event.messages].reverse().find(m => m.role === "assistant") as { stopReason?: string; errorMessage?: string } | undefined;
   if (ctx.signal?.aborted || !last || last.stopReason === "aborted" || last.stopReason === "error" || last.errorMessage) { active = false; return; }
   if (ctx.hasPendingMessages?.()) return;
@@ -204,7 +353,7 @@ export function registerAutonomousTask(pi: ExtensionAPI, host: Pick<ReturnType<t
    : "Continue the current user task in full-access mode. A progress report is not task completion. Use available low-impact tools without asking permission. Keep operator approval for cluster-impacting or unclassified operations. Do not bypass a denial. Once all requested work and verification are complete, call infernex_task_status complete with a factual summary, then give the final report. For a concrete missing input/external blocker call blocked and explain it.";
   pi.sendMessage({ customType: "infernex-task-continue", display: false, content }, { triggerTurn: true, deliverAs: "followUp" });
  });
- return { pause: () => { paused = true; } };
+	return { pause: () => { paused = true; }, canResume: () => !paused && !host.wasDenied() };
 }
 
 export default async function infernexExtension(pi: ExtensionAPI, executeCommand: typeof runHostCommand = runHostCommand) {
@@ -324,7 +473,9 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 		if (bounded.artifact) artifactsCreated++;
 		return bounded;
 	}, compactToolRenderer, executeCommand);
- const autonomous = registerAutonomousTask(pi, host);
+	let boundaryCompaction: BoundaryCompactionState | undefined;
+	const autonomous = registerAutonomousTask(pi, host, { isActive: () => boundaryCompaction?.isActive() ?? false });
+	boundaryCompaction = registerTurnBoundaryCompaction(pi, undefined, () => autonomous.canResume());
 
 	pi.registerCommand("infernex-tools", {
 		description: "Show the InferNex tools loaded into this TUI session",

@@ -13,15 +13,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 const (
-	defaultPiBinary         = "/opt/infernex-agent/pi-runtime/pi"
-	defaultPiExtension      = "/opt/infernex-agent/pi/infernex.ts"
-	defaultPiStateDir       = "/var/lib/infernex-agent/pi"
-	defaultToolBinDir       = "/opt/infernex-agent/tools/bin"
-	defaultReasoningDisplay = "hidden"
+	defaultPiBinary                     = "/opt/infernex-agent/pi-runtime/pi"
+	defaultPiExtension                  = "/opt/infernex-agent/pi/infernex.ts"
+	defaultPiStateDir                   = "/var/lib/infernex-agent/pi"
+	defaultToolBinDir                   = "/opt/infernex-agent/tools/bin"
+	defaultReasoningDisplay             = "hidden"
+	defaultPiCompactionThresholdPercent = 80
+	defaultPiKeepRecentTokens           = 20000
 )
 
 type tuiOptions struct {
@@ -72,6 +75,12 @@ type piModelCompat struct {
 	MaxTokensField          string `json:"maxTokensField"`
 }
 
+type piCompactionSettings struct {
+	Enabled          bool `json:"enabled"`
+	ReserveTokens    int  `json:"reserveTokens"`
+	KeepRecentTokens int  `json:"keepRecentTokens"`
+}
+
 func runTUI(args []string) error {
 	opts, modelOpts, apiKey, err := parseTUIOptions(args)
 	if err != nil {
@@ -88,6 +97,7 @@ func runTUI(args []string) error {
 		"PI_CODING_AGENT_DIR="+opts.stateDir,
 		"INFERNEX_PI_API_KEY="+apiKey,
 		"INFERNEX_MCP_URL="+opts.mcpURL,
+		"INFERNEX_CONTEXT_COMPACTION_THRESHOLD="+piCompactionThreshold(modelOpts),
 		"INFERNEX_ARTIFACT_DIR="+filepath.Join(opts.stateDir, "artifacts"),
 		"INFERNEX_WORKSPACE_ROOT="+workspaceDir,
 		"INFERNEX_HOST_USER="+opts.hostUser,
@@ -309,7 +319,7 @@ func preparePiState(stateDir string, modelOpts modelFileOptions, apiKey, reasoni
 	if err := os.Rename(temporaryPath, filepath.Join(stateDir, "models.json")); err != nil {
 		return fmt.Errorf("activate Pi model configuration: %w", err)
 	}
-	return writePiDisplaySettings(stateDir, reasoningDisplay)
+	return writePiSettings(stateDir, reasoningDisplay, resolvePiCompactionSettings(modelOpts))
 }
 
 func normalizeReasoningDisplay(value string) (string, error) {
@@ -323,7 +333,47 @@ func normalizeReasoningDisplay(value string) (string, error) {
 	return value, nil
 }
 
-func writePiDisplaySettings(stateDir, reasoningDisplay string) error {
+func resolvePiCompactionSettings(modelOpts modelFileOptions) piCompactionSettings {
+	contextWindow := modelOpts.contextWindowTokens
+	if contextWindow <= 0 {
+		contextWindow = 32768
+	}
+	maxOutputTokens := modelOpts.maxOutputTokens
+	if maxOutputTokens <= 0 {
+		maxOutputTokens = 8192
+	}
+	threshold := modelOpts.contextThreshold
+	if threshold <= 0 {
+		threshold = defaultPiCompactionThresholdPercent
+	}
+	// Pi compacts after context usage crosses window-reserveTokens. Round the
+	// requested percentage down to a safe token budget and always leave room
+	// for the model's configured maximum response.
+	thresholdReserve := (contextWindow*(100-threshold) + 99) / 100
+	reserveTokens := max(thresholdReserve, maxOutputTokens)
+	availableTokens := max(contextWindow-reserveTokens, 0)
+	// Pi's 20K default is larger than the useful pre-trigger history on small
+	// models. Keeping at most half that budget leaves older history to summarize.
+	keepRecentTokens := min(defaultPiKeepRecentTokens, availableTokens/2)
+	return piCompactionSettings{
+		Enabled:          true,
+		ReserveTokens:    reserveTokens,
+		KeepRecentTokens: keepRecentTokens,
+	}
+}
+
+func piCompactionThreshold(modelOpts modelFileOptions) string {
+	contextWindow := modelOpts.contextWindowTokens
+	if contextWindow <= 0 {
+		contextWindow = 32768
+	}
+	settings := resolvePiCompactionSettings(modelOpts)
+	availableTokens := max(contextWindow-settings.ReserveTokens, 0)
+	percent := float64(availableTokens) * 100 / float64(contextWindow)
+	return strconv.FormatFloat(percent, 'f', -1, 64)
+}
+
+func writePiSettings(stateDir, reasoningDisplay string, compaction piCompactionSettings) error {
 	path := filepath.Join(stateDir, "settings.json")
 	settings := map[string]any{}
 	payload, err := os.ReadFile(path)
@@ -335,6 +385,14 @@ func writePiDisplaySettings(stateDir, reasoningDisplay string) error {
 		return fmt.Errorf("read existing Pi settings: %w", err)
 	}
 	settings["hideThinkingBlock"] = reasoningDisplay == "hidden"
+	compactionSettings, _ := settings["compaction"].(map[string]any)
+	if compactionSettings == nil {
+		compactionSettings = map[string]any{}
+	}
+	compactionSettings["enabled"] = compaction.Enabled
+	compactionSettings["reserveTokens"] = compaction.ReserveTokens
+	compactionSettings["keepRecentTokens"] = compaction.KeepRecentTokens
+	settings["compaction"] = compactionSettings
 	encoded, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode Pi settings: %w", err)
