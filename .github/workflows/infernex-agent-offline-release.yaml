@@ -404,27 +404,60 @@ jobs:
             echo "Tag ${tag} already exists; refusing to overwrite it."
             exit 1
           fi
+
+          abandoned_release_id=398786788
+          abandoned_target=387ee52c0c5dcad1524eb0c70b44e399597ef858
+          abandoned_response="${RUNNER_TEMP}/abandoned-release-response.txt"
+          abandoned_error="${RUNNER_TEMP}/abandoned-release-error.txt"
+          if [[ "${VERSION}" == "0.5.0-alpha.21" ]]; then
+            if gh api --include \
+              "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}" \
+              >"${abandoned_response}" 2>"${abandoned_error}"; then
+              abandoned_status="$(awk 'NR == 1 {print $2}' "${abandoned_response}")"
+              test "${abandoned_status}" = 200
+              abandoned_state="$(
+                gh api "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}"
+              )"
+              jq -e \
+                --argjson id "${abandoned_release_id}" \
+                --arg tag "${tag}" \
+                --arg target "${abandoned_target}" \
+                '.id == $id and .draft == true and .tag_name == $tag and
+                 .target_commitish == $target and (.assets | length == 0)' \
+                <<<"${abandoned_state}" >/dev/null
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}"
+            else
+              abandoned_status="$(awk 'NR == 1 {print $2}' "${abandoned_response}")"
+              if [[ "${abandoned_status}" == 404 ]]; then
+                echo "Abandoned release ${abandoned_release_id} is already absent."
+              else
+                cat "${abandoned_error}" >&2
+                echo "Could not inspect abandoned release ${abandoned_release_id}; refusing cleanup."
+                exit 1
+              fi
+            fi
+          fi
+
           existing_release_id="$(
             gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${tag}\") | .id"
+              --jq ".[] | select(.tag_name == \"${tag}\" and .id != ${abandoned_release_id}) | .id"
           )"
           if [[ -n "${existing_release_id}" ]]; then
             echo "Release ${tag} already exists; refusing to overwrite it."
             exit 1
           fi
 
-          gh release create "${tag}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --target "${GITHUB_SHA}" \
-            --draft \
-            --prerelease \
-            --title "InferNex Agent v${VERSION}" \
-            --notes-file "${RUNNER_TEMP}/release-notes.md"
-          release_id="$(
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${tag}\") | .id"
+          create_response="$(
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \
+              -f tag_name="${tag}" \
+              -f target_commitish="${GITHUB_SHA}" \
+              -f name="InferNex Agent v${VERSION}" \
+              -F body=@"${RUNNER_TEMP}/release-notes.md" \
+              -F draft=true \
+              -F prerelease=true
           )"
-          test -n "${release_id}"
+          release_id="$(jq -er '.id | numbers' <<<"${create_response}")"
           published=false
           cleanup_draft() {
             if [[ "${published}" != true ]]; then
@@ -434,18 +467,54 @@ jobs:
                 echo "Could not confirm draft state; preserving release ${release_id}."
                 return 0
               fi
-              if jq -e '.draft == true' <<<"${release_state}" >/dev/null; then
+              if jq -e \
+                --argjson id "${release_id}" \
+                --arg tag "${tag}" \
+                --arg target "${GITHUB_SHA}" \
+                '.id == $id and .draft == true and .tag_name == $tag and
+                 .target_commitish == $target' \
+                <<<"${release_state}" >/dev/null; then
                 gh api --method DELETE \
                   "repos/${GITHUB_REPOSITORY}/releases/${release_id}" || true
               else
-                echo "Release ${release_id} is not a draft; preserving it."
+                echo "Release ${release_id} is not the expected draft; preserving it."
               fi
             fi
           }
           trap cleanup_draft EXIT
 
-          gh release upload "${tag}" release-assets/* \
-            --repo "${GITHUB_REPOSITORY}"
+          upload_url="$(jq -er '.upload_url | strings' <<<"${create_response}")"
+          upload_base="${upload_url%%\{*}"
+          release_state="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+          )"
+          jq -e \
+            --argjson id "${release_id}" \
+            --arg tag "${tag}" \
+            --arg target "${GITHUB_SHA}" \
+            '.id == $id and .draft == true and .prerelease == true and
+             .tag_name == $tag and .target_commitish == $target and
+             (.assets | length == 0)' \
+            <<<"${release_state}" >/dev/null
+
+          for local_asset in release-assets/*; do
+            asset_name="$(basename "${local_asset}")"
+            local_size="$(stat -c %s "${local_asset}")"
+            local_digest="sha256:$(sha256sum "${local_asset}" | awk '{print $1}')"
+            upload_response="$(
+              gh api --method POST \
+                -H 'Content-Type: application/octet-stream' \
+                --input "${local_asset}" \
+                "${upload_base}?name=${asset_name}"
+            )"
+            jq -e \
+              --arg name "${asset_name}" \
+              --argjson size "${local_size}" \
+              --arg digest "${local_digest}" \
+              '.name == $name and .size == $size and .digest == $digest and
+               .state == "uploaded"' \
+              <<<"${upload_response}" >/dev/null
+          done
 
           gh api "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
             >"${RUNNER_TEMP}/remote-assets.json"
@@ -480,6 +549,11 @@ jobs:
             test "${remote_digest}" = "${local_digest}"
             gh api -H 'Accept: application/octet-stream' "${remote_url}" \
               >"${RUNNER_TEMP}/downloaded-release-assets/${asset_name}"
+            downloaded_digest="sha256:$(
+              sha256sum "${RUNNER_TEMP}/downloaded-release-assets/${asset_name}" |
+                awk '{print $1}'
+            )"
+            test "${downloaded_digest}" = "${local_digest}"
           done
 
           test "$(find "${RUNNER_TEMP}/downloaded-release-assets" -maxdepth 1 -type f | wc -l)" -eq 4
