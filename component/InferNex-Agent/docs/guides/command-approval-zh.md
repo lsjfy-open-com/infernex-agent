@@ -1,6 +1,6 @@
 # Host manual / full / risk 模式与命令审批
 
-本次增强位于 develop，尚未包含在已发布的 alpha.20 安装包中。它修复常见 Kubernetes 查询因为参数位置、输出格式或只读管道未被识别而反复弹出审批的问题。适用于 Host Pi TUI，不改变后台服务的 Kubernetes RBAC 或集群变更保护；risk 模式可以取消当前 TUI 的 Host 和 MCP 逐次批准。
+命令分类增强与 `root risk` 已包含在 alpha.21 安装包中。它修复常见 Kubernetes 查询因为参数位置、输出格式或只读管道未被识别而反复弹出审批的问题。适用于 Host Pi TUI，不改变后台服务的 Kubernetes RBAC 或集群变更保护；risk 模式可以取消当前 TUI 的 Host 和 MCP 逐次批准。
 
 ```text
 /mode_change root full

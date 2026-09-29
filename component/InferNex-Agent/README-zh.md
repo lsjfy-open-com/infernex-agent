@@ -1,8 +1,8 @@
-> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.20 只新增 D1 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.21 增强 Host TUI 命令分类与显式 `root risk` 模式，并保留 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
-alpha.20 新增同构单实例 Profile 的只读资源规划，并保留 alpha.19 的无参数 kubeconfig 自动发现、alpha.18 的 Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；规划方式和边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
+alpha.21 改进常用只读命令分类并新增当前会话显式取消逐次批准的 `root risk`，同时保留 alpha.20 的同构单实例 Profile 只读资源规划、无参数 kubeconfig 自动发现、Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；规划方式和边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
 
 [English](README.md) | 简体中文
 
@@ -41,7 +41,7 @@ Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的�
 联网安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.20/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.20 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.21/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.21 bash
 ```
 
 离线安装：
@@ -104,11 +104,11 @@ exec 从容器挂载与 CANN/NPU 兼容根发现日志，保存 Pod 元信息、
 Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 采集任务有持续时间和最大字节上限，停止任务不会删除证据，也不会 patch 或注入业务 Pod。
 
-`agent/pi-agent-foundation` 分支正在并行验证基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
-token/context 状态和流式工具展示，同时继续由现有 Go 服务执行受控 MCP 工具、审批和回退。详见
+当前发布包已集成基于 Pi 的完整 TUI，复用其 Session 恢复、上下文压缩、
+token/context 状态和流式工具展示，同时继续由 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/guides/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 [`v0.5.0-alpha.20`](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.20)（双架构安装包已发布，硬件现场仍待验证；继承 alpha.12 功能并整合部署/恢复保护与只读资源规划），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
+当前 Pi TUI 默认入口测试包为 [`v0.5.0-alpha.21`](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.21)（Linux 身份与双架构安装包门禁已完成，硬件现场仍待验证；整合部署/恢复保护、只读资源规划、命令分类与显式 `root risk`），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 
@@ -132,7 +132,7 @@ Agent 的知识库描述 InferNex 组件关系、常见故障模式、稳定变�
 
 ## Web 与持续扫描
 
-alpha.20 保留 alpha.18 的 Dashboard 默认值：新安装监听 `0.0.0.0:8081`，浏览器访问 `http://<管理节点 IP>:8081/`，无需 SSH 隧道。MCP 和诊断子代理继续默认监听本机回环地址。升级时保留已有 Dashboard 地址；旧安装若仍为 `127.0.0.1`，需显式配置 `--dashboard-listen-address 0.0.0.0:8081`。
+alpha.21 保留 alpha.18 的 Dashboard 默认值：新安装监听 `0.0.0.0:8081`，浏览器访问 `http://<管理节点 IP>:8081/`，无需 SSH 隧道。MCP 和诊断子代理继续默认监听本机回环地址。升级时保留已有 Dashboard 地址；旧安装若仍为 `127.0.0.1`，需显式配置 `--dashboard-listen-address 0.0.0.0:8081`。
 
 页面展示原生 Kubernetes 工作负载概览，以及已启用的 Bridge 巡检和实验。无 Bridge、没有匹配资源、权限不足和接口失败会分别提示。Dashboard 是只读页面，无内置登录，应通过管理网或现有认证入口控制访问；不会自动修改主机防火墙。
 

@@ -1,6 +1,6 @@
 # Host 权限切换与跨节点网络诊断
 
-本页描述 Host 权限和网络诊断能力；命令分类增强当前在 develop，尚未包含在已发布的 alpha.20 安装包中。入口为 Pi TUI：
+本页描述 Host 权限和网络诊断能力；命令分类增强与 `root risk` 已包含在 alpha.21 安装包中。入口为 Pi TUI：
 
 ```bash
 sudo /opt/infernex-agent/bin/tui.sh
