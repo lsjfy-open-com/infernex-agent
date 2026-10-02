@@ -18,6 +18,8 @@ import (
 	"net/http"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/experiment"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
 )
 
@@ -30,7 +32,23 @@ type ExperimentReader interface {
 }
 
 type options struct {
-	experiments ExperimentReader
+	experiments   ExperimentReader
+	kubernetes    KubernetesReader
+	namespaces    []string
+	publicSummary bool
+	management    ManagementInfo
+}
+
+// ManagementInfo describes where the operator can find the local inputs used
+// by the dashboard's SLO and version views. It intentionally contains paths
+// and summaries only; it never reads or publishes profile prompts, endpoints,
+// credentials, or configuration contents.
+type ManagementInfo struct {
+	AgentConfigPath        string        `json:"agentConfigPath,omitempty"`
+	SLOProfileDirectory    string        `json:"sloProfileDirectory,omitempty"`
+	ConfigVersionDirectory string        `json:"configVersionDirectory,omitempty"`
+	SLOEnabled             bool          `json:"sloEnabled"`
+	SLOProfiles            []slo.Summary `json:"sloProfiles"`
 }
 
 type Option func(*options)
@@ -40,6 +58,53 @@ func WithExperiments(reader ExperimentReader) Option {
 		options.experiments = reader
 	}
 }
+func WithKubernetes(reader KubernetesReader, namespaces []string) Option {
+	return func(o *options) { o.kubernetes = reader; o.namespaces = append([]string(nil), namespaces...) }
+}
+func WithPublicSummary(enabled bool) Option { return func(o *options) { o.publicSummary = enabled } }
+func WithManagementInfo(info ManagementInfo) Option {
+	return func(o *options) {
+		info.SLOProfiles = append([]slo.Summary(nil), info.SLOProfiles...)
+		o.management = info
+	}
+}
+func writeJSON(w http.ResponseWriter, value any) {
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(true)
+	if err := encoder.Encode(value); err != nil {
+		http.Error(w, "encode response", http.StatusInternalServerError)
+	}
+}
+func publicSnapshot(source supervisor.Snapshot) supervisor.Snapshot {
+	out := supervisor.Snapshot{Version: source.Version, StartedAt: source.StartedAt, GeneratedAt: source.GeneratedAt, ScanInterval: source.ScanInterval, ScanDurationMs: source.ScanDurationMs, Ready: source.Ready, AnalyzerEnabled: source.AnalyzerEnabled, Summary: source.Summary, Namespaces: make([]supervisor.NamespaceSnapshot, 0, len(source.Namespaces))}
+	for _, ns := range source.Namespaces {
+		safe := supervisor.NamespaceSnapshot{Name: ns.Name, ScannedAt: ns.ScannedAt, Truncated: ns.Truncated, Total: ns.Total, ScanMillis: ns.ScanMillis, Services: make([]supervisor.ServiceSnapshot, 0, len(ns.Services))}
+		if ns.Error != "" {
+			safe.Error = "巡检请求失败"
+		}
+		for _, item := range ns.Services {
+			service := item.Detail.Service
+			safe.Services = append(safe.Services, supervisor.ServiceSnapshot{Detail: observer.ServiceDetail{Service: observer.ServiceSummary{Namespace: service.Namespace, Name: service.Name, Mode: service.Mode, Ready: service.Ready, Generation: service.Generation, ObservedGeneration: service.ObservedGeneration}}})
+		}
+		out.Namespaces = append(out.Namespaces, safe)
+	}
+	return out
+}
+func publicExperiments(source []experiment.Plan) []experiment.Plan {
+	out := make([]experiment.Plan, 0, len(source))
+	for _, plan := range source {
+		safe := experiment.Plan{ID: plan.ID, Namespace: plan.Namespace, BaselineName: plan.BaselineName, CandidatePrefix: plan.CandidatePrefix, FeatureProfiles: append([]string(nil), plan.FeatureProfiles...), SLOProfile: plan.SLOProfile, SLOGateMode: plan.SLOGateMode, Status: plan.Status, CurrentStage: plan.CurrentStage, StableService: plan.StableService, CreatedAt: plan.CreatedAt, UpdatedAt: plan.UpdatedAt, Stages: make([]experiment.Stage, 0, len(plan.Stages))}
+		for _, stage := range plan.Stages {
+			item := experiment.Stage{Index: stage.Index, FeatureProfile: stage.FeatureProfile, BaselineName: stage.BaselineName, CandidateName: stage.CandidateName, Status: stage.Status, StartedAt: stage.StartedAt, ReadyAt: stage.ReadyAt, CompletedAt: stage.CompletedAt}
+			if stage.SLO != nil {
+				item.SLO = &slo.Result{RunID: stage.SLO.RunID, Decision: stage.SLO.Decision, Baseline: stage.SLO.Baseline, Candidate: stage.SLO.Candidate, EvidenceSHA256: stage.SLO.EvidenceSHA256}
+			}
+			safe.Stages = append(safe.Stages, item)
+		}
+		out = append(out, safe)
+	}
+	return out
+}
 
 func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
 	configuration := options{}
@@ -47,6 +112,15 @@ func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
 		option(&configuration)
 	}
 	mux := http.NewServeMux()
+	if configuration.kubernetes != nil {
+		cache := newNativeCache(configuration.kubernetes, configuration.namespaces)
+		mux.HandleFunc("/api/v1/kubernetes", cache.serve)
+	}
+	mux.HandleFunc("/api/v1/management", func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		response.Header().Set("Cache-Control", "no-store")
+		writeJSON(response, configuration.management)
+	})
 	mux.HandleFunc("/", func(response http.ResponseWriter, request *http.Request) {
 		if request.URL.Path != "/" {
 			http.NotFound(response, request)
@@ -61,7 +135,11 @@ func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
 		response.Header().Set("Cache-Control", "no-store")
 		encoder := json.NewEncoder(response)
 		encoder.SetEscapeHTML(true)
-		if err := encoder.Encode(reader.Load()); err != nil {
+		data := reader.Load()
+		if configuration.publicSummary {
+			data = publicSnapshot(data)
+		}
+		if err := encoder.Encode(data); err != nil {
 			http.Error(response, "encode snapshot", http.StatusInternalServerError)
 		}
 	})
@@ -76,6 +154,9 @@ func New(reader SnapshotReader, optionFunctions ...Option) http.Handler {
 				http.Error(response, "list experiments", http.StatusInternalServerError)
 				return
 			}
+		}
+		if configuration.publicSummary {
+			plans = publicExperiments(plans)
 		}
 		encoder := json.NewEncoder(response)
 		encoder.SetEscapeHTML(true)
@@ -188,6 +269,9 @@ const indexHTML = `<!doctype html>
     .analysis { margin-top: 13px; padding: 13px; border: 1px solid rgba(53, 208, 186, .27); border-radius: 10px; background: rgba(53, 208, 186, .055); }
     .analysis-title { color: var(--accent); font-weight: 700; margin-bottom: 5px; }
     .analysis-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+	.live-yaml { margin-top: 12px; }
+	.live-yaml summary { cursor: pointer; color: var(--accent); }
+	.live-yaml pre { overflow: auto; max-height: 440px; margin: 10px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
 	.experiment-stages { margin-top: 10px; }
     .error { color: var(--critical); }
     .empty { padding: 38px; text-align: center; color: var(--muted); }
@@ -208,11 +292,13 @@ const indexHTML = `<!doctype html>
   <header>
     <div>
       <h1>InferNex <span>Agent</span></h1>
-      <p class="subtitle">PD 推理服务持续巡检、证据汇总与分析建议</p>
+      <p class="subtitle">Kubernetes 与推理服务概览</p>
     </div>
     <div class="connection"><span id="dot" class="dot"></span><span id="connection">正在连接</span></div>
   </header>
   <section id="metrics" class="metrics"></section>
+  <section id="management"></section>
+  <section id="native"><div class="empty">正在读取 Kubernetes 工作负载…</div></section>
 	<section id="experiments"></section>
   <section id="content"><div class="empty">等待首次巡检结果…</div></section>
   <footer id="footer"></footer>
@@ -232,24 +318,50 @@ const indexHTML = `<!doctype html>
   };
   const badge = (text, tone) => el("span", "badge " + (tone || ""), text);
   const fmtTime = value => value ? new Date(value).toLocaleString() : "尚未完成";
+	const expandedYAML = new Set();
+
+  function renderManagement(data) {
+    const root = byId("management");
+    root.replaceChildren();
+    const section = el("section", "namespace");
+    section.append(el("h2", "", "Agent 管理入口"));
+    const rows = el("div", "services");
+    const slo = el("article", "service");
+    slo.append(el("h3", "", "SLO 对照实验"));
+    slo.append(el("div", "meta", data.sloEnabled ? "已启用：仅使用管理员批准的 profile" : "未启用：实验不会发送 SLO 请求"));
+    if (data.sloProfileDirectory) slo.append(el("div", "meta", "profile 目录：" + data.sloProfileDirectory));
+    const profiles = data.sloProfiles || [];
+    slo.append(el("div", "meta", "可用 profile：" + (profiles.length ? profiles.map(p => p.id + " · " + p.version).join("，") : "无")));
+    rows.append(slo);
+    const versions = el("article", "service");
+    versions.append(el("h3", "", "配置版本记录（CLI）"));
+    versions.append(el("div", "meta", "记录目录：" + (data.configVersionDirectory || "未配置")));
+    versions.append(el("div", "meta", "使用 host CLI：infernex-agent config-version list/show/verify"));
+    rows.append(versions);
+    section.append(rows);
+    root.append(section);
+  }
 
   function render(data) {
     const summary = data.summary || {};
     const metrics = byId("metrics");
-    metrics.replaceChildren(
-      metric(summary.services, "服务"),
+    const bridgeNamespaces = data.namespaces || [];
+    metrics.replaceChildren(...(bridgeNamespaces.length ? [
+      metric(summary.services, "Bridge 服务"),
       metric(summary.readyServices, "健康", "good"),
       metric(summary.degradedServices, "异常", summary.degradedServices ? "critical" : ""),
       metric(summary.issues, "问题"),
       metric(summary.criticalIssues, "严重", summary.criticalIssues ? "critical" : ""),
-      metric(summary.warningIssues, "告警", summary.warningIssues ? "warning" : "")
-    );
+      metric(summary.warningIssues, "Bridge 告警", summary.warningIssues ? "warning" : "")
+    ] : []));
 
     const content = byId("content");
     content.replaceChildren();
     const namespaces = data.namespaces || [];
-    if (!data.ready || namespaces.length === 0) {
-      content.append(el("div", "empty", "等待首次巡检结果…"));
+    if (!data.ready) {
+      content.append(el("div", "empty", "等待首次 InferNexService 巡检结果…"));
+    } else if (namespaces.length === 0) {
+      content.append(el("div", "empty", "Bridge 巡检未配置；上方仍显示原生 Kubernetes 工作负载。"));
     }
     for (const ns of namespaces) {
       const section = el("section", "namespace");
@@ -271,7 +383,7 @@ const indexHTML = `<!doctype html>
         card.append(badges);
 
         const issues = item.issues || [];
-        if (issues.length === 0) card.append(el("div", "meta", "未发现控制面异常"));
+        if (issues.length === 0) card.append(el("div", "meta", "详细诊断与证据请通过 Agent 查询"));
         for (const issue of issues) {
           const row = el("div", "issue");
           row.append(el("span", "issue-dot " + issue.severity));
@@ -323,7 +435,7 @@ const indexHTML = `<!doctype html>
     }
     byId("footer").textContent = "版本 " + data.version + " · 最近巡检 " + fmtTime(data.generatedAt) + " · 周期 " + data.scanInterval;
     byId("dot").className = "dot " + (data.ready ? "ok" : "");
-    byId("connection").textContent = data.ready ? "巡检运行中" : "等待首次巡检";
+    byId("connection").textContent = bridgeNamespaces.length === 0 ? "Bridge 巡检未配置" : (data.ready ? "Bridge 巡检运行中" : "等待首次 Bridge 巡检");
   }
 
 	function renderExperiments(plans) {
@@ -342,6 +454,7 @@ const indexHTML = `<!doctype html>
 		card.append(cardHead);
 		const badges = el("div", "badges");
 		badges.append(badge("基线 " + plan.baselineName), badge("当前稳定 " + plan.stableService), badge("阶段 " + plan.currentStage + "/" + (plan.stages || []).length));
+		badges.append(badge(plan.sloProfile ? "SLO: " + plan.sloProfile : "就绪与诊断门禁 · 未运行 SLO"));
 		card.append(badges);
 		if (plan.message) card.append(el("div", "meta", plan.message));
 		const stages = el("div", "experiment-stages");
@@ -351,8 +464,19 @@ const indexHTML = `<!doctype html>
 		  const body = el("div");
 		  body.append(el("div", "issue-code", "S" + (stage.index + 1) + " · " + stage.featureProfile + " · " + stage.status));
 		  body.append(el("div", "", stage.baselineName + " → " + stage.candidateName));
+		  if (stage.slo) {
+			const result = stage.slo;
+			const labels = {passed: "通过", regression: "退化", inconclusive: "证据不足"};
+			body.append(badge("SLO " + (labels[result.decision] || result.decision), result.decision === "passed" ? "good" : (result.decision === "regression" ? "critical" : "warning")));
+			if (result.reason) body.append(el("div", "meta", result.reason));
+			if (result.baseline && result.candidate) {
+			  body.append(el("div", "meta", "端到端 p95: " + Number(result.baseline.p95Millis || 0).toFixed(1) + " → " + Number(result.candidate.p95Millis || 0).toFixed(1) + " ms；成功率: " + (100 * Number(result.baseline.successRate || 0)).toFixed(1) + "% → " + (100 * Number(result.candidate.successRate || 0)).toFixed(1) + "%"));
+			}
+			body.append(el("div", "meta", "证据 " + result.runId + (result.evidenceSha256 ? " · SHA256 " + result.evidenceSha256 : " · 未完成")));
+		  }
 		  if (stage.comparison && (stage.comparison.regressionCategories || []).length) body.append(el("div", "error", "新增异常: " + stage.comparison.regressionCategories.join(", ")));
 		  if (stage.message) body.append(el("div", "meta", stage.message));
+          else if (stage.status === "rolled-back") body.append(el("div", "meta", "阶段未通过；详细原因请通过 Agent 查询"));
 		  row.append(body);
 		  stages.append(row);
 		}
@@ -363,17 +487,50 @@ const indexHTML = `<!doctype html>
 	  root.append(section);
 	}
 
+  function renderNative(data) {
+    const root=byId("native");root.replaceChildren();const section=el("section","namespace");
+    section.append(el("h2","","原生 Kubernetes 工作负载与 Pod"),el("div","meta","范围："+data.scope+((data.namespaces||[]).length?" · "+(data.namespaces||[]).join(", "):"")+" · 与 InferNexService 巡检分别统计"));
+    if(data.stale)section.append(el("p","error",data.error||"Kubernetes 数据已过期"));
+    section.append(el("div","meta","采集时间："+fmtTime(data.updatedAt)));
+    const stats=el("div","badges");stats.append(badge("Kubernetes "+(data.kubernetesVersion||"未知")),badge("集群节点 "+(data.overviewPartial?"未知/部分可见":data.nodeCount)),badge("集群 Pod "+(data.overviewPartial?"未知/部分可见":data.podCount)),badge("范围内工作负载 "+data.workloadCount),badge("范围内 Pod "+data.podCountInScope));section.append(stats);
+    for(const warning of (data.warnings||[]))section.append(el("p","error","读取受限："+warning));
+    if(data.truncated||data.scopeTruncated)section.append(el("p","meta","展示结果或命名空间范围已截断"));
+	section.append(el("div", "meta", "部署 YAML 来自当前 Kubernetes API 对象的安全字段摘录。原始 Helm 模板、values 文件及 helm -f 本地路径无法从 Kubernetes 元数据还原。"));
+	const items=el("div","services");
+	for(const work of (data.workloads||[])){
+	  const card=el("article","service");
+	  const key=work.kind+"/"+work.namespace+"/"+work.name;
+	  card.append(el("h3","",work.namespace+"/"+work.name));
+	  const facts=el("div","badges");
+	  facts.append(badge(work.kind),badge("Ready "+work.ready+"/"+work.desired,work.ready===work.desired?"good":"warning"));
+	  if(work.helmRelease)facts.append(badge("Helm "+work.helmRelease+(work.helmRevision?" · 最新记录 revision "+work.helmRevision:" · revision 未知")));
+	  for(const image of (work.images||[]))facts.append(badge("镜像 "+image));
+	  card.append(facts);
+	  if(work.liveYaml){
+	    const details=el("details","live-yaml");
+	    details.open=expandedYAML.has(key);
+	    details.ontoggle=()=>{if(details.open)expandedYAML.add(key);else expandedYAML.delete(key)};
+	    details.append(el("summary","","查看当前配置 YAML（只读摘录）"),el("pre","",work.liveYaml));
+	    card.append(details);
+	  }else card.append(el("div","meta","当前配置 YAML 不可用"));
+	  items.append(card);
+	}
+	if((data.helmReleases||[]).length){
+	  const helm=el("article","service");helm.append(el("h3","","Helm release 元数据"));
+	  for(const release of data.helmReleases)helm.append(el("div","meta",release.namespace+"/"+release.name+" · 最新记录 revision "+release.revision+" · "+(release.status||"状态未知")));
+	  items.append(helm);
+	}
+    for(const pod of (data.pods||[])){const card=el("article","service");card.append(el("h3","",pod.namespace+"/"+pod.name),el("div","badges","Pod · "+pod.phase+" · "+(pod.ready?"Ready":"Not Ready")+" · 重启 "+pod.restarts));items.append(card)}
+    if((data.workloads||[]).length+(data.pods||[]).length===0)items.append(el("div","empty",data.warnings&&data.warnings.length?"权限不足或读取受限，无法确认是否存在资源":"当前范围没有匹配的原生工作负载或 Pod"));section.append(items);root.append(section);
+  }
+  async function refreshPart(url,onSuccess,onError){try{const response=await fetch(url,{cache:"no-store"});if(!response.ok)throw new Error("HTTP "+response.status);onSuccess(await response.json())}catch(error){onError(error)}}
   async function refresh() {
-    try {
-	  const response = await fetch("./api/v1/snapshot", {cache: "no-store"});
-      if (!response.ok) throw new Error("HTTP " + response.status);
-      render(await response.json());
-	  const experiments = await fetch("./api/v1/experiments", {cache: "no-store"});
-	  if (experiments.ok) renderExperiments(await experiments.json());
-    } catch (error) {
-      byId("dot").className = "dot error";
-      byId("connection").textContent = "连接失败";
-    }
+    await Promise.all([
+      refreshPart("./api/v1/kubernetes",renderNative,()=>{if(!byId("native").querySelector(".namespace"))byId("native").replaceChildren(el("div","empty error","原生 Kubernetes 请求失败，请稍后重试"));else byId("native").append(el("p","error","原生 Kubernetes 更新失败，保留上次结果"))}),
+      refreshPart("./api/v1/management",renderManagement,()=>{byId("management").replaceChildren(el("div","empty error","运行配置读取失败"))}),
+      refreshPart("./api/v1/snapshot",render,()=>{byId("dot").className="dot error";byId("connection").textContent="InferNexService 巡检请求失败"}),
+      refreshPart("./api/v1/experiments",renderExperiments,()=>{if(!byId("experiments").querySelector(".namespace"))byId("experiments").replaceChildren(el("div","empty error","实验状态请求失败"));else byId("experiments").append(el("p","error","实验状态更新失败，保留上次结果"))})
+    ]);
   }
   refresh();
   window.setInterval(refresh, 10000);

@@ -1,0 +1,36 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-release-inventory
+  labels:
+    app.kubernetes.io/name: helm-release-inventory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    infernex.io/fixture-owner: real-helm-release
+    infernex.io/acceptance: test-only
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-release-inventory
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-release-inventory
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        infernex.io/fixture-owner: real-helm-release
+        infernex.io/acceptance: test-only
+    spec:
+      containers:
+        - name: inventory-only
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 20m
+              memory: 16Mi
+

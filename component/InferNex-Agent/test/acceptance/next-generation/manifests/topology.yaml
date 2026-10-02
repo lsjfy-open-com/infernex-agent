@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: infernex-nextgen-acceptance
+  labels:
+    infernex.io/acceptance: test-only
+  annotations:
+    infernex.io/safety-note: "Disposable Kind fixture; never apply to a production cluster."
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: native-inventory
+  namespace: infernex-nextgen-acceptance
+  labels:
+    app.kubernetes.io/name: native-inventory
+    infernex.io/fixture-owner: native
+    infernex.io/acceptance: test-only
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: native-inventory
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: native-inventory
+        infernex.io/fixture-owner: native
+        infernex.io/acceptance: test-only
+    spec:
+      containers:
+        - name: inventory-only
+          image: registry.k8s.io/pause:3.10
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 20m
+              memory: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: native-inventory
+  namespace: infernex-nextgen-acceptance
+  labels:
+    app.kubernetes.io/name: native-inventory
+    infernex.io/fixture-owner: native
+    infernex.io/acceptance: test-only
+spec:
+  selector:
+    app.kubernetes.io/name: native-inventory
+  ports:
+    - name: placeholder
+      port: 8080
+      targetPort: 8080
+---
+# This object intentionally carries Helm-shaped metadata without being installed
+# by Helm. It tests inventory/ownership ambiguity only. It is not evidence that
+# the Helm plan/apply/rollback path in proposal B3 works.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-metadata-mock
+  namespace: infernex-nextgen-acceptance
+  labels:
+    app.kubernetes.io/name: helm-metadata-mock
+    app.kubernetes.io/managed-by: Helm
+    infernex.io/fixture-owner: helm-metadata-mock
+    infernex.io/acceptance: test-only
+  annotations:
+    meta.helm.sh/release-name: acceptance-mock
+    meta.helm.sh/release-namespace: infernex-nextgen-acceptance
+    infernex.io/mock-warning: "Metadata-only fixture; no Helm release record exists."
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-metadata-mock
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-metadata-mock
+        app.kubernetes.io/managed-by: Helm
+        infernex.io/fixture-owner: helm-metadata-mock
+        infernex.io/acceptance: test-only
+    spec:
+      containers:
+        - name: inventory-only
+          image: registry.k8s.io/pause:3.10
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 20m
+              memory: 16Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: helm-metadata-mock
+  namespace: infernex-nextgen-acceptance
+  labels:
+    app.kubernetes.io/name: helm-metadata-mock
+    app.kubernetes.io/managed-by: Helm
+    infernex.io/fixture-owner: helm-metadata-mock
+    infernex.io/acceptance: test-only
+  annotations:
+    meta.helm.sh/release-name: acceptance-mock
+    meta.helm.sh/release-namespace: infernex-nextgen-acceptance
+    infernex.io/mock-warning: "Metadata-only fixture; no Helm release record exists."
+spec:
+  selector:
+    app.kubernetes.io/name: helm-metadata-mock
+  ports:
+    - name: placeholder
+      port: 8080
+      targetPort: 8080

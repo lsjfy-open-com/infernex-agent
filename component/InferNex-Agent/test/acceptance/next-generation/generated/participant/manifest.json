@@ -1,0 +1,38 @@
+{
+  "contains_evaluator_truth": false,
+  "created_at": "2026-09-23T08:30:00.000Z",
+  "files": [
+    {
+      "bytes": 5975,
+      "path": "cases/dev-case-01/events.jsonl",
+      "sha256": "3b3049956d3104286acaf684bbcd3852eae74d49ada8782fc2c314b20b2b8c21"
+    },
+    {
+      "bytes": 230,
+      "path": "cases/dev-case-01/metadata.json",
+      "sha256": "ce4987ee3765c3da1f113dd004dc655377f2200e0c62f782b49d50949d89d853"
+    },
+    {
+      "bytes": 6017,
+      "path": "cases/dev-case-02/events.jsonl",
+      "sha256": "8a1430b58687a66a3abebd394d5932e989212f8ed87b8d84780a67f78942d1cb"
+    },
+    {
+      "bytes": 230,
+      "path": "cases/dev-case-02/metadata.json",
+      "sha256": "79b83adb2987e4680d673d3d5a5ca43c8a1f10a4684bcb174cc9483784ebf85a"
+    },
+    {
+      "bytes": 3790,
+      "path": "cases/dev-case-03/events.jsonl",
+      "sha256": "f54fac50de4ba7e290b9594c2f34d018a30df6e1d440686cc8b1cff6c86ac321"
+    },
+    {
+      "bytes": 230,
+      "path": "cases/dev-case-03/metadata.json",
+      "sha256": "74861fe5da14a0ee14f91cb65edb41e2b140f6e2b0ee9ca60ce8501da6e609c7"
+    }
+  ],
+  "schema_version": "infernex.synthetic.acceptance.participant-manifest/v1",
+  "synthetic": true
+}

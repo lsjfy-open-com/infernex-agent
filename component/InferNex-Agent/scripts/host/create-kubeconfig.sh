@@ -3,7 +3,7 @@ set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -f "${script_dir}/bundle-lib.sh" ]]; then
-  # Extracted host bundle.
+  # Extracted Agent package.
   # shellcheck source=/dev/null
   source "${script_dir}/bundle-lib.sh"
 else
@@ -26,7 +26,10 @@ Options:
   --service-account NAME           ServiceAccount name (default: infernex-agent-host)
   --output FILE                    Output kubeconfig (default: ./infernex-agent-host.kubeconfig)
   --enable-deployment              Permit constrained catalog create/delete
-  --enable-log-diagnostics         Permit InferNex-owned Pod log reads
+  --deployment-namespace N         Fixed Agent workspace namespace
+  --deployment-template-namespace N Existing deployment profile namespace
+  --enable-log-diagnostics         Enable Bridge cross-component log diagnosis
+  --enable-pod-exec                Permit bounded typed probes through pods/exec
   --enable-experiments             Permit candidates and approved profiles
   --experiment-template-namespace N Profile namespace (default: infernex-bridge-system)
   --enable-recovery                Permit recovery-service create and profile get
@@ -46,7 +49,10 @@ agent_namespace="infernex-system"
 service_account="infernex-agent-host"
 output_file="${PWD}/infernex-agent-host.kubeconfig"
 enable_deployment="false"
+deployment_namespace="infernex-agent-workspace"
+deployment_template_namespace="infernex-bridge-system"
 enable_log_diagnostics="false"
+enable_pod_exec="false"
 enable_experiments="false"
 experiment_template_namespace="infernex-bridge-system"
 enable_recovery="false"
@@ -86,8 +92,22 @@ while (($#)); do
       enable_deployment="true"
       shift
       ;;
+    --deployment-template-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-template-namespace requires a value"
+      deployment_template_namespace="$2"
+      shift 2
+      ;;
+    --deployment-namespace)
+      [[ $# -ge 2 ]] || bundle_die "--deployment-namespace requires a value"
+      deployment_namespace="$2"
+      shift 2
+      ;;
     --enable-log-diagnostics)
       enable_log_diagnostics="true"
+      shift
+      ;;
+    --enable-pod-exec)
+      enable_pod_exec="true"
       shift
       ;;
     --enable-experiments)
@@ -139,6 +159,10 @@ validate_dns_label "$agent_namespace" ||
   bundle_die "invalid Agent namespace: ${agent_namespace}"
 validate_dns_label "$service_account" ||
   bundle_die "invalid ServiceAccount name: ${service_account}"
+validate_dns_label "$deployment_template_namespace" ||
+  bundle_die "invalid deployment template namespace: ${deployment_template_namespace}"
+validate_dns_label "$deployment_namespace" ||
+  bundle_die "invalid deployment namespace: ${deployment_namespace}"
 validate_dns_label "$recovery_template_namespace" ||
   bundle_die "invalid recovery template namespace: ${recovery_template_namespace}"
 validate_dns_label "$experiment_template_namespace" ||
@@ -163,10 +187,52 @@ fi
 kubectl "${kubectl_args[@]}" get crd \
   infernexservices.infernex.infernex.io >/dev/null ||
   bundle_die "InferNexService CRD is missing"
-if [[ "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
+if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
   kubectl "${kubectl_args[@]}" get crd \
     infernexserviceconfigs.infernex.infernex.io >/dev/null ||
     bundle_die "InferNexServiceConfig CRD is required for recovery or experiments"
+fi
+
+if [[ "$enable_deployment" == "true" ]]; then
+  kubectl "${kubectl_args[@]}" get namespace "$deployment_template_namespace" >/dev/null ||
+    bundle_die "deployment template namespace does not exist: ${deployment_template_namespace}"
+  bundle_info "applying deployment-profile discovery permission"
+  cat <<EOF | kubectl "${kubectl_args[@]}" apply -f - >/dev/null
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: infernex-agent-host-deployment-profiles
+  namespace: ${deployment_template_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+rules:
+  - apiGroups: ["infernex.infernex.io"]
+    resources: ["infernexserviceconfigs"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: infernex-agent-host-deployment-profiles
+  namespace: ${deployment_template_namespace}
+  labels:
+    app.kubernetes.io/name: infernex-agent
+    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: infernex-agent-host-deployment-profiles
+subjects:
+  - kind: ServiceAccount
+    name: ${service_account}
+    namespace: ${agent_namespace}
+EOF
+else
+  kubectl "${kubectl_args[@]}" --namespace "$deployment_template_namespace" delete \
+    role/infernex-agent-host-deployment-profiles \
+    rolebinding/infernex-agent-host-deployment-profiles \
+    --ignore-not-found >/dev/null 2>&1 || true
 fi
 
 bundle_info "creating dedicated ServiceAccount"
@@ -194,13 +260,31 @@ rules:
     resources: ["infernexservices"]
     verbs: ["get", "list"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "daemonsets"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
     verbs: ["list"]
   - apiGroups: ["leaderworkerset.x-k8s.io"]
     resources: ["leaderworkersets"]
     verbs: ["list"]
   - apiGroups: [""]
-    resources: ["pods", "events"]
+    resources: ["pods", "services"]
+    verbs: ["get", "list"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+$(if [[ "$enable_pod_exec" == "true" ]]; then cat <<'RULE'
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+RULE
+fi)
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["list"]
+  - apiGroups: [""]
+    resources: ["events"]
     verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -221,49 +305,19 @@ subjects:
     namespace: ${agent_namespace}
 EOF
 
-  if [[ "$enable_log_diagnostics" == "true" ]]; then
-    bundle_info "applying bounded log-read RBAC in ${target_namespace}"
-    cat <<EOF | kubectl "${kubectl_args[@]}" apply -f - >/dev/null
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: infernex-agent-host-logs
-  namespace: ${target_namespace}
-  labels:
-    app.kubernetes.io/name: infernex-agent
-    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
-rules:
-  - apiGroups: [""]
-    resources: ["pods/log"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: infernex-agent-host-logs
-  namespace: ${target_namespace}
-  labels:
-    app.kubernetes.io/name: infernex-agent
-    app.kubernetes.io/managed-by: infernex-agent-host-bootstrap
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: infernex-agent-host-logs
-subjects:
-  - kind: ServiceAccount
-    name: ${service_account}
-    namespace: ${agent_namespace}
-EOF
-  else
-    kubectl "${kubectl_args[@]}" --namespace "$target_namespace" delete \
-      role/infernex-agent-host-logs \
-      rolebinding/infernex-agent-host-logs \
-      --ignore-not-found >/dev/null
-  fi
+  # Generic Pod-log reads are always available and are bounded by the Agent's
+  # container, time-window, line-count, byte-count, and redaction limits. The
+  # flag controls the additional Bridge correlation engine, not this RBAC.
+  kubectl "${kubectl_args[@]}" --namespace "$target_namespace" delete \
+    role/infernex-agent-host-logs \
+    rolebinding/infernex-agent-host-logs \
+    --ignore-not-found >/dev/null 2>&1 || true
 
-  if [[ "$enable_deployment" == "true" || "$enable_recovery" == "true" || "$enable_experiments" == "true" ]]; then
+  if [[ "$enable_recovery" == "true" || "$enable_experiments" == "true" ||
+    ( "$enable_deployment" == "true" && "$target_namespace" == "$deployment_namespace" ) ]]; then
     mutation_verbs='["create"]'
-    if [[ "$enable_deployment" == "true" || "$enable_experiments" == "true" ]]; then
+    if [[ "$enable_experiments" == "true" ||
+      ( "$enable_deployment" == "true" && "$target_namespace" == "$deployment_namespace" ) ]]; then
       mutation_verbs='["create", "delete"]'
     fi
     bundle_info "applying constrained mutation RBAC in ${target_namespace}"

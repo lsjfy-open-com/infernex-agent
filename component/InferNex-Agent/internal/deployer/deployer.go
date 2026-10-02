@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,14 +38,18 @@ const (
 	managedByLabel     = "app.kubernetes.io/managed-by"
 	catalogLabel       = "infernex.io/catalog-id"
 	changeIDAnnotation = "agent.infernex.io/change-id"
+	sourceIDAnnotation = "agent.infernex.io/deployment-source"
 	managedByAgent     = "infernex-agent"
 )
 
 type KubernetesDeployer struct {
-	client           client.Client
-	store            changesafety.Store
-	readinessTimeout time.Duration
-	pollInterval     time.Duration
+	client            client.Client
+	store             changesafety.Store
+	readinessTimeout  time.Duration
+	pollInterval      time.Duration
+	targetNamespace   string
+	templateNamespace string
+	sourceNamespaces  []string
 
 	mu         sync.Mutex
 	runContext context.Context
@@ -52,10 +58,12 @@ type KubernetesDeployer struct {
 
 func New(kubeClient client.Client, options ...Option) *KubernetesDeployer {
 	deployer := &KubernetesDeployer{
-		client:       kubeClient,
-		store:        changesafety.NewMemoryStore(),
-		monitoring:   make(map[string]struct{}),
-		pollInterval: 2 * time.Second,
+		client:            kubeClient,
+		store:             changesafety.NewMemoryStore(),
+		monitoring:        make(map[string]struct{}),
+		pollInterval:      2 * time.Second,
+		targetNamespace:   "",
+		templateNamespace: "infernex-bridge-system",
 	}
 	for _, option := range options {
 		option(deployer)
@@ -110,20 +118,16 @@ func (d *KubernetesDeployer) recoverPlanned(
 		}
 		return nil
 	}
-	if service.Labels[managedByLabel] != managedByAgent ||
-		service.Annotations[changeIDAnnotation] != record.ID {
+	if err := verifyChangeTarget(service, record); err != nil {
 		record.Status = changesafety.StatusRollbackFailed
 		record.OccurredAt = time.Now().UTC()
-		record.Message = "resource exists but change ownership cannot be proven"
+		record.Message = "resource exists but deployment identity or spec cannot be proven: " + err.Error()
 		if err := d.store.Append(record); err != nil {
 			return fmt.Errorf("record unsafe planned deployment %s: %w", record.ID, err)
 		}
-		return fmt.Errorf(
-			"planned deployment %s target %s exists without matching ownership",
-			record.ID,
-			key,
-		)
+		return fmt.Errorf("planned deployment %s target %s cannot be safely recovered: %w", record.ID, key, err)
 	}
+	record.Target.UID = service.UID
 	record.Status = changesafety.StatusApplied
 	record.OccurredAt = time.Now().UTC()
 	record.Message = "Agent resumed after creation and before the applied event was persisted"
@@ -134,13 +138,93 @@ func (d *KubernetesDeployer) recoverPlanned(
 	return nil
 }
 
+func (d *KubernetesDeployer) ListSources(ctx context.Context) (SourceList, error) {
+	result := SourceList{
+		TargetNamespace: d.targetNamespace,
+		Sources:         make([]Source, 0),
+		Message:         "Only existing Ready services and administrator-created InferNexServiceConfig profiles can be reused; the Agent does not generate runtime YAML or image settings.",
+	}
+	for _, namespace := range normalizedNamespaces(d.sourceNamespaces) {
+		services := &infernexv1alpha1.InferNexServiceList{}
+		if err := d.client.List(ctx, services, client.InNamespace(namespace)); err != nil {
+			return SourceList{}, fmt.Errorf("list deployment sources in %s: %w", namespace, err)
+		}
+		for index := range services.Items {
+			service := &services.Items[index]
+			if !stableSource(service) {
+				continue
+			}
+			source := Source{
+				SourceID:        serviceSourceID(service.Namespace, service.Name),
+				Kind:            "stable-service",
+				Namespace:       service.Namespace,
+				Name:            service.Name,
+				Mode:            service.Status.Mode,
+				TargetNamespace: d.targetNamespace,
+				BaseRefs:        namedRefNames(service.Spec.BaseRefs),
+			}
+			if service.Spec.Model != nil {
+				source.ModelName = service.Spec.Model.Name
+				source.ModelURI = sanitizedModelURI(service.Spec.Model.URI)
+			}
+			result.Sources = append(result.Sources, source)
+		}
+	}
+
+	if strings.TrimSpace(d.templateNamespace) != "" {
+		profiles := &infernexv1alpha1.InferNexServiceConfigList{}
+		if err := d.client.List(ctx, profiles, client.InNamespace(d.templateNamespace)); err != nil {
+			return SourceList{}, fmt.Errorf("list deployment profiles in %s: %w", d.templateNamespace, err)
+		}
+		for index := range profiles.Items {
+			profile := &profiles.Items[index]
+			if profile.Spec.Engine == nil ||
+				(profile.Spec.Engine.Template == nil &&
+					(profile.Spec.Engine.Prefill == nil || profile.Spec.Engine.Prefill.Template == nil)) {
+				continue
+			}
+			source := Source{
+				SourceID:        profileSourceID(profile.Name),
+				Kind:            "profile",
+				Namespace:       profile.Namespace,
+				Name:            profile.Name,
+				TargetNamespace: d.targetNamespace,
+				BaseRefs:        []string{profile.Name},
+			}
+			if profile.Spec.Model != nil {
+				source.ModelName = profile.Spec.Model.Name
+				source.ModelURI = sanitizedModelURI(profile.Spec.Model.URI)
+			}
+			if profile.Spec.Engine.Prefill != nil {
+				source.Mode = "pd"
+			} else {
+				source.Mode = "aggregate"
+			}
+			result.Sources = append(result.Sources, source)
+		}
+	}
+	sort.Slice(result.Sources, func(i, j int) bool {
+		return result.Sources[i].SourceID < result.Sources[j].SourceID
+	})
+	return result, nil
+}
+
 func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Result, error) {
-	request, err := validateRequest(request, "deploy")
+	if d.targetNamespace != "" {
+		request.Namespace = d.targetNamespace
+	}
+	if request.SourceID == "" && request.CatalogID == TinyModelCatalogID {
+		request.SourceID = "builtin:" + TinyModelCatalogID
+	}
+	request, err := validateRequest(request, "deploy", true)
 	if err != nil {
 		return Result{}, err
 	}
 
-	desired := tinyModelService(request.Namespace, request.Name)
+	desired, err := d.desiredFromSource(ctx, request)
+	if err != nil {
+		return Result{}, err
+	}
 	current := &infernexv1alpha1.InferNexService{}
 	key := types.NamespacedName{Namespace: request.Namespace, Name: request.Name}
 	if err := d.client.Get(ctx, key, current); err != nil {
@@ -185,11 +269,18 @@ func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Resul
 			}
 			return Result{}, fmt.Errorf("create catalog InferNexService %s: %w", key, err)
 		}
+		record.Target.UID = desired.UID
+		// The Create response includes API defaulting and admission changes.
+		// Keep that accepted spec as the baseline, never a later live read.
+		record.Desired, err = json.Marshal(desired)
+		if err != nil {
+			return Result{}, fmt.Errorf("encode created InferNexService %s; resource retained: %w", key, err)
+		}
 		record.Status = changesafety.StatusApplied
 		record.OccurredAt = time.Now().UTC()
 		record.Message = "resource created; readiness monitoring started"
 		if err := d.store.Append(record); err != nil {
-			rollbackErr := d.deleteOwnedChange(ctx, key, changeID)
+			rollbackErr := d.deleteOwnedChange(ctx, record)
 			if rollbackErr != nil {
 				return Result{}, fmt.Errorf(
 					"persist applied deployment: %v; emergency rollback: %w",
@@ -222,14 +313,22 @@ func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Resul
 		return result, nil
 	}
 
-	if err := verifyOwned(current, request.CatalogID); err != nil {
+	if err := verifyOwned(current); err != nil {
 		return Result{}, err
+	}
+	if current.Annotations[sourceIDAnnotation] != request.SourceID {
+		return Result{}, fmt.Errorf(
+			"InferNexService %s is Agent-owned from source %q, not %q; refusing to overwrite it",
+			key,
+			current.Annotations[sourceIDAnnotation],
+			request.SourceID,
+		)
 	}
 	if !equality.Semantic.DeepEqual(current.Spec, desired.Spec) {
 		return Result{}, fmt.Errorf(
-			"InferNexService %s is Agent-owned but its spec drifted from catalog %q; refusing to overwrite it",
+			"InferNexService %s is Agent-owned but its spec drifted from source %q; refusing to overwrite it",
 			key,
-			request.CatalogID,
+			request.SourceID,
 		)
 	}
 	result := resultFor(request, "already-exists")
@@ -245,7 +344,13 @@ func (d *KubernetesDeployer) Deploy(ctx context.Context, request Request) (Resul
 }
 
 func (d *KubernetesDeployer) Delete(ctx context.Context, request Request) (Result, error) {
-	request, err := validateRequest(request, "delete")
+	if d.targetNamespace != "" {
+		request.Namespace = d.targetNamespace
+	}
+	if request.SourceID == "" && request.CatalogID == TinyModelCatalogID {
+		request.SourceID = "builtin:" + TinyModelCatalogID
+	}
+	request, err := validateRequest(request, "delete", false)
 	if err != nil {
 		return Result{}, err
 	}
@@ -258,7 +363,7 @@ func (d *KubernetesDeployer) Delete(ctx context.Context, request Request) (Resul
 		}
 		return Result{}, fmt.Errorf("check InferNexService %s: %w", key, err)
 	}
-	if err := verifyOwned(current, request.CatalogID); err != nil {
+	if err := verifyOwned(current); err != nil {
 		return Result{}, err
 	}
 	changeID, err := changesafety.NewID()
@@ -278,10 +383,11 @@ func (d *KubernetesDeployer) Delete(ctx context.Context, request Request) (Resul
 		nil,
 		"exact pre-delete object recorded",
 	)
+	record.Target.UID = current.UID
 	if err := d.store.Append(record); err != nil {
 		return Result{}, fmt.Errorf("persist pre-delete change record: %w", err)
 	}
-	if err := d.client.Delete(ctx, current); err != nil && !apierrors.IsNotFound(err) {
+	if err := d.client.Delete(ctx, current, deletePreconditions(current)); err != nil && !apierrors.IsNotFound(err) {
 		record.Status = changesafety.StatusApplyFailed
 		record.OccurredAt = time.Now().UTC()
 		record.Message = err.Error()
@@ -297,8 +403,6 @@ func (d *KubernetesDeployer) Delete(ctx context.Context, request Request) (Resul
 	result := resultFor(request, "deleted")
 	result.ChangeID = changeID
 	result.ChangeStatus = changesafety.StatusCommitted
-	result.Endpoint = ""
-	result.InferenceAPI = ""
 	return result, nil
 }
 
@@ -363,9 +467,9 @@ func (d *KubernetesDeployer) monitorDeployment(
 		service := &infernexv1alpha1.InferNexService{}
 		err := d.client.Get(ctx, key, service)
 		if err == nil {
-			if service.Status.Ready &&
-				service.Status.ObservedGeneration >= service.Generation {
-				d.finishRecord(record, changesafety.StatusCommitted, "deployment reached Ready")
+			if err := verifyChangeTarget(service, record); err != nil {
+				d.finishRecord(record, changesafety.StatusRollbackFailed,
+					"deployment identity or spec cannot be verified; automatic rollback refused: "+err.Error())
 				return
 			}
 			if terminalDegraded(service) {
@@ -374,6 +478,11 @@ func (d *KubernetesDeployer) monitorDeployment(
 					record,
 					"deployment reported a terminal Degraded condition",
 				)
+				return
+			}
+			if service.Status.Ready &&
+				service.Status.ObservedGeneration >= service.Generation {
+				d.finishRecord(record, changesafety.StatusCommitted, "deployment reached Ready")
 				return
 			}
 		} else if apierrors.IsNotFound(err) {
@@ -418,7 +527,7 @@ func (d *KubernetesDeployer) rollbackDeployment(
 	}
 	rollbackCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	if err := d.deleteOwnedChange(rollbackCtx, key, record.ID); err != nil {
+	if err := d.deleteOwnedChange(rollbackCtx, record); err != nil {
 		d.finishRecord(
 			record,
 			changesafety.StatusRollbackFailed,
@@ -443,9 +552,9 @@ func (d *KubernetesDeployer) rollbackDeployment(
 
 func (d *KubernetesDeployer) deleteOwnedChange(
 	ctx context.Context,
-	key types.NamespacedName,
-	changeID string,
+	record changesafety.ChangeRecord,
 ) error {
+	key := types.NamespacedName{Namespace: record.Target.Namespace, Name: record.Target.Name}
 	service := &infernexv1alpha1.InferNexService{}
 	if err := d.client.Get(ctx, key, service); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -453,14 +562,10 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		}
 		return fmt.Errorf("get rollback target: %w", err)
 	}
-	if service.Labels[managedByLabel] != managedByAgent ||
-		service.Annotations[changeIDAnnotation] != changeID {
-		return fmt.Errorf(
-			"rollback ownership changed; refusing to delete InferNexService %s",
-			key,
-		)
+	if err := verifyChangeTarget(service, record); err != nil {
+		return fmt.Errorf("refusing to delete rollback target: %w", err)
 	}
-	if err := d.client.Delete(ctx, service); err != nil && !apierrors.IsNotFound(err) {
+	if err := d.client.Delete(ctx, service, deletePreconditions(service)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete rollback target: %w", err)
 	}
 	for {
@@ -477,6 +582,50 @@ func (d *KubernetesDeployer) deleteOwnedChange(
 		case <-time.After(250 * time.Millisecond):
 		}
 	}
+}
+
+func verifyChangeTarget(service *infernexv1alpha1.InferNexService, record changesafety.ChangeRecord) error {
+	if err := verifyChangeIdentity(service, record.ID, record.Target.UID); err != nil {
+		return err
+	}
+	var desired struct {
+		Spec *infernexv1alpha1.InferNexServiceSpec `json:"spec"`
+	}
+	if err := json.Unmarshal(record.Desired, &desired); err != nil {
+		return fmt.Errorf("cannot verify deployment spec: desired snapshot is missing or invalid: %w", err)
+	}
+	if desired.Spec == nil {
+		return fmt.Errorf("cannot verify deployment spec: desired snapshot does not contain a spec")
+	}
+	// Older journals and planned-only crash recovery may contain the request
+	// before API defaulting. A mismatch is still unsafe: retaining that object
+	// is preferable to adopting a possibly edited live spec as the baseline.
+	if !equality.Semantic.DeepEqual(service.Spec, *desired.Spec) {
+		return fmt.Errorf("InferNexService %s/%s spec differs from the recorded desired snapshot; possible spec drift or pre-admission snapshot",
+			service.Namespace, service.Name)
+	}
+	return nil
+}
+
+func verifyChangeIdentity(service *infernexv1alpha1.InferNexService, changeID string, uid types.UID) error {
+	key := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	if service.Labels[managedByLabel] != managedByAgent ||
+		service.Annotations[changeIDAnnotation] != changeID {
+		return fmt.Errorf("change ownership changed for InferNexService %s", key)
+	}
+	// Old journals and plans persisted before Create cannot contain a UID.
+	// Preserve their ownership-based recovery while binding all new applied
+	// records to the exact object returned by the API server.
+	if uid != "" && service.UID != uid {
+		return fmt.Errorf("InferNexService %s UID changed from %q to %q", key, uid, service.UID)
+	}
+	return nil
+}
+
+func deletePreconditions(service *infernexv1alpha1.InferNexService) client.Preconditions {
+	// Ownership checks above apply only to the version we read. Both conditions
+	// make the API server reject replacement or concurrent ownership changes.
+	return client.Preconditions{UID: &service.UID, ResourceVersion: &service.ResourceVersion}
 }
 
 func (d *KubernetesDeployer) finishRecord(
@@ -502,7 +651,11 @@ func terminalDegraded(service *infernexv1alpha1.InferNexService) bool {
 		return false
 	}
 	for _, condition := range service.Status.Conditions {
-		if condition.Type == "Degraded" && condition.Status == metav1.ConditionTrue {
+		// A stale or undated condition cannot override readiness for the current
+		// generation. Legacy writers that omit observedGeneration (zero) still
+		// use the normal Ready/deadline path when the object generation is known.
+		if condition.Type == "Degraded" && condition.Status == metav1.ConditionTrue &&
+			condition.ObservedGeneration == service.Generation {
 			return true
 		}
 	}
@@ -537,10 +690,12 @@ func newChangeRecord(
 	}
 }
 
-func validateRequest(request Request, action string) (Request, error) {
+func validateRequest(request Request, action string, requireSource ...bool) (Request, error) {
 	request.Namespace = strings.TrimSpace(request.Namespace)
 	request.Name = strings.TrimSpace(request.Name)
+	request.SourceID = strings.TrimSpace(request.SourceID)
 	request.CatalogID = strings.TrimSpace(request.CatalogID)
+	sourceRequired := len(requireSource) > 0 && requireSource[0]
 
 	if problems := validation.IsDNS1123Label(request.Namespace); len(problems) > 0 {
 		return Request{}, fmt.Errorf(
@@ -556,58 +711,198 @@ func validateRequest(request Request, action string) (Request, error) {
 			strings.Join(problems, "; "),
 		)
 	}
-	if request.CatalogID != TinyModelCatalogID {
-		return Request{}, fmt.Errorf(
-			"unsupported catalogId %q; the only enabled test catalog entry is %q",
-			request.CatalogID,
-			TinyModelCatalogID,
-		)
+	if request.CatalogID != "" && request.CatalogID != TinyModelCatalogID {
+		return Request{}, fmt.Errorf("unsupported legacy catalogId %q", request.CatalogID)
+	}
+	if sourceRequired && request.SourceID == "" && request.CatalogID == "" {
+		return Request{}, fmt.Errorf("deploy requires a sourceId returned by infernex_list_deployment_sources")
 	}
 	if !request.Confirm {
 		return Request{}, fmt.Errorf(
-			"%s requires confirm=true after reviewing namespace, name, and catalogId",
+			"%s requires confirm=true after reviewing the discovered source and target name",
 			action,
 		)
 	}
 	return request, nil
 }
 
-func verifyOwned(service *infernexv1alpha1.InferNexService, catalogID string) error {
+func verifyOwned(service *infernexv1alpha1.InferNexService) error {
 	key := types.NamespacedName{Namespace: service.Namespace, Name: service.Name}
+	legacyCatalogOwned := service.Labels[catalogLabel] == TinyModelCatalogID
 	if service.Labels[managedByLabel] != managedByAgent ||
-		service.Labels[catalogLabel] != catalogID {
+		(strings.TrimSpace(service.Annotations[sourceIDAnnotation]) == "" && !legacyCatalogOwned) {
 		return fmt.Errorf(
-			"InferNexService %s is not owned by InferNex Agent catalog %q; refusing to mutate it",
+			"InferNexService %s is not owned by an InferNex Agent deployment change; refusing to mutate it",
 			key,
-			catalogID,
 		)
 	}
 	return nil
 }
 
 func resultFor(request Request, operation string) Result {
-	return Result{
+	result := Result{
 		Namespace:    request.Namespace,
 		Name:         request.Name,
+		SourceID:     request.SourceID,
 		CatalogID:    request.CatalogID,
 		Operation:    operation,
 		ResourceKind: "InferNexService",
-		Endpoint: fmt.Sprintf(
+		Message:      "InferNex Bridge owns workload reconciliation; inspect readiness and topology before using the service endpoint.",
+	}
+	if request.CatalogID == TinyModelCatalogID {
+		result.Endpoint = fmt.Sprintf(
 			"http://%s-engine-aggregate.%s.svc:8080",
 			request.Name,
 			request.Namespace,
-		),
-		InferenceAPI: "/v1/chat/completions",
+		)
+		result.InferenceAPI = "/v1/chat/completions"
 	}
+	return result
 }
 
-func objectMeta(namespace string, name string) metav1.ObjectMeta {
+func objectMeta(namespace, name, sourceID string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
 		Namespace: namespace,
 		Name:      name,
 		Labels: map[string]string{
 			managedByLabel: managedByAgent,
-			catalogLabel:   TinyModelCatalogID,
+		},
+		Annotations: map[string]string{
+			sourceIDAnnotation: sourceID,
 		},
 	}
+}
+
+func (d *KubernetesDeployer) desiredFromSource(
+	ctx context.Context,
+	request Request,
+) (*infernexv1alpha1.InferNexService, error) {
+	desired := &infernexv1alpha1.InferNexService{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: infernexv1alpha1.GroupVersion.String(),
+			Kind:       "InferNexService",
+		},
+		ObjectMeta: objectMeta(request.Namespace, request.Name, request.SourceID),
+	}
+	if request.SourceID == "builtin:"+TinyModelCatalogID {
+		legacy := tinyModelService(request.Namespace, request.Name)
+		legacy.Annotations[sourceIDAnnotation] = request.SourceID
+		return legacy, nil
+	}
+
+	if strings.HasPrefix(request.SourceID, "service:") {
+		parts := strings.Split(request.SourceID, ":")
+		if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+			return nil, fmt.Errorf("invalid stable-service sourceId %q", request.SourceID)
+		}
+		if !containsNamespace(d.sourceNamespaces, parts[1]) {
+			return nil, fmt.Errorf("source namespace %q is outside the discovered Agent scope", parts[1])
+		}
+		source := &infernexv1alpha1.InferNexService{}
+		key := types.NamespacedName{Namespace: parts[1], Name: parts[2]}
+		if err := d.client.Get(ctx, key, source); err != nil {
+			return nil, fmt.Errorf("get stable deployment source %s: %w", key, err)
+		}
+		if !stableSource(source) {
+			return nil, fmt.Errorf("deployment source %s is no longer Ready at its current generation", key)
+		}
+		desired.Spec = source.DeepCopy().Spec
+		// An omitted SourceRef namespace means "the InferNexService namespace".
+		// The Agent creates the new service in its isolated workspace, so make the
+		// original namespace explicit to preserve the stable source's semantics.
+		if desired.Spec.SourceRef != nil && strings.TrimSpace(desired.Spec.SourceRef.Namespace) == "" {
+			desired.Spec.SourceRef.Namespace = source.Namespace
+		}
+		return desired, nil
+	}
+
+	if strings.HasPrefix(request.SourceID, "profile:") {
+		name := strings.TrimPrefix(request.SourceID, "profile:")
+		if problems := validation.IsDNS1123Subdomain(name); len(problems) > 0 {
+			return nil, fmt.Errorf("invalid profile sourceId %q", request.SourceID)
+		}
+		profile := &infernexv1alpha1.InferNexServiceConfig{}
+		key := types.NamespacedName{Namespace: d.templateNamespace, Name: name}
+		if err := d.client.Get(ctx, key, profile); err != nil {
+			return nil, fmt.Errorf("get deployment profile %s: %w", key, err)
+		}
+		if profile.Spec.Engine == nil ||
+			(profile.Spec.Engine.Template == nil &&
+				(profile.Spec.Engine.Prefill == nil || profile.Spec.Engine.Prefill.Template == nil)) {
+			return nil, fmt.Errorf("profile %s does not contain a complete inference engine template", key)
+		}
+		desired.Spec.BaseRefs = []infernexv1alpha1.NamedRef{{Name: profile.Name}}
+		return desired, nil
+	}
+
+	return nil, fmt.Errorf("unsupported sourceId %q; refresh infernex_list_deployment_sources", request.SourceID)
+}
+
+func normalizedNamespaces(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func containsNamespace(values []string, wanted string) bool {
+	for _, value := range normalizedNamespaces(values) {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func sanitizedModelURI(value string) string {
+	value = strings.TrimSpace(value)
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return value
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func stableSource(service *infernexv1alpha1.InferNexService) bool {
+	if service == nil || !service.Status.Ready || service.Status.ObservedGeneration < service.Generation {
+		return false
+	}
+	for _, condition := range service.Status.Conditions {
+		if condition.Type == "Degraded" && condition.Status == metav1.ConditionTrue {
+			return false
+		}
+	}
+	return true
+}
+
+func serviceSourceID(namespace, name string) string {
+	return "service:" + namespace + ":" + name
+}
+
+func profileSourceID(name string) string {
+	return "profile:" + name
+}
+
+func namedRefNames(refs []infernexv1alpha1.NamedRef) []string {
+	result := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.Name) != "" {
+			result = append(result, ref.Name)
+		}
+	}
+	return result
 }

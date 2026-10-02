@@ -1,0 +1,7 @@
+apiVersion: v2
+name: infernex-acceptance-inventory-fixture
+description: Test-only pause workload for Helm ownership inventory checks
+type: application
+version: 0.1.0
+appVersion: "fixture-v1"
+

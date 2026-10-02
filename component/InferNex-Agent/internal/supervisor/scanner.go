@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -25,6 +26,7 @@ import (
 	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
@@ -55,15 +57,28 @@ type Config struct {
 }
 
 type Scanner struct {
-	observer      observer.Observer
-	analyzer      Analyzer
-	remediator    Remediator
-	diagnoser     diagnostics.Diagnoser
-	store         *SnapshotStore
-	config        Config
-	now           func() time.Time
-	cache         map[string]cachedAnalysis
-	failureCounts map[string]int
+	observer   observer.Observer
+	analyzer   Analyzer
+	remediator Remediator
+	diagnoser  diagnostics.Diagnoser
+	store      *SnapshotStore
+	config     Config
+	now        func() time.Time
+	cache      map[string]cachedAnalysis
+	failures   map[string]criticalFailure
+}
+
+type recoveryIdentity struct {
+	uid        string
+	generation int64
+	enabled    bool
+	profile    string
+	name       string
+}
+
+type criticalFailure struct {
+	identity recoveryIdentity
+	scans    int
 }
 
 type cachedAnalysis struct {
@@ -107,15 +122,15 @@ func New(
 		config.MinCriticalScans = defaultMinCriticalScans
 	}
 	return &Scanner{
-		observer:      domainObserver,
-		analyzer:      analyzer,
-		remediator:    domainRemediator,
-		diagnoser:     config.Diagnoser,
-		store:         store,
-		config:        config,
-		now:           time.Now,
-		cache:         make(map[string]cachedAnalysis),
-		failureCounts: make(map[string]int),
+		observer:   domainObserver,
+		analyzer:   analyzer,
+		remediator: domainRemediator,
+		diagnoser:  config.Diagnoser,
+		store:      store,
+		config:     config,
+		now:        time.Now,
+		cache:      make(map[string]cachedAnalysis),
+		failures:   make(map[string]criticalFailure),
 	}, nil
 }
 
@@ -159,6 +174,11 @@ func (s *Scanner) ScanOnce(ctx context.Context) Snapshot {
 	for key := range s.cache {
 		if _, active := activeCacheKeys[key]; !active {
 			delete(s.cache, key)
+		}
+	}
+	for key := range s.failures {
+		if _, active := activeCacheKeys[key]; !active || ctx.Err() != nil {
+			delete(s.failures, key)
 		}
 	}
 	snapshot.Summary = summarizeSnapshot(snapshot.Namespaces)
@@ -270,6 +290,9 @@ func (s *Scanner) collectService(
 		result.Issues = append(result.Issues, issueForError("INSPECT_FAILED", "InferNexService", err))
 	} else {
 		result.Detail = detail
+		if identityFor(summary) != identityFor(detail.Service) {
+			result.Issues = append(result.Issues, changedObservationIssue(summary.Name))
+		}
 	}
 
 	topology, err := s.observer.GetTopology(ctx, summary.Namespace, summary.Name)
@@ -277,6 +300,9 @@ func (s *Scanner) collectService(
 		result.Issues = append(result.Issues, issueForError("TOPOLOGY_FAILED", "InferNexService", err))
 	} else {
 		result.Topology = topology
+		if identityFor(result.Detail.Service) != identityFor(topology.Service) {
+			result.Issues = append(result.Issues, changedObservationIssue(summary.Name))
+		}
 	}
 
 	result.Issues = append(result.Issues, detectStateIssues(result.Detail.Service, result.Topology)...)
@@ -332,11 +358,11 @@ func (s *Scanner) evaluateRemediation(
 ) {
 	policy := service.Detail.Service.Recovery
 	if policy == nil || !policy.Enabled {
-		delete(s.failureCounts, key)
+		delete(s.failures, key)
 		return
 	}
 	if strings.TrimSpace(policy.Profile) == "" {
-		delete(s.failureCounts, key)
+		delete(s.failures, key)
 		service.Remediation = &Remediation{
 			Status:  "invalid-policy",
 			Message: "auto-recovery is enabled but no approved recovery profile is configured",
@@ -344,7 +370,7 @@ func (s *Scanner) evaluateRemediation(
 		return
 	}
 	if s.remediator == nil {
-		delete(s.failureCounts, key)
+		delete(s.failures, key)
 		service.Remediation = &Remediation{
 			Status:  "disabled",
 			Profile: policy.Profile,
@@ -352,9 +378,18 @@ func (s *Scanner) evaluateRemediation(
 		}
 		return
 	}
+	if ctx.Err() != nil || hasIncompleteObservation(service.Issues) {
+		delete(s.failures, key)
+		service.Remediation = &Remediation{
+			Status:  "watching",
+			Profile: policy.Profile,
+			Message: "recovery waits for a complete, consistent service observation",
+		}
+		return
+	}
 	if service.Detail.Service.ObservedGeneration < service.Detail.Service.Generation ||
 		!hasCriticalIssue(service.Issues) {
-		delete(s.failureCounts, key)
+		delete(s.failures, key)
 		service.Remediation = &Remediation{
 			Status:  "watching",
 			Profile: policy.Profile,
@@ -363,8 +398,14 @@ func (s *Scanner) evaluateRemediation(
 		return
 	}
 
-	s.failureCounts[key]++
-	failureScans := s.failureCounts[key]
+	identity := identityFor(service.Detail.Service)
+	failure := s.failures[key]
+	if failure.identity != identity {
+		failure = criticalFailure{identity: identity}
+	}
+	failure.scans++
+	s.failures[key] = failure
+	failureScans := failure.scans
 	service.Remediation = &Remediation{
 		Status:       "waiting",
 		Profile:      policy.Profile,
@@ -383,8 +424,20 @@ func (s *Scanner) evaluateRemediation(
 		SourceName: service.Detail.Service.Name,
 		Profile:    policy.Profile,
 		Name:       policy.Name,
+		ExpectedSource: &remediator.SourceIdentity{
+			UID:        types.UID(service.Detail.Service.UID),
+			Generation: service.Detail.Service.Generation,
+		},
 	})
 	if err != nil {
+		if errors.Is(err, remediator.ErrRecoveryPrecondition) {
+			delete(s.failures, key)
+			service.Remediation.Status = "watching"
+			service.Remediation.FailureScans = 0
+			service.Remediation.Error = boundedMessage(err.Error())
+			service.Remediation.Message = "recovery preconditions changed; waiting for new consecutive critical scans"
+			return
+		}
 		service.Remediation.Status = "error"
 		service.Remediation.Error = boundedMessage(err.Error())
 		service.Remediation.Message = "failed to ensure recovery InferNexService"
@@ -395,6 +448,35 @@ func (s *Scanner) evaluateRemediation(
 	service.Remediation.Name = result.Name
 	service.Remediation.ChangeID = result.ChangeID
 	service.Remediation.Message = "recovery InferNexService is managed by InferNex Bridge"
+}
+
+func identityFor(service observer.ServiceSummary) recoveryIdentity {
+	identity := recoveryIdentity{uid: service.UID, generation: service.Generation}
+	if service.Recovery != nil {
+		identity.enabled = service.Recovery.Enabled
+		identity.profile = strings.TrimSpace(service.Recovery.Profile)
+		identity.name = strings.TrimSpace(service.Recovery.Name)
+	}
+	return identity
+}
+
+func changedObservationIssue(name string) Issue {
+	return Issue{
+		Severity: SeverityWarning,
+		Code:     "OBSERVATION_CHANGED",
+		Message:  "service identity, generation, or recovery policy changed during observation",
+		Resource: "InferNexService/" + name,
+	}
+}
+
+func hasIncompleteObservation(issues []Issue) bool {
+	for _, issue := range issues {
+		switch issue.Code {
+		case "INSPECT_FAILED", "TOPOLOGY_FAILED", "EVENTS_FAILED", "DIAGNOSTICS_FAILED", "DIAGNOSTICS_DEFERRED", "OBSERVATION_CHANGED":
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Scanner) analyzeService(ctx context.Context, service ServiceSnapshot) Analysis {

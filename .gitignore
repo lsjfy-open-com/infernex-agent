@@ -1,1 +1,3 @@
 .idea/
+.tmp-go-cache/
+component/InferNex-Agent/.chat-tests.exe

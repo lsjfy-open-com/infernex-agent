@@ -59,7 +59,8 @@ helm upgrade --install "${release_name}" "${agent_chart}" \
   --set "image.tag=${agent_image_tag}" \
   --set "image.pullPolicy=Never" \
   --set "rbac.targetNamespaces[0]=${model_namespace}" \
-  --set "tools.deployment.enabled=true"
+  --set "tools.deployment.enabled=true" \
+  --set "tools.deployment.testCatalog=true"
 
 kubectl -n "${agent_namespace}" rollout status \
   "deployment/${release_name}" \
@@ -268,7 +269,8 @@ assert_mcp_result "idempotent deployment" '
 
 # Exercise the real automatic rollback path without waiting for a deadline.
 # Pause Bridge so it cannot overwrite the injected status, create a separate
-# catalog object, then report Degraded for its observed generation.
+# catalog object, then bind both status and Degraded to its actual generation.
+# An undated or stale Degraded condition must not trigger early rollback.
 rollback_name="${model_name}-rollback-probe"
 rollback_request="$(
   jq -nc \
@@ -307,6 +309,7 @@ kubectl -n "${model_namespace}" patch \
           conditions:[{
             type:"Degraded",
             status:"True",
+            observedGeneration:$generation,
             reason:"KindRollbackInjection",
             message:"Intentional CI rollback verification",
             lastTransitionTime:(now | todate)
