@@ -32,6 +32,8 @@ E2a/E2b 是 E2 的知识来源增量验收，不改变 E2 原有的构建、离�
 
 ## 私域部署增量顺序（沿用本页阶段编号）
 
+开工切片已冻结为 PR1 中立记录、PR2 Docker/K8s 只读发现、PR3 原子存储与 CLI/MCP 入口；详见[实现顺序与门禁](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)。前三个 PR 不依赖客户硬件即可实施；Docker-only 无 kubeconfig 启动和原 K8s 自动发现必须同时验证。该判定不代表后续部署执行或 PD 已交付。
+
 以下是现有阶段的新场景拆分，不建立第二套排期。全部处于设计状态；以客户首个已确认的引擎、硬件与模板为起点，真实资料未齐时记录阻塞。
 
 | 增量 | 对应阶段 | 可独立评审的交付 | 依赖与完成条件 |

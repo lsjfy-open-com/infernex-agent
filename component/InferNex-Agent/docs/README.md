@@ -36,4 +36,8 @@
 - [Docker/K8s 聚合与 PD 部署：领域模型、适配契约和受控自演进](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)
 - [两阶段验收补充：环境、用例、证据和量化标准](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)
 
+- [实施入口：顺序、首批 PR 与开工门禁](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)
+- [首批字段与接口合同](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-contracts-zh.md)
+- [首批实现验收：fixture、用例和命令](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-acceptance-zh.md)
+
 以上是 `codex/private-deployment-evolution` 分支设计，尚未作为运行能力交付。

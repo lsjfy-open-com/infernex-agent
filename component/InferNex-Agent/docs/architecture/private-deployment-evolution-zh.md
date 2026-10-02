@@ -47,6 +47,8 @@ Agent 不转发业务推理流量。请求路由与 KV 数据传输是部署对�
 
 ## 3. 领域模型：事实、意图、能力与运行记录分别保存
 
+首批编码范围已收敛为 Environment 与 InventorySnapshot 两个持久对象，其他领域概念先作为快照内嵌实体或后续合同。字段、引用、摘要、限额与存储以[首批实现合同](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-contracts-zh.md)为准；下表是完整目标模型，不要求 PR1 一次实现全部对象。
+
 新规范记录拟包含 `schemaVersion`、`kind`、稳定 `id`、`revision`、`tenantScope`、创建时间和内容摘要。旧 `apiVersion/kind` 记录通过显式转换读取，不宣称已有这些新字段。引用采用 `{tenantScope, kind, id, revision}`，环境内对象另绑定 environment；禁止隐式跨租户引用。显示名采用关键词加日期，hash 用于索引与完整性。schemaVersion 管数据格式，组件版本和能力包版本分别管理，不混用。摘要规则必须版本化：UTF-8 JSON、对象键排序、数组保留语义顺序、缺失与 null 区分、数值只使用有限整数，计量小数采用规范单位字符串；计算时排除自身 digest 字段。计划以规范化执行载荷另算摘要，不能仅用展示文本或时间戳代替。示例文件的短引用仅在同一示例作用域中解析，正式持久化需展开为完整引用。
 
 | 对象 | 必需信息与主要关系 |
@@ -158,6 +160,9 @@ Dashboard 延用 Host IP 部署方式，逐步增加“环境清单、服务拓�
 每个阶段同时包含负例、恢复和可视化所需读接口。客户急需 K8s 时可调整 Docker/K8s 执行顺序，但不跳过管理权、计划及验收契约。第一批需要客户补充：现有两种 Docker 启动配置、K8s 模板、引擎/镜像版本、设备拓扑、权重路径与修订、入口/KV 配置、身份与联网范围、健康部署基线及 SLO。提交脱敏样例即可，不收集密钥。
 
 ## 10. 示例与验收入口
+
+- [实现顺序与开工判定](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)：前三个 PR 已可开始，后续执行器按现场输入门禁推进。
+- [前三个 PR 的可执行验收规范](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-acceptance-zh.md)：fixture、测试命令、负例与兼容门槛。
 
 - [四种部署组合的设计样例](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/examples/private-deployment-model.json)：用于评审领域关系，不可直接 apply，缺现场 Profile 时为 blocked。
 - [私域部署两阶段验收补充](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)：环境、数据、案例、量化门槛与未测项。
