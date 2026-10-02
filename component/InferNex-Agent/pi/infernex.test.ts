@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
-import { dirname } from "node:path";
+import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import infernexExtension, { registerAutonomousTask, registerTurnBoundaryCompaction } from "./infernex.ts";
 
@@ -372,10 +372,11 @@ test("boundary compaction failure, cancellation, user input and pending input ne
 });
 
 test("pinned Pi AgentSession compacts the real tool loop without duplicate continuation or deadlock", async (t) => {
- const codingAgentEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
- const codingAgentRoot = dirname(dirname(codingAgentEntry));
- const dependency = (name: string) => pathToFileURL(join(codingAgentRoot, "..", name, "dist", "index.js")).href;
- const [coding, ai] = await Promise.all([import(pathToFileURL(codingAgentEntry).href), import(dependency("pi-ai"))]);
+ const codingAgentEntry = import.meta.resolve("@earendil-works/pi-coding-agent");
+ const piAiPackage = findPackageJSON("@earendil-works/pi-ai", codingAgentEntry);
+ assert.ok(piAiPackage, "resolve Pi's own pi-ai dependency");
+ const piAiEntry = pathToFileURL(join(dirname(piAiPackage), "dist", "index.js")).href;
+ const [coding, ai] = await Promise.all([import(codingAgentEntry), import(piAiEntry)]);
 
  for (const summaryFails of [false, true]) {
   await t.test(summaryFails ? "summary failure stops and preserves held input" : "queued steering resumes from one compaction", async () => {
