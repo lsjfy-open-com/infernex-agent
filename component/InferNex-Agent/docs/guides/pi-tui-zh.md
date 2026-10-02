@@ -24,19 +24,19 @@ Pi 已经提供成熟的终端编辑、流式输出、工具过程展示、Sessi
 
 包含 Pi 的候选宿主机包仍然使用原来的一条安装命令。安装并配置模型接口后执行：
 
-当前现场测试版本是 `v0.5.0-alpha.15`。在 Release 中只需按管理节点 CPU 架构选择一个包：
+当前现场测试版本是 [v0.5.0-alpha.22](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.22)。在 Release 中只需按管理节点 CPU 架构选择一个包：
 
 ```text
-infernex-agent-0.5.0-alpha.15-linux-amd64.tar.gz  # x86_64
-infernex-agent-0.5.0-alpha.15-linux-arm64.tar.gz  # aarch64/openEuler A2
+infernex-agent-0.5.0-alpha.22-linux-amd64.tar.gz  # x86_64
+infernex-agent-0.5.0-alpha.22-linux-arm64.tar.gz  # aarch64/openEuler A2
 ```
 
 下载包和同名 `.sha256` 后执行：
 
 ```bash
-sha256sum --check infernex-agent-0.5.0-alpha.15-linux-*.tar.gz.sha256
-tar -xzf infernex-agent-0.5.0-alpha.15-linux-*.tar.gz
-cd infernex-agent-0.5.0-alpha.15-linux-*
+sha256sum --check infernex-agent-0.5.0-alpha.22-linux-*.tar.gz.sha256
+tar -xzf infernex-agent-0.5.0-alpha.22-linux-*.tar.gz
+cd infernex-agent-0.5.0-alpha.22-linux-*
 sudo ./install.sh
 sudo infernex-agent chat
 ```

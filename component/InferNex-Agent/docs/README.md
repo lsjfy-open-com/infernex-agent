@@ -4,7 +4,7 @@
 
 | 你要做什么 | 从这里开始 |
 | --- | --- |
-| 安装/升级实验包 | [alpha.21 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.21-zh.md)、[离线安装](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/offline-install-zh.md)、[安装模式](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/install-and-modes-zh.md)、[openEuler 管理节点](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/host-install-openeuler-zh.md) |
+| 安装/升级实验包 | [alpha.22 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.22-zh.md)、[离线安装](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/offline-install-zh.md)、[安装模式](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/install-and-modes-zh.md)、[openEuler 管理节点](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/host-install-openeuler-zh.md) |
 | 配模型与使用 TUI | [模型配置](guides/model-configuration-zh.md)、[Pi TUI](guides/pi-tui-zh.md)、[产品使用](guides/product-guide-zh.md) |
 | 看当前到底支持什么 | [通用底座能力矩阵](architecture/kubernetes-first-zh.md)、[MCP 工具目录](reference/mcp-tool-catalog-zh.md) |
 | 只读估算同规格实例能否放入当前集群快照 | [部署规格资源规划](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md) |

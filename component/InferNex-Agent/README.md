@@ -1,4 +1,4 @@
-> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.21 增强 Host TUI 命令分类与显式 `root risk` 模式，并保留 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
@@ -15,7 +15,7 @@ images, or shell commands.
 The intended management-node installation is one command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.21/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.21 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.22/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.22 bash
 ```
 
 The installer discovers the current kubeconfig, CPU architecture, and whether
@@ -43,10 +43,10 @@ Markdown-only Skills without granting shell or cluster permissions; see the
 Alpha.17 fixes direct Host Dashboard access and adds a native Kubernetes overview, including explicit empty, partial-permission, and fetch-error states.
 
 The current public candidate is
-[v0.5.0-alpha.21](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.21); its Linux identity and dual-architecture bundle gates have completed, while hardware-site validation remains pending.
+[v0.5.0-alpha.22](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.22); its Linux tests and dual-architecture bundle gates have completed, while hardware-site validation remains pending.
 It includes the Pi TUI, generic Kubernetes reads, guarded Bridge operations,
 host/SSH/Pod diagnostics, compact tool rows, readable report and memory names,
-and manual/full approval modes. Alpha.21 improves command classification and adds an explicit session-scoped `root risk` mode. Alpha.20 added the first read-only homogeneous deployment-profile resource plan,
+and manual/full approval modes. Alpha.22 fixes automatic Pi context compaction at tool-loop boundaries; with the default 32K window and 8K output reserve, the effective trigger is approximately 75%, and an upgraded installation must restart the TUI to load the new settings. Alpha.21 improves command classification and adds an explicit session-scoped `root risk` mode. Alpha.20 added the first read-only homogeneous deployment-profile resource plan,
 while retaining alpha.19 no-argument kubeconfig discovery and the alpha.18 Dashboard live-YAML view. Alpha.16 adds optional approved SLO gates in Bridge
 experiments and local Git/snapshot configuration records; see the
 [SLO and version guide](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/slo-and-config-versions-zh.md). Native deployment writes and request-level load balancing remain planned capabilities.

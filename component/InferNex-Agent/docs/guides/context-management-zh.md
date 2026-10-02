@@ -4,7 +4,7 @@
 
 默认 `infernex-agent chat` 使用 Pi TUI；`chat --classic` 使用兼容 Go 终端。两者的运行循环不同，下面“默认策略”及其后各节描述的是兼容终端，不能据此认为 Pi 已使用同一套预算检查。
 
-本次 develop 修复（尚未包含在 alpha.21 安装包）补齐 Pi 的配置与工具循环检查：启动 TUI 时，将 `/etc/infernex-agent/agent.conf` 中的上下文窗口、输出预算和 `context-compaction-threshold` 同步为 Pi 模型与压缩设置。默认百分比为 80%；若输出预留需要更多空间，会提前触发。例如 32,768 窗口、8,192 输出预算时，最迟在输入约占 75% 时触发。保留的近期上下文也会随可用窗口缩小，避免小窗口沿用 Pi 固定的 20,000 token 保留量。
+[alpha.22 安装包](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.22) 已包含 Pi 的配置与工具循环检查修复：启动 TUI 时，将 `/etc/infernex-agent/agent.conf` 中的上下文窗口、输出预算和 `context-compaction-threshold` 同步为 Pi 模型与压缩设置。默认百分比为 80%；若输出预留需要更多空间，会提前触发。例如 32,768 窗口、8,192 输出预算时，最迟在输入约占 75% 时触发。保留的近期上下文也会随可用窗口缩小，避免小窗口沿用 Pi 固定的 20,000 token 保留量。
 
 连续工具调用在每批工具完成后的边界检查上下文占用，先完成摘要压缩，再继续原任务。工具结果和未完成事项通过 Pi 的会话摘要保留；不会为了压缩重新执行已完成的工具。压缩失败或取消时暂停自动续行并显示原因，用户可处理模型接口问题后使用 `/compact`。压缩不改变 `normal/root` 身份或 `manual/full/risk` 审批策略。
 

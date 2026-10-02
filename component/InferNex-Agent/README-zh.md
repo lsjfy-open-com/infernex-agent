@@ -1,8 +1,8 @@
-> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.21 增强 Host TUI 命令分类与显式 `root risk` 模式，并保留 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
-alpha.21 改进常用只读命令分类并新增当前会话显式取消逐次批准的 `root risk`，同时保留 alpha.20 的同构单实例 Profile 只读资源规划、无参数 kubeconfig 自动发现、Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；规划方式和边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
+alpha.22 修复 Pi TUI 持续工具调用到达上下文阈值后不压缩的问题；默认 32K 窗口和 8K 输出预留的有效触发点约为 75%，升级后须退出旧 TUI 并重新启动。它保留 alpha.21 的常用只读命令分类和当前会话 `root risk`，以及 alpha.20 的同构单实例 Profile 只读资源规划、无参数 kubeconfig 自动发现、Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；详见[alpha.22 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.22-zh.md)。
 
 [English](README.md) | 简体中文
 
@@ -41,7 +41,7 @@ Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的�
 联网安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.21/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.21 bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.22/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.22 bash
 ```
 
 离线安装：
@@ -108,7 +108,7 @@ Pod UID 写入 Agent Evidence Store。Pod 重建后旧 segment 不丢失；
 token/context 状态和流式工具展示，同时继续由 Go 服务执行受控 MCP 工具、审批和回退。详见
 [Pi TUI 使用与边界](docs/guides/pi-tui-zh.md)。
 
-当前 Pi TUI 默认入口测试包为 [`v0.5.0-alpha.21`](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.21)（Linux 身份与双架构安装包门禁已完成，硬件现场仍待验证；整合部署/恢复保护、只读资源规划、命令分类与显式 `root risk`），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
+当前 Pi TUI 默认入口测试包为 [`v0.5.0-alpha.22`](https://github.com/lsjfy-open-com/infernex-agent/releases/tag/infernex-agent-v0.5.0-alpha.22)（Linux 测试与双架构安装包门禁已完成，硬件现场仍待验证；整合上下文压缩修复、部署/恢复保护、只读资源规划、命令分类与显式 `root risk`），同时提供 amd64 与 arm64，不替换当前 v0.4 RC 稳定测试线。alpha.12 包含默认 8192 输出上限、跨 Session 语义记忆、默认折叠 reasoning block，以及受控的历史日志分析与 Markdown 报告。完整离线包也已内置固定版本的 `ripgrep (rg)` 和 `fd`，TUI 文件搜索不再依赖目标服务器联网安装工具。
 
 模型仍可在内部进行 reasoning，但 TUI 默认只展示最终回答，避免长分析淹没运维结论。按 `Ctrl+T` 可在当前 TUI 中临时切换，也可运行 `configure-model.sh --reasoning-display visible` 持久显示；classic chat 本身不会打印服务端的 `reasoning_content`。
 
