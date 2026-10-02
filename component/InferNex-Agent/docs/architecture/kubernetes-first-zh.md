@@ -1,3 +1,5 @@
+> 本文继续定义 Kubernetes 适配子域；Docker/K8s 统一模型与聚合/PD 拓扑见[私域跨环境部署设计](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)。新增设计尚未实现，原有能力边界仍有效。
+
 # Kubernetes 通用底座与环境适配
 
 状态：架构决策与分期验收契约。alpha.20 只交付 D1 的第一个只读资源规划切片；本文明确区分该切片、完整 D1 目标和后续能力，不把设计中的接口、调度器或路由器写成产品已有功能。
@@ -57,7 +59,7 @@ Core 不导入客户 CRD，也不规定必须存在 InferNexService。Agent 不�
 
 “单实例规格”和“服务实例数”分开：一个 TP=4 实例可占 4 张卡；两个这样的实例需至少两组可满足拓扑约束的四卡资源，不能只把 replicas 写成 8。
 
-alpha.20 已实现的范围仅是：由 CLI JSON 文件或 MCP 内联参数接收一种同构的单实例 Profile，读取调用身份可见的 Node、Pod 与支持的 namespace 范围，估算 `replicas` 个实例的资源可容纳性和逐节点放置，并返回 `profileHash`、`snapshotHash` 与绑定 namespace/replicas/两者的 `planHash`。读取或认证/RBAC 失败时不生成 Plan；读取成功但遇到 PVC、affinity、ResourceClaim、Pod-level resources、无法可靠扣除的占用等未建模条件时返回 `blocked`。`resource-fit` 仍不等于调度、预留、批准、Ready、流量或性能验证。alpha.20 不支持异构 Profile 组合，也不创建或修改 Kubernetes 对象。操作边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
+alpha.20 已实现的范围仅是：由 CLI JSON 文件或 MCP 内联参数接收一种同构的单实例 Profile，读取调用身份可见的 Node、Pod 与支持的 namespace 范围，估算 `replicas` 个实例的资源可容纳性和逐节点放置，并返回 `profileHash`、`snapshotHash` 与绑定 namespace/replicas/两者的 `planHash`。读取或认证/RBAC 失败时不生成 Plan；读取成功但遇到 PVC、affinity、ResourceClaim、Pod-level resources、无法可靠扣除的占用等未建模条件时返回 `blocked`。`resource-fit` 仍不等于调度、预留、批准、Ready、流量或性能验证。alpha.20 不支持异构 Profile 组合，也不创建或修改 Kubernetes 对象。操作边界见[部署规格资源规划指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/deployment-planning-zh.md)。
 
 以下条目描述完整 D1 及其后续衔接目标；没有标为 alpha.20 已实现的内容仍是待交付契约：
 

@@ -1,20 +1,20 @@
-# 课题简介：面向异构 Kubernetes 推理集群的跨环境自动部署 Agent
+# 课题简介：面向 Docker 与 Kubernetes 异构推理环境的跨环境自动部署 Agent
 
 研究目标：面向不同客户的推理部署环境，构建能够识别环境、规划实例规格、自动生成并执行部署方案、验证上线效果的 Agent，并支持部署后的扩缩、持续优化、版本升级与回退。故障分析服务于部署失败处理和上线保障。
 
-本文用于课题介绍与对外引用，只说明背景、痛点、期望结果和验收类别。环境规格、案例输入、日志数据、测试步骤及量化门槛见独立的[环境与两阶段验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。
+本文用于课题介绍与对外引用，只说明背景、痛点、期望结果和验收类别。环境规格、案例输入、日志数据、测试步骤及量化门槛见独立的[环境与两阶段验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。
 
 ## 1. 背景信息
 
-企业推理服务运行在不同的 Kubernetes 平台、推理框架和 GPU／NPU 硬件上，需要将模型、可用资源与服务等级目标（SLO）转换为可运行、可验收的部署。参考[智谱基础设施 Agent 案例](https://z.ai/blog/glm-built-its-inference-infrastructure)与 [DeepSeek Harness](https://deepseek.com/harness/en/) 的能力组织思路，本课题研究跨环境自动部署，以及部署后的扩缩、性能优化、版本升级与回退。
+企业推理服务运行在纯 Docker、Kubernetes 及客户封装平台上，采用聚合或 Prefill/Decode 分离（PD）形态，涉及不同推理框架和 GPU／NPU 硬件，需要将模型、可用资源与服务等级目标（SLO）转换为可运行、可验收的部署。参考[智谱基础设施 Agent 案例](https://z.ai/blog/glm-built-its-inference-infrastructure)与 [DeepSeek Harness](https://deepseek.com/harness/en/) 的能力组织思路，本课题研究跨环境自动部署，以及部署后的扩缩、性能优化、版本升级与回退。
 
 ## 2. 痛点描述
 
-客户环境差异大，部署前需要人工识别平台、核对依赖并选择实例规格；模板、参数和启动步骤分散，换环境往往要重复适配。容器启动后，又缺少对真实请求、流量分布和性能达标的统一验收。联网与离线物料交付不一致，配置、镜像、外部权重引用及运行快照缺少关联，也使升级难以复现、回退目标不清晰。
+客户环境差异大，部署前需要人工识别平台、核对依赖并选择实例规格；私域中的模型参数、权重存储引用、模板和启动步骤分散，换环境往往要重复适配。容器启动后，又缺少对真实请求、流量分布和性能达标的统一验收。联网与离线物料交付不一致，配置、镜像、外部权重引用及运行快照缺少关联，也使升级难以复现、回退目标不清晰。
 
 ## 3. 期望结果与建议
 
-构建以轻量环境模型和可复用能力包为基础的部署 Agent，完成环境识别、规格规划、模板生成、部署执行和上线验收，并支持联网／离线制品管理、Git＋快照版本记录及受控回退。建议在约定测试集上，自主部署与升级成功率均 ≥95%；同模型、同资源和同负载下，相对健康部署基线，有效吞吐下降 <20%，首 token 延迟（TTFT）与后续每 token 平均耗时（TPOT）的 p95 增幅各 <20%，且满足业务 SLO。人工修复不计自主成功，影响集群的操作须获批准；样本、耗时、质量和恢复门槛按[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)执行。
+构建以带来源与版本的轻量领域模型和可复用能力包为基础的部署 Agent，分别描述运行环境、聚合/PD 拓扑、引擎语义及资源条件，完成环境识别、规格规划、模板生成、部署执行和上线验收，并支持联网／离线制品管理、Git＋快照版本记录及受控回退。建议在约定测试集上，自主部署与升级成功率均 ≥95%；同模型、同资源和同负载下，相对健康部署基线，有效吞吐下降 <20%，首 token 延迟（TTFT）与后续每 token 平均耗时（TPOT）的 p95 增幅各 <20%，且满足业务 SLO。人工修复不计自主成功，影响集群的操作须获批准；样本、耗时、质量和恢复门槛按[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)执行。
 
 ## 4. 验收类别与阶段
 
@@ -29,7 +29,7 @@
 | 能力构建、复用与治理 | 工具和知识有明确来源及权限边界 | 新适配能力构建、独立测试、版本复用与子任务约束 |
 | 可视化、交付与可复现性 | 状态、配置来源、报告和证据可理解 | 完整实验和版本过程可查看，环境及验收结果可重现 |
 
-核心指标包括部署成功率、首次部署耗时、人工介入次数、跨环境适配成本、SLO 达标率和升级回退成功率；识别准确性、执行边界与证据完整性作为支撑要求。上述核心目标对应的完整样本要求、统计口径、阈值和不适用条件统一维护在[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)，不以演示效果替代量化验收。
+核心指标包括部署成功率、首次部署耗时、人工介入次数、跨环境适配成本、SLO 达标率和升级回退成功率；识别准确性、执行边界与证据完整性作为支撑要求。上述核心目标对应的完整样本要求、统计口径、阈值和不适用条件统一维护在[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)，不以演示效果替代量化验收。
 
 ## 5. 出题方配套与交付要求
 
@@ -39,5 +39,10 @@
 
 引用入口：
 
-- [环境与两阶段验收细则：环境矩阵、案例、量化门槛、证据与判定规则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)
-- [实验室搭建与案例数据指南：准备、运行、校验和清理](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/next-generation-acceptance-lab-zh.md)
+- [环境与两阶段验收细则：环境矩阵、案例、量化门槛、证据与判定规则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)
+- [实验室搭建与案例数据指南：准备、运行、校验和清理](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/next-generation-acceptance-lab-zh.md)
+
+持续演进设计与客户部署补充：
+
+- [私域跨环境部署领域模型与自演进设计](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)
+- [Docker/K8s 四种部署组合与两阶段验收](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)
