@@ -16,7 +16,7 @@ on:
       version:
         description: SemVer version embedded in the image and chart
         required: true
-        default: "0.5.0-alpha.21"
+        default: "0.5.0-alpha.22"
         type: string
       publish_prerelease:
         description: Publish both architectures as a GitHub prerelease
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.21' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.22' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
     strategy:
       fail-fast: false
@@ -328,7 +328,7 @@ jobs:
     permissions:
       contents: write
     env:
-      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.21' }}
+      BUNDLE_VERSION: ${{ inputs.version || '0.5.0-alpha.22' }}
       INCLUDE_PI_TUI: ${{ github.event_name == 'pull_request' || github.event_name == 'push' || inputs.include_pi_tui }}
 
     steps:
@@ -380,8 +380,8 @@ jobs:
           test "$(printf '%s\n' "${actual_assets[@]}")" = \
             "$(printf '%s\n' "${expected_assets[@]}")"
 
-          pending='alpha.21 安装包尚待构建与校验；'
-          completed='alpha.21 已完成 Linux 身份测试与双架构安装包构建校验；'
+          pending='安装包尚待构建与校验；'
+          completed='已完成 Linux 测试与双架构安装包构建校验；'
           test "$(grep -oF "${pending}" "${release_notes}" | wc -l)" -eq 1
           sed "0,/${pending}/s//${completed}/" "${release_notes}" \
             >"${RUNNER_TEMP}/release-notes.md"
@@ -405,43 +405,9 @@ jobs:
             exit 1
           fi
 
-          abandoned_release_id=398786788
-          abandoned_target=387ee52c0c5dcad1524eb0c70b44e399597ef858
-          abandoned_response="${RUNNER_TEMP}/abandoned-release-response.txt"
-          abandoned_error="${RUNNER_TEMP}/abandoned-release-error.txt"
-          if [[ "${VERSION}" == "0.5.0-alpha.21" ]]; then
-            if gh api --include \
-              "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}" \
-              >"${abandoned_response}" 2>"${abandoned_error}"; then
-              abandoned_status="$(awk 'NR == 1 {print $2}' "${abandoned_response}")"
-              test "${abandoned_status}" = 200
-              abandoned_state="$(
-                gh api "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}"
-              )"
-              jq -e \
-                --argjson id "${abandoned_release_id}" \
-                --arg tag "${tag}" \
-                --arg target "${abandoned_target}" \
-                '.id == $id and .draft == true and .tag_name == $tag and
-                 .target_commitish == $target and (.assets | length == 0)' \
-                <<<"${abandoned_state}" >/dev/null
-              gh api --method DELETE \
-                "repos/${GITHUB_REPOSITORY}/releases/${abandoned_release_id}"
-            else
-              abandoned_status="$(awk 'NR == 1 {print $2}' "${abandoned_response}")"
-              if [[ "${abandoned_status}" == 404 ]]; then
-                echo "Abandoned release ${abandoned_release_id} is already absent."
-              else
-                cat "${abandoned_error}" >&2
-                echo "Could not inspect abandoned release ${abandoned_release_id}; refusing cleanup."
-                exit 1
-              fi
-            fi
-          fi
-
           existing_release_id="$(
             gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"${tag}\" and .id != ${abandoned_release_id}) | .id"
+              --jq ".[] | select(.tag_name == \"${tag}\") | .id"
           )"
           if [[ -n "${existing_release_id}" ]]; then
             echo "Release ${tag} already exists; refusing to overwrite it."
