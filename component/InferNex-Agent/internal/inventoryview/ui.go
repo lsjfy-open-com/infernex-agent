@@ -100,7 +100,7 @@ const indexHTML = `<!doctype html>
 const inventoryJS = `(() => {
   "use strict";
   const API = "/api/v1/inventory";
-  const state = {token:"", environments:[], snapshots:[], environmentNext:"", snapshotNext:"", selected:"", generation:0};
+  const state = {token:"", environments:[], snapshots:[], environmentNext:"", snapshotNext:"", selected:"", generation:0, recordSequence:0, diffSequence:0};
   const byId = id => document.getElementById(id);
   const el = (tag, className, text) => { const node=document.createElement(tag); if(className)node.className=className; if(text!==undefined)node.textContent=String(text); return node; };
   const append = (parent, ...children) => { parent.append(...children); return parent; };
@@ -114,7 +114,7 @@ const inventoryJS = `(() => {
   function setStatus(message, tone="") { const node=byId("status"); node.className="notice"+(tone?" "+tone:""); node.textContent=message; node.classList.remove("hidden"); }
   function clearStatus(){ byId("status").classList.add("hidden"); }
   function showAuthenticated(yes){ byId("login").classList.toggle("hidden",yes); byId("session").classList.toggle("hidden",!yes); byId("app").classList.toggle("hidden",!yes); }
-  function resetViews(){ state.environments=[];state.snapshots=[];state.environmentNext="";state.snapshotNext="";state.selected="";renderLists();byId("record-detail").replaceChildren(el("div","empty","选择一个环境或快照查看详情"));resetDiff(); }
+  function resetViews(){ state.recordSequence++;state.diffSequence++;state.environments=[];state.snapshots=[];state.environmentNext="";state.snapshotNext="";state.selected="";renderLists();byId("record-detail").replaceChildren(el("div","empty","选择一个环境或快照查看详情"));resetDiff(); }
   function logout(message="已退出，页面中的令牌已清除。") { state.generation++; state.token=""; byId("token").value=""; resetViews(); showAuthenticated(false); setStatus(message); byId("token").focus(); }
 
   async function request(path){
@@ -123,6 +123,7 @@ const inventoryJS = `(() => {
     const response=await fetch(path,{method:"GET",headers:{"Accept":"application/json","Authorization":"Bearer "+state.token},cache:"no-store",credentials:"omit",redirect:"error"});
     if(generation!==state.generation)throw new Error("会话已经结束");
     let data=null; try{data=await response.json();}catch(_){data=null;}
+    if(generation!==state.generation)throw new Error("会话已经结束");
     if(response.status===401||response.status===403){ logout("认证失败，令牌已从页面内存清除。"); throw new Error("认证失败"); }
     if(!response.ok){ const message=data&&data.error&&data.error.message?data.error.message:"请求失败（HTTP "+response.status+"）"; throw new Error(message); }
     return data||{};
@@ -149,8 +150,8 @@ const inventoryJS = `(() => {
   }
   async function loadInitial(){clearStatus();setStatus("正在读取环境和快照…");await Promise.all([loadList("Environment"),loadList("InventorySnapshot")]);clearStatus();}
   async function selectRecord(ref){
-    state.selected=refKey(ref);renderLists();const root=byId("record-detail");root.replaceChildren(el("div","empty loading","正在核验并读取记录…"));
-    try{const query=new URLSearchParams({kind:value(ref.kind),id:value(ref.id),revision:String(value(ref.revision))});const data=await request(API+"/record?"+query.toString());renderRecord(data.record||{});}catch(error){root.replaceChildren(el("div","empty error",error.message));}
+    const key=refKey(ref),generation=state.generation,sequence=++state.recordSequence;state.selected=key;renderLists();const root=byId("record-detail");root.replaceChildren(el("div","empty loading","正在核验并读取记录…"));
+    try{const query=new URLSearchParams({kind:value(ref.kind),id:value(ref.id),revision:String(value(ref.revision))});const data=await request(API+"/record?"+query.toString());if(generation!==state.generation||sequence!==state.recordSequence||state.selected!==key)return;renderRecord(data.record||{});}catch(error){if(generation===state.generation&&sequence===state.recordSequence&&state.selected===key&&state.token)root.replaceChildren(el("div","empty error",error.message));}
   }
 
   const metric=(number,label)=>append(el("div","metric"),el("strong","",number),el("span","",label));
@@ -198,9 +199,10 @@ const inventoryJS = `(() => {
   function renderDiffRelationChange(item){const card=el("article","entity"),before=item.before||{},after=item.after||{};card.append(el("h3","",value(after.type,value(before.type,"关系"))),el("div","fact"));card.lastChild.append(el("strong","","之前"),el("div","mono",relationLine(before)),badge(value(before.status,"unknown")));card.append(el("div","fact"));card.lastChild.append(el("strong","","之后"),el("div","mono",relationLine(after)),badge(value(after.status,"unknown")));return card;}
   function renderDiffItem(type,item){if(type==="entity-change")return renderDiffEntityChange(item);if(type==="relation")return renderDiffRelation(item);if(type==="relation-change")return renderDiffRelationChange(item);return renderDiffEntity(item);}
   function renderDiff(data){const root=byId("diff");root.replaceChildren();const coverage=data.coverage||{},environment=data.environment||{},revision=environment.revision||{};const comparable=coverage.comparable===true&&coverage.beforeComplete===true&&coverage.afterComplete===true;const badges=el("div","badges");badges.append(badge("方向 "+value(data.direction,"用户选择顺序")),badge("之前 "+refKey(data.before)),badge("之后 "+refKey(data.after)),badge("之前覆盖 "+(coverage.beforeComplete?"完整":"不完整")),badge("之后覆盖 "+(coverage.afterComplete?"完整":"不完整")),badge(coverage.comparable?"覆盖键可比":"覆盖键不可比"));if(environment.id)badges.append(badge("环境 "+environment.id));if(revision.before!==undefined)badges.append(badge("环境 revision "+revision.before+" → "+revision.after+(revision.changed?"（已变化）":"")));root.append(badges);root.append(el("p",comparable?"notice":"notice bad",comparable?"两份快照覆盖范围完整且可比；差异仍只表示两个时间点的记录，不证明资源何时变化或由谁删除。":"至少一份快照不完整、属于续页或覆盖键不可比；“新增观察”和“未观察到”可能来自权限、超时、分页或采集缺口，不能解释为创建或删除。"));const groups=collectDiffGroups(data);if(!groups.length){root.append(el("div","empty","接口未报告可见差异；这不证明环境在时间区间内没有变化。"));return;}for(const groupData of groups){const group=el("section","diff-group");group.append(el("h3","",groupData.title));const cards=el("div","entities");for(const item of groupData.items)cards.append(renderDiffItem(groupData.type,item));group.append(cards);root.append(group);}}
-  async function compare(){const before=byId("before").value,after=byId("after").value;if(!before||!after){setStatus("请选择之前和之后两份快照。","bad");return;}if(before===after){setStatus("请选择两份不同快照。","bad");return;}clearStatus();byId("diff").replaceChildren(el("div","empty loading","正在核验并对比快照…"));try{const query=new URLSearchParams({before,after});const data=await request(API+"/diff?"+query.toString());renderDiff(data);}catch(error){byId("diff").replaceChildren(el("div","empty error",error.message));}}
+  function diffSelectionChanged(){state.diffSequence++;byId("diff").replaceChildren(el("div","empty","快照选择已变化，请重新点击对比"));}
+  async function compare(){const before=byId("before").value,after=byId("after").value;if(!before||!after){setStatus("请选择之前和之后两份快照。","bad");return;}if(before===after){setStatus("请选择两份不同快照。","bad");return;}const generation=state.generation,sequence=++state.diffSequence;clearStatus();byId("diff").replaceChildren(el("div","empty loading","正在核验并对比快照…"));try{const query=new URLSearchParams({before,after});const data=await request(API+"/diff?"+query.toString());if(generation!==state.generation||sequence!==state.diffSequence||byId("before").value!==before||byId("after").value!==after)return;renderDiff(data);}catch(error){if(generation===state.generation&&sequence===state.diffSequence&&byId("before").value===before&&byId("after").value===after&&state.token)byId("diff").replaceChildren(el("div","empty error",error.message));}}
 
-  byId("login").addEventListener("submit",async event=>{event.preventDefault();const entered=byId("token").value;if(!entered){setStatus("请输入访问令牌。","bad");return;}state.token=entered;state.generation++;byId("token").value="";showAuthenticated(true);resetViews();try{await loadInitial();}catch(error){if(state.token)setStatus(error.message,"bad");}});
-  byId("logout").addEventListener("click",()=>logout());byId("refresh").addEventListener("click",async()=>{try{await loadInitial();}catch(error){if(state.token)setStatus(error.message,"bad");}});byId("more-environments").addEventListener("click",async()=>{try{await loadList("Environment",true);}catch(error){setStatus(error.message,"bad");}});byId("more-snapshots").addEventListener("click",async()=>{try{await loadList("InventorySnapshot",true);}catch(error){setStatus(error.message,"bad");}});byId("compare").addEventListener("click",compare);
+  byId("login").addEventListener("submit",async event=>{event.preventDefault();const entered=byId("token").value;if(!entered){setStatus("请输入访问令牌。","bad");return;}state.token=entered;state.generation++;const generation=state.generation;byId("token").value="";showAuthenticated(true);resetViews();try{await loadInitial();}catch(error){if(generation===state.generation&&state.token)setStatus(error.message,"bad");}});
+  byId("logout").addEventListener("click",()=>logout());byId("refresh").addEventListener("click",async()=>{const generation=state.generation;try{await loadInitial();}catch(error){if(generation===state.generation&&state.token)setStatus(error.message,"bad");}});byId("more-environments").addEventListener("click",async()=>{const generation=state.generation;try{await loadList("Environment",true);}catch(error){if(generation===state.generation&&state.token)setStatus(error.message,"bad");}});byId("more-snapshots").addEventListener("click",async()=>{const generation=state.generation;try{await loadList("InventorySnapshot",true);}catch(error){if(generation===state.generation&&state.token)setStatus(error.message,"bad");}});byId("before").addEventListener("change",diffSelectionChanged);byId("after").addEventListener("change",diffSelectionChanged);byId("compare").addEventListener("click",compare);
   showAuthenticated(false);byId("token").focus();
 })();`

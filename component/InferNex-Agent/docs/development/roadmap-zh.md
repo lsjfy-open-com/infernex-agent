@@ -2,7 +2,7 @@
 
 本页是唯一当前排期入口。旧 v0.5 提案与多阶段路线图已移入 `archive/`，作为背景保留。
 
-基线：`0.5.0-alpha.22`；保留 alpha.20 的只读资源规划、alpha.21 的命令分类与 root risk，新增 alpha.22 的 Pi 工具循环自动压缩修复。当前并未交付类型化 Docker 部署或原生 K8s 写路径。持续演进在 `codex/private-deployment-evolution` 分支进行，目标扩展为私域 Docker/K8s 的聚合与 PD 部署；InferNex Bridge 是可选适配。该分支已交付首批中立记录、Docker/K8s 只读发现、持久清单与 CLI/stdio 入口；部署执行、自演进仍按后续增量推进，不改变已发布包。设计入口见[私域跨环境部署与自演进](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)。
+基线：`0.5.0-alpha.22`；保留 alpha.20 的只读资源规划、alpha.21 的命令分类与 root risk，新增 alpha.22 的 Pi 工具循环自动压缩修复。当前并未交付类型化 Docker 部署或原生 K8s 写路径。持续演进在 `codex/private-deployment-evolution` 分支进行，目标扩展为私域 Docker/K8s 的聚合与 PD 部署；InferNex Bridge 是可选适配。该分支已交付首批中立记录、Docker/K8s 只读发现、持久清单与 CLI/stdio 入口，以及固定 scope 认证的只读 Dashboard 和快照差异；部署执行、自演进仍按后续增量推进，不改变已发布包。设计入口见[私域跨环境部署与自演进](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)。
 
 下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
 

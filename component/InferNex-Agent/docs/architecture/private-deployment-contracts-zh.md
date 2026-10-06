@@ -137,3 +137,7 @@ Coverage 固定字段：`resourceKind`、`namespace`、`count`、`state`、`reas
 v1 未知字段拒绝意味着新字段必须通过 schema 升版或事先声明的兼容可选字段引入，不能静默接受。旧版本数据读取走显式转换，保留原摘要、源版本和转换记录；不能覆盖旧快照。迁移失败保留原数据并报告，不影响旧 Agent 状态目录。首批没有持久化通用 Plan/Change/KnowledgeRecord，因此不会承诺这些后续 schema 已稳定。
 
 开工依赖、后续写操作门禁见[实现顺序与就绪判定](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)，逐项测试见[前三个 PR 验收规范](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-acceptance-zh.md)。
+
+## PR4 只读网页入口增补（2026-10-07）
+
+`private-inventory dashboard` 提供独立 GET-only 入口，使用受保护令牌文件绑定固定本机拥有者的 scope。HTTP 客户端不能选择 scope、连接或服务器路径；不注册 MCP 工具，不接收发现/保存 handle 或生产变更。非回环监听要求 TLS，旧公开总览保持原行为。游标以进程内随机密钥签名并绑定 scope，重启失效。页面只读已存记录和保守差异，不将未观测到解释为删除。它是单一管理范围的授权，不宣称多人细粒度 ACL。详细命令、限额和测试见[Dashboard 指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-dashboard-zh.md)。
