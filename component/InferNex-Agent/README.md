@@ -453,6 +453,13 @@ than in Kubernetes, build the static-binary bundle:
   --output-dir ./dist
 ```
 
+To include the pinned Pi runtime, run `npm ci` in `component/InferNex-Agent/pi`
+on the connected builder and pass `--pi-runtime-dir`. The host-bundle command
+then creates and import-checks one self-contained ESM extension without network
+access. An offline builder can instead pass a previously built extension and
+its generated license file through `--pi-extension-bundle` and
+`--pi-extension-licenses`; target hosts never run npm.
+
 The host mode uses the existing `--kubeconfig` support, a dedicated
 namespace-scoped identity, a non-root hardened systemd unit, loopback-only
 MCP/dashboard defaults, and an API-key credential file. See the

@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import infernexExtension, { registerAutonomousTask, registerTurnBoundaryCompaction } from "./infernex.ts";
+import infernexExtension, { registerAutonomousTask, registerTurnBoundaryCompaction, trustedStdioConfiguration } from "./infernex.ts";
 
 type RegisteredTool = {
 	name: string;
@@ -14,6 +14,22 @@ type RegisteredTool = {
 };
 
 let mockLargeResponse = false;
+
+test("trusted private stdio configuration pins the installed agent and exact mode", () => {
+	const exact = JSON.stringify(["serve", "--transport", "stdio", "--private-state-directory", "/var/lib/infernex-private", "--private-inventory-only"]);
+	assert.deepEqual(trustedStdioConfiguration({
+		INFERNEX_MCP_STDIO_COMMAND: "/opt/infernex-agent/bin/infernex-agent",
+		INFERNEX_MCP_STDIO_ARGS: exact,
+	}), { command: "/opt/infernex-agent/bin/infernex-agent", args: JSON.parse(exact) });
+	assert.throws(() => trustedStdioConfiguration({
+		INFERNEX_MCP_STDIO_COMMAND: "/tmp/infernex-agent",
+		INFERNEX_MCP_STDIO_ARGS: exact,
+	}), /must be \/opt\/infernex-agent\/bin\/infernex-agent/);
+	assert.throws(() => trustedStdioConfiguration({
+		INFERNEX_MCP_STDIO_COMMAND: "/opt/infernex-agent/bin/infernex-agent",
+		INFERNEX_MCP_STDIO_ARGS: JSON.stringify(["serve", "--transport", "stdio", "--private-state-directory", "/tmp/state"]),
+	}), /private-inventory-only/);
+});
 
 function mockAPI() {
 	const tools: RegisteredTool[] = [];

@@ -126,6 +126,11 @@ test("full access classifies effects rather than trusting risk claims or shell t
  for (const name of ['infernex_create_markdown_report','infernex_remember','infernex_forget_memory','infernex_start_plog_capture','infernex_start_collector_run']) assert.equal(needsMCPApproval('full',name,false),false);
  for (const name of ['infernex_deploy_model','infernex_delete_model','infernex_start_experiment','unknown_write']) assert.equal(needsMCPApproval('full',name,false),true);
  assert.equal(needsMCPApproval('full','infernex_delete_model',true),true);
+ assert.equal(needsMCPApproval('manual','infernex_record_domain_inventory',false,true),true);
+ assert.equal(needsMCPApproval('full','infernex_record_domain_inventory',false,true),false);
+ assert.equal(needsMCPApproval('full','infernex_record_domain_inventory',false,false),true);
+ assert.equal(needsMCPApproval('full','infernex_record_domain_inventory',false),true);
+ assert.equal(needsMCPApproval('risk','infernex_record_domain_inventory',false,false),false);
  for (const name of ['infernex_deploy_model','unknown_write']) assert.equal(needsMCPApproval('risk',name,false),false);
  for (const [name, params] of [['infernex_host_exec',{command:'kubectl delete pod p',riskAssessment:{level:'unknown',reason:'unknown'}}],['infernex_network_probe',{probe:'iperf-client'}],['infernex_run_hccl_test',{}]] as const) assert.equal(needsHostApproval('risk',name,params),false);
 });

@@ -148,11 +148,13 @@ const autonomousLocalTools = new Set([
  "infernex_create_markdown_report", "infernex_remember", "infernex_forget_memory",
  "infernex_start_plog_capture", "infernex_stop_plog_capture",
  "infernex_start_collector_run", "infernex_stop_collector_run",
+ "infernex_record_domain_inventory",
 ]);
-export function needsMCPApproval(access: AccessMode, name: string, readOnly: boolean): boolean {
+export function needsMCPApproval(access: AccessMode, name: string, readOnly: boolean, trustedLocalStdio = false): boolean {
  if (access === "risk") return false;
  if (["infernex_deploy_model", "infernex_delete_model", "infernex_start_experiment"].includes(name)) return true;
  if (readOnly) return false;
+ if (name === "infernex_record_domain_inventory" && !trustedLocalStdio) return true;
  return access !== "full" || !autonomousLocalTools.has(name);
 }
 export function needsHostApproval(access: AccessMode, name: string, input: any): boolean {

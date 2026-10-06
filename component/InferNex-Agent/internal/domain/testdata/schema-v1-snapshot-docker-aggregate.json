@@ -1,0 +1,155 @@
+{
+  "schemaVersion": "private-deployment/v1",
+  "kind": "InventorySnapshot",
+  "tenantScope": "synthetic-scope",
+  "id": "22222222-2222-4222-8222-222222222221",
+  "revision": 1,
+  "createdAt": "2026-10-02T01:02:03.000000000Z",
+  "digest": "sha256:7e6c16fb1a25e6bd1729d3650e616c98a2df3afea3c21eadad9e2dbcc4605495",
+  "spec": {
+    "environmentRef": {
+      "tenantScope": "synthetic-scope",
+      "kind": "Environment",
+      "id": "11111111-1111-4111-8111-111111111111",
+      "revision": 1
+    },
+    "collectorVersion": "synthetic-v1",
+    "rulesetVersion": "synthetic-v1",
+    "startedAt": "2026-10-02T01:02:03.000000000Z",
+    "finishedAt": "2026-10-02T01:02:03.000000000Z",
+    "coverage": [
+      {
+        "resourceKind": "synthetic-workloads",
+        "namespace": "",
+        "count": 3,
+        "state": "complete"
+      }
+    ],
+    "entities": [
+      {
+        "entityId": "eid:sha256:0a8d0fd37ebd7d112698a7feb0878bd8af5072651021868b73ad272dc542b260",
+        "entityKind": "topology-declaration",
+        "identity": {
+          "runtime": "docker",
+          "environmentId": "11111111-1111-4111-8111-111111111111",
+          "entityKind": "topology-declaration",
+          "nativeId": "synthetic-1",
+          "hostID": "synthetic-host",
+          "daemonID": "synthetic-daemon"
+        },
+        "facts": [
+          {
+            "field": "mode",
+            "value": {
+              "type": "string",
+              "stringValue": "aggregate"
+            },
+            "status": "declared",
+            "observedAt": "2026-10-02T01:02:03.000000000Z",
+            "source": {
+              "collector": "synthetic-fixture",
+              "objectRef": {
+                "tenantScope": "synthetic-scope",
+                "kind": "Environment",
+                "id": "11111111-1111-4111-8111-111111111111",
+                "revision": 1
+              },
+              "objectVersion": "v1",
+              "fieldPath": "fixture.mode"
+            }
+          }
+        ]
+      },
+      {
+        "entityId": "eid:sha256:cc4e593c1d3a33480423d52256faf0626a8028c328fa07aa94f31cff7ad534a9",
+        "entityKind": "ownership",
+        "identity": {
+          "runtime": "docker",
+          "environmentId": "11111111-1111-4111-8111-111111111111",
+          "entityKind": "ownership",
+          "nativeId": "synthetic-2",
+          "hostID": "synthetic-host",
+          "daemonID": "synthetic-daemon"
+        },
+        "facts": [
+          {
+            "field": "manager",
+            "value": {
+              "type": "string",
+              "stringValue": "unconfirmed"
+            },
+            "status": "declared",
+            "observedAt": "2026-10-02T01:02:03.000000000Z",
+            "source": {
+              "collector": "synthetic-fixture",
+              "objectRef": {
+                "tenantScope": "synthetic-scope",
+                "kind": "Environment",
+                "id": "11111111-1111-4111-8111-111111111111",
+                "revision": 1
+              },
+              "objectVersion": "v1",
+              "fieldPath": "fixture.manager"
+            }
+          }
+        ]
+      },
+      {
+        "entityId": "eid:sha256:e95f1bcd55734eff59ae20732bfbd6f247b19da63ef0e71785bc4e6a947d0f65",
+        "entityKind": "component",
+        "identity": {
+          "runtime": "docker",
+          "environmentId": "11111111-1111-4111-8111-111111111111",
+          "entityKind": "component",
+          "nativeId": "synthetic-0",
+          "hostID": "synthetic-host",
+          "daemonID": "synthetic-daemon"
+        },
+        "facts": [
+          {
+            "field": "name",
+            "value": {
+              "type": "string",
+              "stringValue": "synthetic-engine"
+            },
+            "status": "observed",
+            "observedAt": "2026-10-02T01:02:03.000000000Z",
+            "source": {
+              "collector": "synthetic-fixture",
+              "objectRef": {
+                "tenantScope": "synthetic-scope",
+                "kind": "Environment",
+                "id": "11111111-1111-4111-8111-111111111111",
+                "revision": 1
+              },
+              "objectVersion": "v1",
+              "fieldPath": "fixture.name"
+            }
+          }
+        ]
+      }
+    ],
+    "relations": [
+      {
+        "type": "managedBy",
+        "fromEntityId": "eid:sha256:e95f1bcd55734eff59ae20732bfbd6f247b19da63ef0e71785bc4e6a947d0f65",
+        "toEntityId": "eid:sha256:cc4e593c1d3a33480423d52256faf0626a8028c328fa07aa94f31cff7ad534a9",
+        "evidenceRefs": [
+          {
+            "snapshotRef": {
+              "tenantScope": "synthetic-scope",
+              "kind": "InventorySnapshot",
+              "id": "22222222-2222-4222-8222-222222222221",
+              "revision": 1
+            },
+            "entityId": "eid:sha256:cc4e593c1d3a33480423d52256faf0626a8028c328fa07aa94f31cff7ad534a9"
+          }
+        ],
+        "status": "declared"
+      }
+    ],
+    "issues": [],
+    "omittedIssueCount": 0,
+    "completeness": "complete"
+  }
+}

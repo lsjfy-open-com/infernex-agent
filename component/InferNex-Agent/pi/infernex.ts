@@ -3,7 +3,10 @@ import { stripVTControlCharacters } from "node:util";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { createHash } from "node:crypto";
 import { mkdir, open, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { lstatSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { Client as MCPClient } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 type MCPTool = {
 	name: string;
@@ -22,6 +25,14 @@ type MCPResponse<T> = {
 	error?: { code: number; message: string; data?: unknown };
 };
 
+type MCPToolResult = {
+	content?: Array<{ type?: string; text?: string }>;
+	structuredContent?: unknown;
+	isError?: boolean;
+};
+
+type TrustedStdioConfiguration = { command: string; args: string[] };
+
 type BoundaryCompactionState = {
 	isActive(): boolean;
 };
@@ -30,6 +41,43 @@ const endpoint = process.env.INFERNEX_MCP_URL || "http://127.0.0.1:8080/mcp";
 const artifactThresholdBytes = 16 * 1024;
 const artifactPreviewBytes = 4 * 1024;
 const artifactReadMaxBytes = 16 * 1024;
+const trustedInstalledAgent = "/opt/infernex-agent/bin/infernex-agent";
+
+export function trustedStdioConfiguration(environment: NodeJS.ProcessEnv = process.env): TrustedStdioConfiguration | null {
+	const command = environment.INFERNEX_MCP_STDIO_COMMAND?.trim() || "";
+	const encodedArgs = environment.INFERNEX_MCP_STDIO_ARGS?.trim() || "";
+	if (!command && !encodedArgs) return null;
+	if (command !== trustedInstalledAgent || !encodedArgs) {
+		throw new Error(`Trusted private MCP stdio command must be ${trustedInstalledAgent}`);
+	}
+	let args: unknown;
+	try { args = JSON.parse(encodedArgs); } catch { throw new Error("INFERNEX_MCP_STDIO_ARGS must be a JSON string array"); }
+	if (!Array.isArray(args) || !args.every(value => typeof value === "string")) {
+		throw new Error("INFERNEX_MCP_STDIO_ARGS must be a JSON string array");
+	}
+	const values = args as string[];
+	const valid = values.length === 6 && values[0] === "serve" && values[1] === "--transport" && values[2] === "stdio" &&
+		values[3] === "--private-state-directory" && isAbsolute(values[4]) && values[5] === "--private-inventory-only";
+	if (!valid) {
+		throw new Error("Trusted private MCP stdio arguments must select stdio private-inventory-only with one absolute state directory");
+	}
+	return { command, args: values };
+}
+
+function verifyTrustedStdioExecutable(command: string): void {
+	for (const directory of ["/opt", "/opt/infernex-agent", "/opt/infernex-agent/bin"]) {
+		let info;
+		try { info = lstatSync(directory); } catch { throw new Error("Trusted private MCP installation directory is unavailable"); }
+		if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== 0 || (info.mode & 0o022) !== 0) {
+			throw new Error("Trusted private MCP installation directories must be root-owned and non-writable");
+		}
+	}
+	let executable;
+	try { executable = lstatSync(command); } catch { throw new Error("Trusted private MCP executable is unavailable"); }
+	if (!executable.isFile() || executable.isSymbolicLink() || executable.uid !== 0 || (executable.mode & 0o022) !== 0) {
+		throw new Error("Trusted private MCP executable must be a root-owned, non-writable regular file");
+	}
+}
 
 function artifactDirectory(): string {
 	return process.env.INFERNEX_ARTIFACT_DIR || "/var/lib/infernex-agent/pi/artifacts";
@@ -357,7 +405,38 @@ export function registerAutonomousTask(
 }
 
 export default async function infernexExtension(pi: ExtensionAPI, executeCommand: typeof runHostCommand = runHostCommand) {
-	const list = await requestMCP<{ tools: MCPTool[] }>("tools/list", {});
+	type ToolRoute = { tool: MCPTool; trustedLocalStdio: boolean; call(params: unknown, signal?: AbortSignal): Promise<MCPToolResult> };
+	const routes: ToolRoute[] = [];
+	let httpListError: unknown;
+	try {
+		const list = await requestMCP<{ tools: MCPTool[] }>("tools/list", {});
+		for (const tool of list.tools || []) routes.push({
+			tool, trustedLocalStdio: false,
+			call: (params, signal) => requestMCP("tools/call", { name: tool.name, arguments: params }, signal),
+		});
+	} catch (error) {
+		httpListError = error;
+	}
+	const stdioConfig = trustedStdioConfiguration();
+	let trustedStdioClient: MCPClient | undefined;
+	if (stdioConfig) {
+		verifyTrustedStdioExecutable(stdioConfig.command);
+		trustedStdioClient = new MCPClient({ name: "infernex-pi-private-inventory", version: "1" });
+		const stdioTransport = new StdioClientTransport({ ...stdioConfig, stderr: "pipe" });
+		stdioTransport.stderr?.on("data", () => {});
+		await trustedStdioClient.connect(stdioTransport);
+		const listed = await trustedStdioClient.listTools();
+		for (const rawTool of listed.tools || []) {
+			const tool = rawTool as MCPTool;
+			if (routes.some(route => route.tool.name === tool.name)) throw new Error(`Duplicate MCP tool name across HTTP and trusted stdio: ${tool.name}`);
+			routes.push({
+				tool, trustedLocalStdio: true,
+				call: async (params, signal) => await trustedStdioClient!.callTool({ name: tool.name, arguments: params as Record<string, unknown> }, undefined, { signal }) as unknown as MCPToolResult,
+			});
+		}
+		pi.on("session_shutdown", () => { void trustedStdioClient?.close(); });
+	}
+	if (routes.length === 0 && httpListError) throw httpListError;
 	let artifactsCreated = 0;
 	let responseStarted = false;
 	let firstEventTimer: ReturnType<typeof setTimeout> | undefined;
@@ -368,7 +447,8 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 	};
 
 
-	for (const tool of list.tools || []) {
+	for (const route of routes) {
+		const tool = route.tool;
 		pi.registerTool({
 			...compactToolRenderer(tool.annotations?.title || tool.name),
 			name: tool.name,
@@ -380,7 +460,7 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 			async execute(_toolCallId, params, signal, _onUpdate, ctx) {
  return host.operation(async () => {
 				if ((params as { channel?: string }).channel?.trim().toLowerCase() === "host-root" && host.mode() !== "root") throw new Error("Use /mode_change root before starting root helper diagnostics");
-				const requiresApproval = needsMCPApproval(host.access(), tool.name, tool.annotations?.readOnlyHint === true);
+				const requiresApproval = needsMCPApproval(host.access(), tool.name, tool.annotations?.readOnlyHint === true, route.trustedLocalStdio);
  if (requiresApproval) {
 					if (!ctx.hasUI) {
 						throw new Error(`Write-capable InferNex tool ${tool.name} is denied without an interactive terminal`);
@@ -392,18 +472,14 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 					);
 					if (!approved) { autonomous.pause(); throw new Error(`User denied InferNex tool ${tool.name}; do not retry or bypass this decision`); }
 				}
-				const result = await requestMCP<{
-					content?: Array<{ type?: string; text?: string }>;
-					structuredContent?: unknown;
-					isError?: boolean;
-				}>("tools/call", { name: tool.name, arguments: params }, signal);
+				const result = await route.call(params, signal);
 				const rawText = resultText(result);
 				if (result.isError) throw new Error(rawText);
 				const bounded = await boundedResultText(rawText);
 				if (bounded.artifact) artifactsCreated += 1;
 				return {
 					content: [{ type: "text", text: bounded.text }],
-					details: { access: host.access(), approval: requiresApproval ? "operator" : host.access() === "risk" ? "risk-preauthorized" : "automatic", tool: tool.name, endpoint, annotations: tool.annotations, artifact: bounded.artifact, status: (result.structuredContent as {status?: string} | undefined)?.status },
+					details: { access: host.access(), approval: requiresApproval ? "operator" : host.access() === "risk" ? "risk-preauthorized" : "automatic", tool: tool.name, source: route.trustedLocalStdio ? "trusted-local-stdio" : "configured-http", endpoint: route.trustedLocalStdio ? undefined : endpoint, annotations: tool.annotations, artifact: bounded.artifact, status: (result.structuredContent as {status?: string} | undefined)?.status },
 				};
  });
 			},
@@ -480,14 +556,14 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 	pi.registerCommand("infernex-tools", {
 		description: "Show the InferNex tools loaded into this TUI session",
 		handler: async (_args, ctx) => {
-			ctx.ui.notify(`Loaded ${list.tools.length} controlled InferNex tools from ${endpoint}`, "info");
+			ctx.ui.notify(`Loaded ${routes.length} controlled InferNex tools`, "info");
 		},
 	});
 
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.hasUI) ctx.ui.setToolsExpanded(false);
-		ctx.ui.notify(`InferNex TUI connected: ${list.tools.length} cluster tools · Ctrl+O 展开/折叠工具详情 · workspace ${workspaceRoot()}`, "info");
-		ctx.ui.setStatus("infernex", `InferNex MCP · ${list.tools.length} tools · ${artifactsCreated} artifacts`);
+		ctx.ui.notify(`InferNex TUI connected: ${routes.length} tools · Ctrl+O 展开/折叠工具详情 · workspace ${workspaceRoot()}`, "info");
+		ctx.ui.setStatus("infernex", `InferNex MCP · ${routes.length} tools · ${artifactsCreated} artifacts`);
 	});
 
 	pi.on("agent_start", (_event, ctx) => {
@@ -539,7 +615,7 @@ export default async function infernexExtension(pi: ExtensionAPI, executeCommand
 	});
 
 	pi.on("tool_execution_start", (event, ctx) => {
-		if (event.toolName.startsWith("infernex_") || list.tools.some((tool) => tool.name === event.toolName)) {
+		if (event.toolName.startsWith("infernex_") || routes.some((route) => route.tool.name === event.toolName)) {
 			ctx.ui.setStatus("infernex", `InferNex running · ${event.toolName}`);
 		}
 	});

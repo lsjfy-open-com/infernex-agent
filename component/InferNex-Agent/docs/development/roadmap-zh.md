@@ -2,11 +2,11 @@
 
 本页是唯一当前排期入口。旧 v0.5 提案与多阶段路线图已移入 `archive/`，作为背景保留。
 
-基线：`0.5.0-alpha.20`，保留 alpha.19 的安装兼容修复、alpha.18 Dashboard 和 alpha.16 SLO／版本记录能力，并增加 D1 的第一个只读资源规划切片。目标：按[通用 Kubernetes 分层契约](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)，围绕跨环境自动部署完成环境发现、规格规划、受管发布、业务 SLO 验收、升级、版本交付与恢复，并逐步解耦 InferNex 和操作深度。研究依据见[智谱与业界洞察（2026-09-20）](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/infra-agent-industry-insights-2026-09-20-zh.md)。以下状态区分已实现切片与后续规划；alpha.20 不代表 D1 已全部完成。
+基线：`0.5.0-alpha.22`；保留 alpha.20 的只读资源规划、alpha.21 的命令分类与 root risk，新增 alpha.22 的 Pi 工具循环自动压缩修复。当前并未交付类型化 Docker 部署或原生 K8s 写路径。持续演进在 `codex/private-deployment-evolution` 分支进行，目标扩展为私域 Docker/K8s 的聚合与 PD 部署；InferNex Bridge 是可选适配。该分支已交付首批中立记录、Docker/K8s 只读发现、持久清单与 CLI/stdio 入口，以及固定 scope 认证的只读 Dashboard 和快照差异；部署执行、自演进仍按后续增量推进，不改变已发布包。设计入口见[私域跨环境部署与自演进](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)。
 
-下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
+下一大版本面向客户的范围见[课题简介](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/next-generation-topic-and-acceptance-zh.md)；环境、出题方数据责任、轻量领域模型、能力包、异构资源、联网／离线制品及 A1–A7、B1–B12 量化门槛见[验收细则](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/next-generation-acceptance-spec-zh.md)。“部署基础与受管发布验收”复核参考实现基线，“跨环境自动部署与生命周期管理验收”检查增量闭环；指标是待执行的验收目标，不是已取得效果。该课题复用本页 K0/A1、D1/D2/D3、E1/E2、T1/R1、O1，不另设平行排期。
 
-已有 [Bridge 渐进实验](../guides/progressive-experiments-zh.md)包含独立候选、Ready/日志回归/浸泡门禁及失败候选回退。后续复用这套基础，补业务 SLO、补丁制品和通用执行器，不重新建设一套平行实验系统。
+已有 [Bridge 渐进实验](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/progressive-experiments-zh.md)包含独立候选、Ready/日志回归/浸泡门禁及失败候选回退。后续复用这套基础，补业务 SLO、补丁制品和通用执行器，不重新建设一套平行实验系统。
 
 | 阶段 | 范围 | 本轮状态 / 验收 |
 | --- | --- | --- |
@@ -29,3 +29,20 @@
 E2a/E2b 是 E2 的知识来源增量验收，不改变 E2 原有的构建、离线交付和恢复范围。完整组合版本管理仍属 E2 规划；alpha.16 的关联记录不等于恢复执行器，当前恢复范围仍是 Bridge 源对象、变更记录与受管候选。
 
 每个阶段拆成可独立验证的 PR；不将规划、创建成功、模型可用和请求分布通过混写成“自动部署已支持”。下一次实验包必须明确本次包含的阶段和未验证项。
+
+## 私域部署增量顺序（沿用本页阶段编号）
+
+开工切片已冻结为 PR1 中立记录、PR2 Docker/K8s 只读发现、PR3 原子存储与 CLI/MCP 入口；详见[实现顺序与门禁](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)。前三个 PR 不依赖客户硬件即可实施；Docker-only 无 kubeconfig 启动和原 K8s 自动发现必须同时验证。该判定不代表后续部署执行或 PD 已交付。
+
+以下是现有阶段的新场景拆分，不建立第二套排期。全部处于设计状态；以客户首个已确认的引擎、硬件与模板为起点，真实资料未齐时记录阻塞。
+
+| 增量 | 对应阶段 | 可独立评审的交付 | 依赖与完成条件 |
+| --- | --- | --- | --- |
+| 领域记录与发现 | K0/A1 | 中立身份、字段级证据、Docker/K8s Inventory 与管理归属 | 权限不足、未知组件与配置冲突被明确呈现；不产生写入 |
+| Docker 聚合闭环 | D1/D2/E1/E2 | Profile、计划/渲染、变更账本、加载/请求验收、Git/快照与恢复 | 一个实际引擎/硬件组合可部署和恢复，外部卷边界明确 |
+| Docker PD 闭环 | D3/T1 | P/D 角色组、版本化 KV/TP 契约、路由与真实链路测量 | 依赖资源/执行账本；不能由聚合部署成功推定支持 PD |
+| 原生 K8s 对等执行 | A1/D2/D3 | 相同 Intent 的聚合与已确认 PD 适配、管理权与状态映射 | CPU 逻辑和真实硬件分别验收；Helm/Operator 资源不被绕写 |
+| 物料与稳定发布 | E2a/E2b/R1 | 离线物料闭包、授权联网核对、组合版本与回退演练 | 先完成一种执行环境闭环；发布恢复和能力撤回分别验证 |
+| 能力候选晋级 | O2/A1 | 版本化工具/Skill、隔离构建、保留用例、启用与撤回 | 依赖前述证据；第二框架或版本测量复用收益与退化 |
+
+验收增补见[私域部署两阶段验收](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)。实际实施顺序可随客户 Docker/K8s 的交付优先级调整，但必须保留同一领域模型、授权、执行账本与验收契约。每个增量单独 PR/验证，稳定后合入 develop；不直接在长期分支覆盖发布版本。

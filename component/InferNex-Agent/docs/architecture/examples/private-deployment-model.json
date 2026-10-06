@@ -1,0 +1,279 @@
+{
+  "schemaVersion": "design/v0",
+  "kind": "PrivateDeploymentReviewExample",
+  "status": "design-only-not-executable",
+  "tenantScope": "example-customer",
+  "notice": "Illustrative identities only; missing customer evidence blocks rendering and execution. Null means unknown, not zero.",
+  "environments": [
+    {
+      "id": "env-docker",
+      "runtime": "docker",
+      "endpointRef": "private-credential-store:docker-site",
+      "networkPolicy": "offline",
+      "ownershipStatus": "unconfirmed"
+    },
+    {
+      "id": "env-k8s",
+      "runtime": "kubernetes",
+      "endpointRef": "private-credential-store:kube-context",
+      "networkPolicy": "offline",
+      "ownershipStatus": "unconfirmed"
+    }
+  ],
+  "models": [
+    {
+      "id": "model-example",
+      "modelName": null,
+      "weightsRevision": null,
+      "storageRef": null,
+      "tokenizerRevision": null,
+      "status": "unknown",
+      "sourceEvidenceIds": []
+    }
+  ],
+  "components": [
+    {
+      "id": "engine-example",
+      "name": null,
+      "version": null,
+      "imageDigest": null,
+      "pdContractRef": null,
+      "status": "unknown"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "profile-aggregate",
+      "role": "aggregate",
+      "tensorParallel": null,
+      "devicesPerInstance": null,
+      "supportStatus": "unverified"
+    },
+    {
+      "id": "profile-prefill",
+      "role": "prefill",
+      "tensorParallel": null,
+      "devicesPerInstance": null,
+      "supportStatus": "unverified"
+    },
+    {
+      "id": "profile-decode",
+      "role": "decode",
+      "tensorParallel": null,
+      "devicesPerInstance": null,
+      "supportStatus": "unverified"
+    }
+  ],
+  "deploymentIntents": [
+    {
+      "id": "docker-aggregate",
+      "environmentRef": "env-docker",
+      "modelRef": "model-example",
+      "engineRef": "engine-example",
+      "topology": {
+        "mode": "aggregate",
+        "instanceGroups": [
+          {
+            "id": "serving",
+            "role": "aggregate",
+            "profileRef": "profile-aggregate",
+            "replicas": 2
+          }
+        ],
+        "requestRouting": {
+          "adapterRef": null,
+          "targetGroupIds": [
+            "serving"
+          ],
+          "policy": "requires-validated-request-balancer"
+        },
+        "kvEdges": []
+      },
+      "sloRef": null,
+      "resourceBudgetRef": null,
+      "planningResult": {
+        "state": "blocked",
+        "reasons": [
+          "unconfirmed private environment, artifacts, profiles and SLO"
+        ]
+      },
+      "executionAllowed": false
+    },
+    {
+      "id": "docker-pd",
+      "environmentRef": "env-docker",
+      "modelRef": "model-example",
+      "engineRef": "engine-example",
+      "topology": {
+        "mode": "pd",
+        "instanceGroups": [
+          {
+            "id": "p",
+            "role": "prefill",
+            "profileRef": "profile-prefill",
+            "replicas": 1
+          },
+          {
+            "id": "d",
+            "role": "decode",
+            "profileRef": "profile-decode",
+            "replicas": 2
+          }
+        ],
+        "requestRouting": {
+          "adapterRef": null,
+          "targetGroupIds": [
+            "p",
+            "d"
+          ],
+          "policy": "requires-engine-specific-contract"
+        },
+        "kvEdges": [
+          {
+            "fromGroupId": "p",
+            "toGroupId": "d",
+            "connectorRef": null,
+            "layoutCompatibility": "unknown",
+            "resharding": "not-assumed",
+            "perRankReadWriteMapping": null
+          }
+        ]
+      },
+      "sloRef": null,
+      "resourceBudgetRef": null,
+      "planningResult": {
+        "state": "blocked",
+        "reasons": [
+          "unconfirmed private environment, artifacts, profiles and SLO"
+        ]
+      },
+      "executionAllowed": false
+    },
+    {
+      "id": "k8s-aggregate",
+      "environmentRef": "env-k8s",
+      "modelRef": "model-example",
+      "engineRef": "engine-example",
+      "topology": {
+        "mode": "aggregate",
+        "instanceGroups": [
+          {
+            "id": "serving",
+            "role": "aggregate",
+            "profileRef": "profile-aggregate",
+            "replicas": 2
+          }
+        ],
+        "requestRouting": {
+          "adapterRef": null,
+          "targetGroupIds": [
+            "serving"
+          ],
+          "policy": "requires-validated-request-balancer"
+        },
+        "kvEdges": []
+      },
+      "sloRef": null,
+      "resourceBudgetRef": null,
+      "planningResult": {
+        "state": "blocked",
+        "reasons": [
+          "unconfirmed private environment, artifacts, profiles and SLO"
+        ]
+      },
+      "executionAllowed": false
+    },
+    {
+      "id": "k8s-pd",
+      "environmentRef": "env-k8s",
+      "modelRef": "model-example",
+      "engineRef": "engine-example",
+      "topology": {
+        "mode": "pd",
+        "instanceGroups": [
+          {
+            "id": "p",
+            "role": "prefill",
+            "profileRef": "profile-prefill",
+            "replicas": 1
+          },
+          {
+            "id": "d",
+            "role": "decode",
+            "profileRef": "profile-decode",
+            "replicas": 2
+          }
+        ],
+        "requestRouting": {
+          "adapterRef": null,
+          "targetGroupIds": [
+            "p",
+            "d"
+          ],
+          "policy": "requires-engine-specific-contract"
+        },
+        "kvEdges": [
+          {
+            "fromGroupId": "p",
+            "toGroupId": "d",
+            "connectorRef": null,
+            "layoutCompatibility": "unknown",
+            "resharding": "not-assumed",
+            "perRankReadWriteMapping": null
+          }
+        ]
+      },
+      "sloRef": null,
+      "resourceBudgetRef": null,
+      "planningResult": {
+        "state": "blocked",
+        "reasons": [
+          "unconfirmed private environment, artifacts, profiles and SLO"
+        ]
+      },
+      "executionAllowed": false
+    }
+  ],
+  "configurationModel": {
+    "desiredRef": null,
+    "renderedDigest": null,
+    "observedEvidenceIds": [],
+    "secretRefs": [],
+    "state": "uncollected"
+  },
+  "releaseBindingModel": {
+    "configurationGitCommit": null,
+    "beforeSnapshotRef": null,
+    "afterSnapshotRef": null,
+    "imageDigests": [],
+    "modelArtifactRefs": [
+      "model-example"
+    ],
+    "capabilityVersions": {},
+    "verificationRef": null,
+    "previousStableReleaseRef": null
+  },
+  "requiredEvidence": [
+    "registered environment and host/cluster identities",
+    "effective startup configuration and field provenance",
+    "ownership and execution identity",
+    "immutable model and image references",
+    "hardware resources and placement constraints",
+    "versioned engine and PD contract",
+    "real workload baseline and SLO",
+    "rollback artifacts and capacity"
+  ],
+  "candidateLifecycle": [
+    "proposed",
+    "built",
+    "tested",
+    "reviewed",
+    "enabled"
+  ],
+  "invalidatingConditions": [
+    "new component or model revision",
+    "ownership or credential scope changed",
+    "expired or conflicting resource observation",
+    "capability version revoked"
+  ]
+}
