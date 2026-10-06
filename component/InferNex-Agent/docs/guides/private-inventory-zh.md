@@ -23,7 +23,7 @@ Docker 或 Kubernetes 身份、授权范围和本机连接引用；Snapshot 记�
 - 发现是只读的。清单中的 `observed`、`declared`、`inferred`、`unknown` 和 `conflict`
   含义不同；观察到设备请求、端口或副本数不等于设备健康、容量足够、流量可用或性能达标。
 - `partial` 会原样保存。缺权限、超时、对象在扫描中变化或达到限额时，不会伪装成完整空清单。
-- 首批没有新的 Dashboard 视图，也不在 HTTP/streamable-http MCP 上注册私域清单工具。
+- 新增独立的[只读 Dashboard 与快照差异](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-dashboard-zh.md)，使用固定 scope 令牌认证；HTTP/streamable-http MCP 仍不注册私域清单工具。
 
 ## 1. 初始化固定状态目录
 
@@ -306,3 +306,5 @@ Linux 目标也已做编译检查。真正执行 `flock`、`renameat2(RENAME_NOR
 本机 macOS 执行全仓 `go test -race ./...`：486 项测试通过、29 个包通过；`go vet ./...` 通过。Pi `npm run typecheck` 通过，46 项测试中 45 项通过、1 项需要 Linux root 的既有测试跳过。清洁依赖安装后的扩展构建、host bundle 解包、打包扩展独立导入和校验清单检查通过；使用的是合成 runtime/环境证据，不代表客户硬件验收。
 
 Linux 原生存储发布和真实 CLI 生命周期测试已加入代码及 CI，交叉编译通过；最终 Linux 执行结果以本分支 PR 检查为准。当前仍未交付真实客户部署、PD 通信、GPU/NPU 性能或 SLO 改善证据。本轮不更新已发布安装包。
+
+2026-10-07 更新：上述 Linux 原生存储与 CLI 生命周期，以及 Host 安装/升级回退、Kind 和小模型检查已在[PR 主流水线](https://github.com/lsjfy-open-com/infernex-agent/actions/runs/37484796202)通过。该结果不包含客户硬件验收或文件系统断电测试。独立 Dashboard 的新增检查随 PR4 提交验证。

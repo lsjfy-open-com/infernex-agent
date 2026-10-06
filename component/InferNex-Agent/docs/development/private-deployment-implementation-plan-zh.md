@@ -58,6 +58,8 @@ PR1 合入后 PR2 才以正式类型开发；PR3 可先用 fake Reader 实现存
 
 PR4–PR10 是后续逻辑增量，允许各自再拆，但不能跳过输入门禁。客户若先要求 K8s，可把 PR8 的聚合执行提前到 PR6 位置；沿用同一持久计划/恢复合同，不再造 K8s 专用 Core。
 
+2026-10-07 PR4 实施：独立 `private-inventory dashboard` 读取已存记录，提供固定 scope 的 Bearer 认证、非回环 HTTPS、分页清单与保守快照差异；不依赖 kubeconfig 或 Helm，不修改原公开总览。此阶段 ACL 是单个令牌对应一个本机管理范围，尚不提供多人细分授权。配置只展示已采到的来源，原始 YAML 与实时采集均未接入。操作与限制见[Dashboard 指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-dashboard-zh.md)。
+
 ## 5. 写操作进入编码前的检查表
 
 后续执行器以本文总体边界为基础，但不能仅拿一条启动命令就开始自动升级。进入 PR5/PR6 前，以下输入必须落为版本化 fixture：

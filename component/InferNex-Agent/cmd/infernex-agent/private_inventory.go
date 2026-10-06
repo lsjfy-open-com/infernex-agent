@@ -33,7 +33,7 @@ type privateDiscoverOutput struct {
 
 func runPrivateInventory(args []string) error {
 	if len(args) == 0 {
-		return errors.New("private-inventory requires init, environment, discover, record, list, show, or verify")
+		return errors.New("private-inventory requires init, environment, discover, record, list, show, verify, or dashboard")
 	}
 	switch args[0] {
 	case "init":
@@ -50,6 +50,8 @@ func runPrivateInventory(args []string) error {
 		return runPrivateInventoryShow(args[1:], false)
 	case "verify":
 		return runPrivateInventoryShow(args[1:], true)
+	case "dashboard":
+		return runPrivateInventoryDashboard(args[1:])
 	default:
 		return fmt.Errorf("unknown private-inventory command %q", args[0])
 	}

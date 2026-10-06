@@ -43,3 +43,5 @@
 首批领域记录、只读发现与 CLI/stdio 清单入口已在 `codex/private-deployment-evolution` 实现，尚未发布安装包。后续部署执行、PD 与能力自演进仍为规划。
 
 - [已实现的私域清单：安装前提、登记、发现与保存](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-zh.md)
+
+- [私域 Dashboard：Host IP 访问、权限、配置来源与快照差异](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-dashboard-zh.md)
