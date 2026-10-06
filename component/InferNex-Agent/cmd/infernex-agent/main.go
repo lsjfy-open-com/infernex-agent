@@ -65,6 +65,9 @@ import (
 var (
 	version = "0.3.0-dev"
 	commit  = "unknown"
+
+	serverKubeConfig           = kube.Config
+	privateInventoryOnlyRunner = servePrivateInventoryOnly
 )
 
 type options struct {
@@ -115,6 +118,8 @@ type options struct {
 	experimentSoak               time.Duration
 	experimentDiagnosticInterval time.Duration
 	sloProfileDirectory          string
+	privateStateDirectory        string
+	privateInventoryOnly         bool
 }
 
 func main() {
@@ -156,6 +161,8 @@ func run() error {
 			return runSkills(os.Args[2:])
 		case "collector-helper":
 			return runCollectorHelper(os.Args[2:])
+		case "private-inventory":
+			return runPrivateInventory(os.Args[2:])
 		}
 	}
 	return runServer(os.Args[1:])
@@ -226,6 +233,8 @@ func parseServerOptions(args []string) (options, error) {
 		"/var/lib/infernex-agent",
 		"Protected persistent directory for change records and rollback state",
 	)
+	flags.StringVar(&opts.privateStateDirectory, "private-state-directory", "", "Absolute protected private inventory state directory; stdio only")
+	flags.BoolVar(&opts.privateInventoryOnly, "private-inventory-only", false, "Serve only the five local private inventory tools over stdio")
 	flags.StringVar(&opts.evidenceRoots, "evidence-roots", "", "Comma-separated operator-approved host directories for read-only historical log analysis; empty uses state-dir/imports")
 	flags.StringVar(&opts.reportDirectory, "report-directory", "", "Protected Markdown report directory; empty uses state-dir/reports")
 	flags.StringVar(&opts.sloProfileDirectory, "slo-profile-directory", "", "Administrator-approved SLO profile directory; empty disables active SLO experiments")
@@ -373,6 +382,18 @@ func parseServerOptions(args []string) (options, error) {
 	if opts.diagnosticDelegateConcurrent < 1 || opts.diagnosticDelegateConcurrent > 64 {
 		return options{}, fmt.Errorf("--diagnostic-subagent-max-concurrency must be between 1 and 64")
 	}
+	privateStateDirectory := strings.TrimSpace(opts.privateStateDirectory)
+	if privateStateDirectory != "" && !filepath.IsAbs(privateStateDirectory) {
+		return options{}, errors.New("--private-state-directory must be absolute")
+	}
+	if opts.privateInventoryOnly {
+		if opts.transport != "stdio" || privateStateDirectory == "" {
+			return options{}, errors.New("--private-inventory-only requires --transport stdio and --private-state-directory ABS")
+		}
+		if strings.TrimSpace(opts.dashboardListen) != "" || strings.TrimSpace(opts.diagnosticDelegateListen) != "" {
+			return options{}, errors.New("--private-inventory-only cannot start HTTP listeners")
+		}
+	}
 	if err := infernexchat.ValidateContextConfig(infernexchat.ContextConfig{
 		WindowTokens: opts.contextWindowTokens, MaxOutputTokens: opts.maxOutputTokens,
 		CompactionThresholdPercent: opts.contextCompactionThreshold,
@@ -384,8 +405,11 @@ func parseServerOptions(args []string) (options, error) {
 }
 
 func serveAgent(opts options) error {
+	if opts.privateInventoryOnly {
+		return privateInventoryOnlyRunner(opts)
+	}
 
-	restConfig, err := kube.Config(opts.kubeconfig)
+	restConfig, err := serverKubeConfig(opts.kubeconfig)
 	if err != nil {
 		return fmt.Errorf("build Kubernetes client config: %w", err)
 	}
@@ -425,6 +449,13 @@ func serveAgent(opts options) error {
 
 	domainObserver := observer.New(kubeClient)
 	serverOptions := make([]mcpserver.Option, 0, 8)
+	if opts.transport == "stdio" && strings.TrimSpace(opts.privateStateDirectory) != "" {
+		privateOption, privateErr := privateInventoryServerOption(opts.privateStateDirectory)
+		if privateErr != nil {
+			return privateErr
+		}
+		serverOptions = append(serverOptions, privateOption)
+	}
 	namespaces := parseNamespaces(opts.scanNamespaces)
 	serverOptions = append(serverOptions, mcpserver.WithNamespaces(namespaces), mcpserver.WithKubernetes(platformReader))
 	delegateEnabled := strings.TrimSpace(opts.diagnosticDelegateListen) != ""

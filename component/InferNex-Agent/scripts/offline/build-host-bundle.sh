@@ -20,6 +20,10 @@ Options:
   --architecture ARCH    amd64 or arm64 (default: current host)
   --binary FILE          Reuse an already-built static Linux binary
   --pi-runtime-dir DIR   Include an extracted, pinned Pi Linux release and TUI
+  --pi-extension-bundle FILE
+                         Reuse a prebuilt, self-contained Pi ESM extension
+  --pi-extension-licenses FILE
+                         Third-party notices paired with the prebuilt extension
   --tool-runtime-dir DIR Include pinned rg/fd binaries and their licenses
   --output-dir DIR       Destination directory (default: ./dist)
   --force                Replace an existing bundle with the same name
@@ -28,6 +32,10 @@ Options:
 Without --binary, the command cross-compiles with the local Go toolchain using
 CGO_ENABLED=0. The result does not depend on glibc and is suitable for
 openEuler, provided the CPU architecture matches.
+
+When --pi-runtime-dir is present without a prebuilt extension, this command
+uses the pinned esbuild already installed by `npm ci` in pi/. It never installs
+npm packages or accesses the network while creating the host bundle.
 EOF
 }
 
@@ -38,6 +46,8 @@ version="$(
 architecture="$(bundle_host_architecture)"
 binary_source=""
 pi_runtime_source="${PI_RUNTIME_DIR:-}"
+pi_extension_source="${PI_EXTENSION_BUNDLE:-}"
+pi_extension_licenses_source="${PI_EXTENSION_LICENSES:-}"
 tool_runtime_source="${TOOL_RUNTIME_DIR:-}"
 output_dir="${PWD}/dist"
 force="false"
@@ -63,6 +73,16 @@ while (($#)); do
     --pi-runtime-dir)
       [[ $# -ge 2 ]] || bundle_die "--pi-runtime-dir requires a value"
       pi_runtime_source="$2"
+      shift 2
+      ;;
+    --pi-extension-bundle)
+      [[ $# -ge 2 ]] || bundle_die "--pi-extension-bundle requires a value"
+      pi_extension_source="$2"
+      shift 2
+      ;;
+    --pi-extension-licenses)
+      [[ $# -ge 2 ]] || bundle_die "--pi-extension-licenses requires a value"
+      pi_extension_licenses_source="$2"
       shift 2
       ;;
     --tool-runtime-dir)
@@ -103,6 +123,18 @@ if [[ -n "$pi_runtime_source" ]]; then
   [[ -d "$pi_runtime_source" && -f "${pi_runtime_source}/pi" ]] ||
     bundle_die "Pi runtime directory must contain the pi executable: ${pi_runtime_source}"
 fi
+if [[ -n "$pi_extension_source" || -n "$pi_extension_licenses_source" ]]; then
+  [[ -n "$pi_runtime_source" ]] ||
+    bundle_die "prebuilt Pi extension inputs require --pi-runtime-dir"
+  [[ -n "$pi_extension_source" &&
+    -f "$pi_extension_source" &&
+    -s "$pi_extension_source" ]] ||
+    bundle_die "--pi-extension-bundle must name a non-empty regular file"
+  [[ -n "$pi_extension_licenses_source" &&
+    -f "$pi_extension_licenses_source" &&
+    -s "$pi_extension_licenses_source" ]] ||
+    bundle_die "--pi-extension-licenses must name a non-empty regular file"
+fi
 if [[ -n "$tool_runtime_source" ]]; then
   [[ -d "$tool_runtime_source" &&
     -x "${tool_runtime_source}/bin/rg" &&
@@ -115,6 +147,16 @@ bundle_require_command sha256sum
 bundle_require_command tar
 if [[ -z "$binary_source" ]]; then
   bundle_require_command "$go_bin"
+fi
+if [[ -n "$pi_runtime_source" ]]; then
+  bundle_require_command node
+  node_major="$(node -p 'Number(process.versions.node.split(".")[0])')"
+  [[ "$node_major" =~ ^[0-9]+$ ]] && ((node_major >= 20)) ||
+    bundle_die "building the bundled Pi extension requires Node.js 20 or newer"
+  if [[ -z "$pi_extension_source" ]]; then
+    [[ -x "${agent_dir}/pi/node_modules/.bin/esbuild" ]] ||
+      bundle_die "Pi build dependencies are absent; run 'npm ci' in pi/ on a connected builder or pass a prebuilt extension and licenses"
+  fi
 fi
 
 mkdir -p -- "$output_dir"
@@ -179,9 +221,35 @@ if [[ -n "$pi_runtime_source" ]]; then
   install -d -m 0755 "${bundle_root}/payload/pi-runtime"
   cp -a -- "${pi_runtime_source}/." "${bundle_root}/payload/pi-runtime/"
   chmod 0755 "${bundle_root}/payload/pi-runtime/pi"
+
+  extension_build_dir="${work_dir}/pi-extension"
+  extension_build="${extension_build_dir}/infernex.mjs"
+  extension_licenses="${extension_build_dir}/THIRD_PARTY_LICENSES.txt"
+  install -d -m 0755 "$extension_build_dir"
+  if [[ -n "$pi_extension_source" ]]; then
+    bundle_info "including supplied self-contained Pi extension"
+    install -m 0644 "$pi_extension_source" "$extension_build"
+    install -m 0644 "$pi_extension_licenses_source" "$extension_licenses"
+  else
+    bundle_info "building self-contained Pi extension from the npm lock"
+    node "${agent_dir}/pi/build-extension.mjs" "$extension_build" "$extension_licenses"
+  fi
+  if grep -Fq -- "$agent_dir" "$extension_build" || grep -Fq -- "$work_dir" "$extension_build"; then
+    bundle_die "bundled Pi extension contains an absolute build-machine path"
+  fi
   install -d -m 0755 "${bundle_root}/pi"
-  install -m 0644 "${agent_dir}/pi/infernex.ts" "${agent_dir}/pi/host-tools.ts" "${agent_dir}/pi/command-policy.ts" "${bundle_root}/pi/"
+  install -m 0644 "$extension_build" "${bundle_root}/pi/infernex.ts"
+  install -m 0644 "$extension_licenses" "${bundle_root}/pi/THIRD_PARTY_LICENSES.txt"
   install -m 0644 "${agent_dir}/pi/LICENSE.pi.txt" "${bundle_root}/pi/LICENSE.pi.txt"
+  extension_smoke="${work_dir}/packaged-pi-extension.mjs"
+  install -m 0644 "${bundle_root}/pi/infernex.ts" "$extension_smoke"
+  node --input-type=module - "$extension_smoke" <<'EOF'
+import { pathToFileURL } from "node:url";
+const loaded = await import(pathToFileURL(process.argv[2]).href);
+if (typeof loaded.default !== "function") {
+  throw new Error("packaged Pi extension has no default entry point");
+}
+EOF
 fi
 if [[ -n "$tool_runtime_source" ]]; then
   bundle_info "including pinned offline TUI search tools"
@@ -205,6 +273,7 @@ agent_version=${version}
 architecture=${architecture}
 binary=payload/infernex-agent
 pi_runtime=$([[ -n "$pi_runtime_source" ]] && printf 'payload/pi-runtime' || printf 'none')
+pi_extension=$([[ -n "$pi_runtime_source" ]] && printf 'pi/infernex.ts (self-contained ESM)' || printf 'none')
 tool_runtime=$([[ -n "$tool_runtime_source" ]] && printf 'payload/tools' || printf 'none')
 created_utc=${created_utc}
 EOF

@@ -47,6 +47,33 @@ jobs:
           go-version: "1.25.x"
           cache-dependency-path: component/InferNex-Agent/go.sum
 
+      - name: Set up Node for Pi extension
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: component/InferNex-Agent/pi/package-lock.json
+
+      - name: Test and bundle Pi extension
+        working-directory: component/InferNex-Agent/pi
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck
+          npm test
+          npm run build:extension -- \
+            "${RUNNER_TEMP}/infernex-pi-extension.mjs" \
+            "${RUNNER_TEMP}/infernex-pi-THIRD_PARTY_LICENSES.txt"
+          mkdir -p "${RUNNER_TEMP}/pi-extension-smoke"
+          cp "${RUNNER_TEMP}/infernex-pi-extension.mjs" \
+            "${RUNNER_TEMP}/pi-extension-smoke/infernex.mjs"
+          node --input-type=module - "${RUNNER_TEMP}/pi-extension-smoke/infernex.mjs" <<'EOF'
+          import { pathToFileURL } from "node:url";
+          const loaded = await import(pathToFileURL(process.argv[2]).href);
+          if (typeof loaded.default !== "function") {
+            throw new Error("packaged Pi extension has no default entry point");
+          }
+          EOF
+
       - name: Test and vet
         working-directory: component/InferNex-Agent
         run: |

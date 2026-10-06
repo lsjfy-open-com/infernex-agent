@@ -11,4 +11,13 @@ Pi 提供终端交互、会话和上下文管理，后台 Go MCP 提供集群工
 参见[权限与网络诊断指南](../docs/guides/host-network-diagnostics-zh.md)和[安装指南](../docs/guides/install-and-modes-zh.md)。
 
 本目录修改需要同时运行 `npm run typecheck` 和 `npm test`；Linux CI 还以 root 验证真实 UID 切换、
-文件访问拒绝、环境隔离、超时与取消。安装包包含 infernex.ts 和 host-tools.ts，运行时无需 npm/Node 安装。
+文件访问拒绝、环境隔离、超时与取消。
+
+发布 host bundle 前，在联网构建机执行一次 `npm ci`，再由
+`scripts/offline/build-host-bundle.sh --pi-runtime-dir ...` 调用锁定版本的 esbuild，把本目录代码和
+MCP stdio client 打成单个自包含 ESM，仍安装为 `/opt/infernex-agent/pi/infernex.ts`。打包脚本本身
+不会运行 npm 或访问网络，并会从独立临时路径导入打包暂存副本，确认它不依赖构建机的 `node_modules`
+或绝对路径。完全离线的构建机可传入预先生成的 `--pi-extension-bundle` 和配套的
+`--pi-extension-licenses`；联网构建机可用
+`npm run build:extension -- /path/infernex.mjs /path/THIRD_PARTY_LICENSES.txt` 生成这两个文件。
+目标主机运行时无需 npm，也不安装独立 SDK 依赖树。
