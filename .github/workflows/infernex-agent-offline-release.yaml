@@ -100,19 +100,23 @@ jobs:
         with:
           version: v4.2.0
 
-      - name: Set up Node for Pi extension tests
-        if: ${{ env.INCLUDE_PI_TUI == 'true' && matrix.architecture == 'amd64' }}
+      - name: Set up Node for Pi extension build
+        if: ${{ env.INCLUDE_PI_TUI == 'true' }}
         uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: component/InferNex-Agent/pi/package-lock.json
 
+      - name: Install pinned Pi extension build dependencies
+        if: ${{ env.INCLUDE_PI_TUI == 'true' }}
+        working-directory: component/InferNex-Agent/pi
+        run: npm ci --ignore-scripts
+
       - name: Test Pi extension
         if: ${{ env.INCLUDE_PI_TUI == 'true' && matrix.architecture == 'amd64' }}
         working-directory: component/InferNex-Agent/pi
         run: |
-          npm ci --ignore-scripts
           npm run typecheck
           npm test
           sudo useradd --system --create-home --home-dir /var/lib/infernex-mode-test infernex-mode-test
@@ -299,8 +303,18 @@ jobs:
               test -f ./payload/tools/licenses/ripgrep-LICENSE-MIT
               test -f ./payload/tools/licenses/fd-LICENSE-MIT
               test -f ./pi/infernex.ts
-              test -f ./pi/host-tools.ts
-              test -f ./pi/command-policy.ts
+              test -s ./pi/THIRD_PARTY_LICENSES.txt
+              # The extension now contains its modules and SDK dependencies.
+              # Verify the delivered artifact outside the source/dependency tree.
+              smoke_dir="$(mktemp -d "${RUNNER_TEMP}/packaged-extension.XXXXXX")"
+              cp ./pi/infernex.ts "${smoke_dir}/infernex.mjs"
+              node --input-type=module - "${smoke_dir}/infernex.mjs" <<'EOF'
+          import { pathToFileURL } from "node:url";
+          const extension = await import(pathToFileURL(process.argv[2]).href);
+          if (typeof extension.default !== "function") {
+            throw new Error("packaged extension has no default entry point");
+          }
+          EOF
               test -f ./pi/LICENSE.pi.txt
               if [[ "${ARCHITECTURE}" == "amd64" ]]; then
                 test "$(./payload/pi-runtime/pi --version)" = "0.84.1"
