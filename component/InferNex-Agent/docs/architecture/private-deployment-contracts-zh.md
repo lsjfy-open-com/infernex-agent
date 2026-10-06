@@ -1,6 +1,6 @@
 # 私域环境发现：首批实现合同
 
-状态：2026-10-02，供编码实施的 v1 合同，尚未实现。本文细化[总体设计](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)，只冻结登记、只读发现、清单与本地记录。部署写入和能力自演进仍按后续门禁交付。实现与本文冲突时，须同时评审合同和测试的变更。
+状态：2026-10-02 冻结的 v1 合同；2026-10-06 已进入演进分支实现，尚未发布安装包。实际命令与限制见[使用指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-zh.md)。本文细化[总体设计](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)，只冻结登记、只读发现、清单与本地记录。部署写入和能力自演进仍按后续门禁交付。实现与本文冲突时，须同时评审合同和测试的变更。
 
 ## 1. 模型先落到两个持久对象
 
@@ -70,7 +70,7 @@ Docker 首版选标准库 `net/http` 的窄 Engine API client，连接显式登�
 
 Docker list 没有可依赖的通用服务端分页合同：超限明确 partial，用户缩小登记范围或提高未来版本限额后重扫，不能伪造 continue token。读取 inspect 后投影白名单字段，原始 Env/认证信息立即丢弃，不进入调试日志或模型上下文。daemon 身份不一致、容器在 list/inspect 间消失或重建分别产生 identity_changed / not_found / conflict。
 
-K8s 复用 `internal/kubeops` 的窄只读接口和现有身份配置，不导入 Bridge 控制器。首批默认读取指定 namespace 中的 Deployment、StatefulSet、Pod、Service、EndpointSlice 与 PVC 元数据，以及获授权的 Node 摘要；不读 Secret 正文、Helm release Secret 或任意 CRD 实例。首次扫描在 30 秒/300 实体内消费分页；超出预算保留 partial。继续扫描 token 用 32 字节加密随机 server-side handle 封装，绑定主体、环境修订、GVR/namespace/selectors；TTL 5 分钟，同主体最多 4 个、服务最多 16 个，重启失效、过期返回 cursor_expired，不能自动改成新的一页。继续扫描生成独立 Snapshot，并保留前一快照引用；不拼接为跨扫描原子清单。记录查询分页在不可变快照上另用同样受限 handle。部分 RBAC、API 不存在、超时分别记 forbidden/unsupported/timeout；缺失 Node 权限不把资源预算写成 0。分页与资源版本语义参考 [Kubernetes API 官方说明](https://kubernetes.io/docs/reference/using-api/api-concepts/)，continue 过期不能拼接成完整一致结果。
+K8s 复用 `internal/kubeops` 的窄只读接口和现有身份配置，不导入 Bridge 控制器。首批默认读取指定 namespace 中的 Deployment、StatefulSet、Pod、Service、EndpointSlice 与 PVC 元数据，以及获授权的 Node 摘要；不读 Secret 正文、Helm release Secret 或任意 CRD 实例。Node 读取由显式 IncludeNodes 开启；首次扫描在 30 秒/300 实体内消费分页；超出预算保留 partial。继续扫描 token 用 32 字节加密随机 server-side handle 封装，绑定主体、环境修订、GVR/namespace/selectors；TTL 5 分钟，同主体最多 4 个、服务最多 16 个，重启失效、过期返回 cursor_expired，不能自动改成新的一页。继续扫描生成独立 Snapshot，并保留前一快照引用；不拼接为跨扫描原子清单。需要持久化时，先显式保存前一页，再保存后续页；不会为满足引用自动保存预览。记录查询分页在不可变快照上另用同样受限 handle。部分 RBAC、API 不存在、超时分别记 forbidden/unsupported/timeout；缺失 Node 权限不把资源预算写成 0。分页与资源版本语义参考 [Kubernetes API 官方说明](https://kubernetes.io/docs/reference/using-api/api-concepts/)，continue 过期不能拼接成完整一致结果。
 
 K8s/Docker API 请求通过受限客户端发出，不依赖模型判定其是否只读。模型可以解释事实或提出待核对关联，不能把 inferred 改为 observed，也不能因客户文档中的指令加载新工具。知识检索、规则生成和能力包晋级接口不在首批注册。
 

@@ -31,7 +31,7 @@
 
 命令反复审批的分类策略、`root risk` 与边界见 [Host / full / risk 命令分类与审批](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/command-approval-zh.md)（alpha.21）。
 
-## 私域部署设计分支
+## 私域部署演进分支
 
 - [Docker/K8s 聚合与 PD 部署：领域模型、适配契约和受控自演进](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)
 - [两阶段验收补充：环境、用例、证据和量化标准](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)
@@ -40,4 +40,6 @@
 - [首批字段与接口合同](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-contracts-zh.md)
 - [首批实现验收：fixture、用例和命令](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-acceptance-zh.md)
 
-以上是 `codex/private-deployment-evolution` 分支设计，尚未作为运行能力交付。
+首批领域记录、只读发现与 CLI/stdio 清单入口已在 `codex/private-deployment-evolution` 实现，尚未发布安装包。后续部署执行、PD 与能力自演进仍为规划。
+
+- [已实现的私域清单：安装前提、登记、发现与保存](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-zh.md)

@@ -1,6 +1,6 @@
 # 私域跨环境部署：领域模型与受控自演进设计
 
-状态：设计草案，2026-10-02；基于 alpha.22，尚未实现本文新增的发现、Docker 执行和能力晋级接口。持续演进分支为 `codex/private-deployment-evolution`。本设计扩展既有 Kubernetes 分层契约，保留 Core、环境适配、变更保护、实验验收的边界；不要求客户安装 InferNex Bridge，也不把 Host shell 已能执行 Docker 命令视为 Docker 部署适配器已交付。
+状态：设计于 2026-10-02，首批实现在 2026-10-06 进入演进分支；发布基线仍为 alpha.22。本分支已实现中立记录、Docker/K8s 只读发现、快照存储和 CLI/stdio MCP 入口；Docker 部署执行与能力晋级仍未实现。持续演进分支为 `codex/private-deployment-evolution`。本设计扩展既有 Kubernetes 分层契约，保留 Core、环境适配、变更保护、实验验收的边界；不要求客户安装 InferNex Bridge，也不把 Host shell 已能执行 Docker 命令视为 Docker 部署适配器已交付。
 
 ## 1. 目标与首批范围
 
@@ -43,7 +43,7 @@ Agent 不转发业务推理流量。请求路由与 KV 数据传输是部署对�
 | `internal/configversion` | Git、快照、文件摘要关联 | 当前仅本地关联/完整性校验；新增语义差异与恢复执行，不能把已有记录称作全栈恢复 |
 | 报告与语义记忆 | 可读名称、hash 索引、知识检索 | 增加来源、环境/版本范围与验证记录引用；历史记忆不覆盖现场事实 |
 
-新类型建议先位于 `internal/domain`，新增契约建议位于 `internal/adapters`；这些目录和接口尚未建立，不要求一次性迁移所有旧模块。旧接口通过转换层维持兼容，不在此设计分支改变安装包或发布分支。
+首批类型已位于 `internal/domain`，只读适配位于 `internal/adapters`，存储与入口编排分别位于 `internal/domainstore` 和 `internal/privateinventory`；部署执行契约仍待后续增量，不要求一次性迁移所有旧模块。旧接口通过转换层维持兼容，不在此设计分支改变安装包或发布分支。
 
 ## 3. 领域模型：事实、意图、能力与运行记录分别保存
 
@@ -111,7 +111,7 @@ PD 验收必须关联请求 ID、P 完成、KV 提交/完成、D 消费及首 to
 
 ## 6. 执行契约与恢复
 
-以下是设计契约，尚非注册的 MCP 工具。环境 adapter 管资源生命周期；引擎 adapter 管参数、角色、KV 与兼容语义；制品 resolver 管镜像/权重/补丁；验证器管请求和 SLO，避免一个客户插件包揽所有职责。
+以下是完整目标契约。首批 Discover/Observe 已通过受限 stdio MCP 入口实现，Plan/Apply/Verify/Recover 仍是后续合同。环境 adapter 管资源生命周期；引擎 adapter 管参数、角色、KV 与兼容语义；制品 resolver 管镜像/权重/补丁；验证器管请求和 SLO，避免一个客户插件包揽所有职责。
 
 | 契约 | 输入 / 输出与拒绝条件 |
 | --- | --- |
@@ -160,6 +160,8 @@ Dashboard 延用 Host IP 部署方式，逐步增加“环境清单、服务拓�
 每个阶段同时包含负例、恢复和可视化所需读接口。客户急需 K8s 时可调整 Docker/K8s 执行顺序，但不跳过管理权、计划及验收契约。第一批需要客户补充：现有两种 Docker 启动配置、K8s 模板、引擎/镜像版本、设备拓扑、权重路径与修订、入口/KV 配置、身份与联网范围、健康部署基线及 SLO。提交脱敏样例即可，不收集密钥。
 
 ## 10. 示例与验收入口
+
+- [首批清单功能使用指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-zh.md)：Linux CLI、stdio、分页与显式保存；本分支代码尚未发布安装包。
 
 - [实现顺序与开工判定](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-plan-zh.md)：前三个 PR 已可开始，后续执行器按现场输入门禁推进。
 - [前三个 PR 的可执行验收规范](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-implementation-acceptance-zh.md)：fixture、测试命令、负例与兼容门槛。

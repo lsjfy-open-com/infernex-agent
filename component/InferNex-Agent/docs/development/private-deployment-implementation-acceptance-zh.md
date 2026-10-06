@@ -2,7 +2,7 @@
 
 本文把[私域部署架构设计](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/architecture/private-deployment-evolution-zh.md)和[两阶段验收补充](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/private-deployment-acceptance-zh.md)拆成前三个可独立合入的实现增量。范围仅包括 `Environment` 登记、`InventorySnapshot`、Docker／Kubernetes 只读发现、持久存储、CLI／MCP 读接口和显式本地记录写入口；不部署容器、不写 Kubernetes 对象、不宣称 PD 或 GPU／NPU 可用。
 
-测试名、fixture 名和命令是后续 PR 必须创建并满足的交付合同，不是当前仓库已有实现或已通过结果。实现计划可调整包名，但须在编码前同步修改本页，不能合入后用口头解释替代失败的门禁。
+本文保留编码前冻结的验收合同；2026-10-06 首批实现已进入演进分支，实际测试以各包的 `_test.go` 为准，表中的用例可由等价测试组合覆盖。合同清单本身不是现场验收结果；Linux 原生文件系统测试与客户硬件测试须分别提供证据。实现计划可调整包名，但须在编码前同步修改本页，不能合入后用口头解释替代失败的门禁。
 
 ## 1. 现有可复用边界
 
@@ -129,7 +129,7 @@ cd test/acceptance/next-generation
 python3 selfcheck.py
 ```
 
-以下是对应 PR 合入前必须变为可运行的目标命令，当前缺包时报错属于预期：
+以下命令已可在实现分支运行；其中 Linux 原生文件系统测试需要 Linux 执行，其他平台的交叉编译不能代替运行：
 
 ```bash
 go test -race ./internal/domain

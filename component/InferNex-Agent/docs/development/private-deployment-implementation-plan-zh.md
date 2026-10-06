@@ -1,6 +1,6 @@
 # 私域部署演进：实现顺序与开工判定
 
-状态：2026-10-02，设计分支 `codex/private-deployment-evolution`。结论：**首批环境建模与只读清单已具备开工条件；客户部署执行按明确的后续准入门禁推进。** 本页是[唯一路线图](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/roadmap-zh.md)中私域演进增量的实施细化，不创建另一套优先级或发布版本号。本轮仅更新设计，不宣称新增运行能力。
+状态：2026-10-02，设计分支 `codex/private-deployment-evolution`。结论：**首批环境建模与只读清单已具备开工条件；客户部署执行按明确的后续准入门禁推进。** 本页是[唯一路线图](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/development/roadmap-zh.md)中私域演进增量的实施细化，不创建另一套优先级或发布版本号。2026-10-06 实施更新：前三个增量已落入演进分支，包含受限 CLI/stdio 入口；测试与使用边界见[使用指南](https://github.com/lsjfy-open-com/infernex-agent/blob/codex/private-deployment-evolution/component/InferNex-Agent/docs/guides/private-inventory-zh.md)。尚未发布安装包，真实客户硬件及生产部署仍按后续门禁验收。
 
 ## 1. 先形成可使用的最小纵向能力
 
