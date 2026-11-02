@@ -80,10 +80,14 @@ namespace-scoped 身份，避免 systemd 长期保存管理员身份。默认便
 
 ## 3. 网络边界
 
+下表为 Host 安装器的新安装默认值，升级保留已有 Dashboard 地址。直接运行裸 `serve` 时，
+主 MCP 默认监听 `:8080`，Dashboard 默认关闭；手动启动须显式确认绑定地址。
+私域清单 Dashboard 是另外的带令牌认证入口，详见[私域 Dashboard 指南](https://github.com/lsjfy-open-com/infernex-agent/blob/6bf0c0ef9981889e6ad7a8d3946ba0360ed6587e/component/InferNex-Agent/docs/guides/private-inventory-dashboard-zh.md)。
+
 | 端口 | 默认绑定 | 是否自带认证 | 要求 |
 | --- | --- | --- | --- |
 | 8080 MCP | `127.0.0.1` | 否 | 通常只供本机 Runtime |
-| 8081 Dashboard/API | `127.0.0.1` | 否 | 远程开放需 ACL/防火墙/认证代理 |
+| 8081 Dashboard/API | `0.0.0.0` | 否 | 远程开放需 ACL/防火墙/认证代理 |
 | 18082 Diagnostic Subagent MCP | `127.0.0.1` | bearer token | namespace-scoped 诊断工具；跨主机仍需 mTLS、SSH tunnel 或认证代理 |
 | Kubernetes API | 出站 | Kubernetes 身份 | 仅到批准 apiserver |
 | 模型 API | 可选出站 | 可选 Bearer Key | 仅到批准模型端点 |

@@ -2,6 +2,10 @@
 
 # InferNex Agent MCP 工具目录与组件映射
 
+首次集成请先读[合作方接入指南](../guides/external-agent-integration-zh.md)与
+[调用方 Skill](../../../../skills/infernex-operations/SKILL.md)。本页保留工具语义与实现边界；
+连接方式、认证和调用示例由接入资料统一维护，具体参数以实时 `tools/list` 为准。
+
 本文区分“当前已经发布给模型的工具”和“v0.5 计划工具”。表格是工具契约清单，不是愿望清单；
 没有标为已实现的能力，Agent 不得通过提示词声称已经执行。
 

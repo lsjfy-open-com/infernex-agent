@@ -1,5 +1,9 @@
 # CANN/HiXL 诊断 Skill 与用户扩展指南
 
+本文说明服务端诊断知识的使用与扩展。让其他 Agent 调用 InferNex 的场景，请从
+[外部 Agent 接入指南](external-agent-integration-zh.md)开始，使用独立的
+[infernex-operations 接入 Skill](../../../../skills/infernex-operations/SKILL.md)。
+
 ## 当前能力
 
 InferNex Agent 离线包内置两个诊断 Skill：
