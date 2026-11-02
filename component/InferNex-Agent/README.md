@@ -1,16 +1,20 @@
-> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
 [English](README.md) | [简体中文](README-zh.md)
 
-InferNex Agent is an agentic operations runtime for an existing openFuyao
-Kubernetes and AI inference environment. A user describes an outcome in
+InferNex Agent is an agentic operations runtime for an existing Kubernetes
+and AI inference environment, with optional openFuyao and InferNex adapters. A user describes an outcome in
 natural language; the Agent discovers whether the active kubeconfig points at
 a bootstrap/management control plane or a business cluster, plans with bounded
 domain tools, diagnoses native Kubernetes/Helm or optional Bridge workloads,
 and reports evidence. It does not ask normal users to assemble raw YAML,
 images, or shell commands.
+
+For use from another Agent, start with the [partner integration guide](docs/guides/external-agent-integration-zh.md)
+and the caller-side [infernex-operations Skill](../../skills/infernex-operations/SKILL.md).
+The [current roadmap](docs/development/roadmap-zh.md) distinguishes the alpha.22 package from unreleased private-inventory development.
 
 The intended management-node installation is one command:
 
@@ -49,7 +53,7 @@ host/SSH/Pod diagnostics, compact tool rows, readable report and memory names,
 and manual/full approval modes. Alpha.22 fixes automatic Pi context compaction at tool-loop boundaries; with the default 32K window and 8K output reserve, the effective trigger is approximately 75%, and an upgraded installation must restart the TUI to load the new settings. Alpha.21 improves command classification and adds an explicit session-scoped `root risk` mode. Alpha.20 added the first read-only homogeneous deployment-profile resource plan,
 while retaining alpha.19 no-argument kubeconfig discovery and the alpha.18 Dashboard live-YAML view. Alpha.16 adds optional approved SLO gates in Bridge
 experiments and local Git/snapshot configuration records; see the
-[SLO and version guide](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/guides/slo-and-config-versions-zh.md). Native deployment writes and request-level load balancing remain planned capabilities.
+[SLO and version guide](docs/guides/slo-and-config-versions-zh.md). Native deployment writes and request-level load balancing remain planned capabilities.
 
 The management-node installation provides one Agentic terminal:
 
@@ -452,6 +456,13 @@ than in Kubernetes, build the static-binary bundle:
   --architecture arm64 \
   --output-dir ./dist
 ```
+
+To include the pinned Pi runtime, run `npm ci` in `component/InferNex-Agent/pi`
+on the connected builder and pass `--pi-runtime-dir`. The host-bundle command
+then creates and import-checks one self-contained ESM extension without network
+access. An offline builder can instead pass a previously built extension and
+its generated license file through `--pi-extension-bundle` and
+`--pi-extension-licenses`; target hosts never run npm.
 
 The host mode uses the existing `--kubeconfig` support, a dedicated
 namespace-scoped identity, a non-root hardened systemd unit, loopback-only

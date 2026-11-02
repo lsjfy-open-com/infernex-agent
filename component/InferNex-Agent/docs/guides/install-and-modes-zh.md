@@ -2,8 +2,8 @@
 
 ## 默认产品形态
 
-V1 只有一个默认形态：在能操作 InferNex 的 Linux 管理节点上运行静态 Agent 二进制，
-由 systemd 保持运行，使用当前 kubeconfig 调用现有 Kubernetes 和 InferNex 组件接口。
+默认形态是在能访问目标 Kubernetes 的 Linux 管理节点上运行静态 Agent 二进制，
+由 systemd 保持运行，使用当前 kubeconfig；InferNex Bridge 是可选适配。
 
 ```text
 用户 / SSH / Web
@@ -21,7 +21,7 @@ Kubernetes API / InferNex Bridge / 已有组件接口
 在线：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/main/component/InferNex-Agent/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/lsjfy-open-com/infernex-agent/infernex-agent-v0.5.0-alpha.22/component/InferNex-Agent/scripts/install.sh | sudo env INFERNEX_AGENT_VERSION=0.5.0-alpha.22 bash
 ```
 
 离线：按 CPU 架构下载唯一的 `infernex-agent-<版本>-linux-<架构>.tar.gz`，校验、解压

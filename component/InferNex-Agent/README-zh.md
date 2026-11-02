@@ -1,14 +1,18 @@
-> 当前功能与跨平台演进见[文档入口](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/README.md)及[通用底座能力矩阵](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
+> 当前功能与跨平台演进见[文档入口](docs/README.md)及[通用底座能力矩阵](docs/architecture/kubernetes-first-zh.md)。alpha.22 修复 Pi TUI 在持续工具调用中的上下文自动压缩，并保留 alpha.21 的 Host TUI 命令分类、显式 `root risk` 模式及 alpha.20 的第一个只读资源规划切片；原生部署写路径和请求级均衡尚未实现。
 
 # InferNex Agent
 
-alpha.22 修复 Pi TUI 持续工具调用到达上下文阈值后不压缩的问题；默认 32K 窗口和 8K 输出预留的有效触发点约为 75%，升级后须退出旧 TUI 并重新启动。它保留 alpha.21 的常用只读命令分类和当前会话 `root risk`，以及 alpha.20 的同构单实例 Profile 只读资源规划、无参数 kubeconfig 自动发现、Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；详见[alpha.22 发布说明](https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/docs/releases/v0.5.0-alpha.22-zh.md)。
+alpha.22 修复 Pi TUI 持续工具调用到达上下文阈值后不压缩的问题；默认 32K 窗口和 8K 输出预留的有效触发点约为 75%，升级后须退出旧 TUI 并重新启动。它保留 alpha.21 的常用只读命令分类和当前会话 `root risk`，以及 alpha.20 的同构单实例 Profile 只读资源规划、无参数 kubeconfig 自动发现、Host Dashboard 实时 YAML、可选 SLO 对照实验与 Git / snapshot 版本关联记录；详见[alpha.22 发布说明](docs/releases/v0.5.0-alpha.22-zh.md)。
 
 [English](README.md) | 简体中文
 
-InferNex Agent 是运行在 InferNex 管理节点上的本地 AI 运维 Agent。它和
+InferNex Agent 是运行在 Linux 管理节点上的 Kubernetes 推理运维 Agent，openFuyao 与 InferNex 是可选适配。它和
 `kubectl-ai`、K8sGPT 的 CLI 形态一样，使用当前 `kubectl` 上下文探索集群；它不会
 为了运行自身而在 Kubernetes 中安装 Agent Pod、Controller 或新 CRD。
+
+其他 Agent 或合作方从[统一接入指南](docs/guides/external-agent-integration-zh.md)开始，使用调用方
+[infernex-operations Skill](../../skills/infernex-operations/SKILL.md)配合 MCP 接入。已发布 alpha.22
+与未发布私域清单增量的区别见[当前路线图](docs/development/roadmap-zh.md)。
 
 用户用自然语言描述目标，Agent 负责：
 
@@ -36,7 +40,7 @@ infernex-agent-<版本>-linux-arm64.tar.gz  # aarch64
 ```
 
 这里没有“宿主机包”和“集群包”的选择。管理节点、master 节点、引导节点或普通
-Linux 运维机，只要当前 `kubectl` 能访问 InferNex 集群，使用的都是同一个包。
+Linux 运维机，只要当前 `kubectl` 能访问目标 Kubernetes 集群，使用的都是同一个包。
 
 联网安装：
 
