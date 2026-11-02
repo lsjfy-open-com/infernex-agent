@@ -14,6 +14,12 @@ package experiment
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -23,11 +29,151 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	infernexv1alpha1 "gitcode.com/openFuyao/InferNex/api/v1alpha1"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/changesafety"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/diagnostics"
+	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/slo"
 )
+
+func TestControllerSLORegressionDoesNotPromote(t *testing.T) {
+	baselineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer baselineServer.Close()
+	candidateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"bad"},"finish_reason":"stop"}]}`))
+	}))
+	defer candidateServer.Close()
+	profile := slo.Profile{ID: "smoke", Version: "1", Approved: true, Model: "test", Endpoints: map[string]string{"models/stable": baselineServer.URL, "models/trial-s01": candidateServer.URL}, Cases: []slo.Case{{ID: "case", Prompt: "say ok", ExactAnswer: "ok"}}, Samples: 2, MaxTokens: 8, TimeoutMillis: 500, MinSamples: 2, Thresholds: slo.Thresholds{MinSuccessRate: 1, MaxP95Millis: 500, MaxP95RegressionRatio: 10, MinThroughputRatio: .01}}
+	directory := t.TempDir()
+	data, _ := json.Marshal(profile)
+	if err := os.WriteFile(filepath.Join(directory, "smoke.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := slo.LoadProfiles(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := slo.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, kubeClient, planStore := newTestController(t, &fakeDiagnoser{})
+	controller.config.SLOProfiles = profiles
+	controller.config.SLORunner = slo.NewRunner(evidence, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := controller.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := controller.Create(ctx, Request{Namespace: "models", BaselineName: "stable", CandidatePrefix: "trial", FeatureProfiles: []string{"enable-mooncake"}, SLOProfile: "smoke", Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markReady(t, kubeClient, waitForCandidate(t, kubeClient, "trial-s01"))
+	failed := waitForPlan(t, planStore, plan.ID, PlanStatusFailed)
+	if failed.StableService != "stable" || failed.Stages[0].Status != StageStatusRolledBack || failed.Stages[0].SLO == nil || failed.Stages[0].SLO.Decision != "regression" {
+		t.Fatalf("SLO regression promoted candidate: %+v", failed)
+	}
+}
+
+func TestControllerSLOIntentAfterRestartDoesNotPromote(t *testing.T) {
+	baselineServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer baselineServer.Close()
+	candidateServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer candidateServer.Close()
+	profile := slo.Profile{ID: "smoke", Version: "1", Approved: true, Model: "test", Endpoints: map[string]string{"models/stable": baselineServer.URL, "models/trial-s01": candidateServer.URL}, Cases: []slo.Case{{ID: "case", Prompt: "say ok", ExactAnswer: "ok"}}, Samples: 2, MaxTokens: 8, TimeoutMillis: 500, MinSamples: 2, Thresholds: slo.Thresholds{MinSuccessRate: 1, MaxP95Millis: 500, MaxP95RegressionRatio: 10, MinThroughputRatio: .01}}
+	directory := t.TempDir()
+	data, _ := json.Marshal(profile)
+	if err := os.WriteFile(filepath.Join(directory, "smoke.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := slo.LoadProfiles(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := slo.NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	controller, kubeClient, planStore := newTestController(t, &fakeDiagnoser{})
+	controller.config.SLOProfiles = profiles
+	controller.config.SLORunner = slo.NewRunner(evidence, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	if err := controller.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := controller.Create(ctx, Request{Namespace: "models", BaselineName: "stable", CandidatePrefix: "trial", FeatureProfiles: []string{"enable-mooncake"}, SLOProfile: "smoke", Confirm: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := waitForCandidate(t, kubeClient, "trial-s01")
+	cancel()
+	time.Sleep(10 * time.Millisecond)
+	persisted, err := planStore.Latest(plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persisted.Stages[0].SLO = &slo.Result{RunID: "interrupted", Decision: "running"}
+	if err := planStore.Append(persisted); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := New(kubeClient, controller.changes, planStore, &fakeDiagnoser{}, controller.config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newCtx, newCancel := context.WithCancel(context.Background())
+	defer newCancel()
+	if err := resumed.Start(newCtx); err != nil {
+		t.Fatal(err)
+	}
+	markReady(t, kubeClient, candidate)
+	failed := waitForPlan(t, planStore, plan.ID, PlanStatusFailed)
+	if failed.StableService != "stable" || failed.Stages[0].Status != StageStatusRolledBack || failed.Stages[0].SLO.Decision != "inconclusive" {
+		t.Fatalf("interrupted SLO run promoted candidate: %+v", failed)
+	}
+}
+
+func TestSLOTemplateFingerprintsIncludeNestedReferences(t *testing.T) {
+	controller, kubeClient, _ := newTestController(t, &fakeDiagnoser{})
+	ctx := context.Background()
+	parent := &infernexv1alpha1.InferNexServiceConfig{ObjectMeta: metav1.ObjectMeta{Namespace: "templates", Name: "nested-parent"}, Spec: infernexv1alpha1.InferNexServiceConfigSpec{InferNexServiceSpec: infernexv1alpha1.InferNexServiceSpec{BaseRefs: []infernexv1alpha1.NamedRef{{Name: "stable-base"}}}}}
+	if err := kubeClient.Create(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	before, err := controller.templateFingerprints(ctx, []string{"nested-parent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 2 {
+		t.Fatalf("nested references missing: %+v", before)
+	}
+	service := &infernexv1alpha1.InferNexService{Spec: infernexv1alpha1.InferNexServiceSpec{BaseRefs: []infernexv1alpha1.NamedRef{{Name: "nested-parent"}}}}
+	stage := &Stage{TemplateFingerprints: before}
+	if err := controller.checkTemplateFingerprints(ctx, stage, service, service); err != nil {
+		t.Fatal(err)
+	}
+	base := &infernexv1alpha1.InferNexServiceConfig{}
+	if err := kubeClient.Get(ctx, types.NamespacedName{Namespace: "templates", Name: "stable-base"}, base); err != nil {
+		t.Fatal(err)
+	}
+	base.Spec.BaseRefs = []infernexv1alpha1.NamedRef{{Name: "nested-parent"}}
+	if err := kubeClient.Update(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.templateFingerprints(ctx, []string{"nested-parent"}); err == nil {
+		t.Fatal("reference cycle accepted")
+	}
+	if err := controller.checkTemplateFingerprints(ctx, stage, service, service); err == nil {
+		t.Fatal("nested template change accepted")
+	}
+}
 
 type fakeDiagnoser struct {
 	criticalService string
@@ -241,6 +387,69 @@ func TestControllerRefusesMultiplePendingPlansOnResume(t *testing.T) {
 	}
 }
 
+func TestCandidateRollbackPreservesConcurrentReplacementOrEdit(t *testing.T) {
+	for _, mutation := range []string{"replacement", "edit"} {
+		t.Run(mutation, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			if err := infernexv1alpha1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			candidate := &infernexv1alpha1.InferNexService{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "models", Name: "trial-s01", UID: "original-candidate", ResourceVersion: "12",
+					Labels:      map[string]string{managedByLabel: managedByAgent, experimentIDLabel: "experiment"},
+					Annotations: map[string]string{changeIDAnnotation: "change"},
+				},
+			}
+			var retained *infernexv1alpha1.InferNexService
+			deleteCalled := false
+			kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(candidate).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+						deleteCalled = true
+						pre := (&client.DeleteOptions{}).ApplyOptions(opts).Preconditions
+						if pre == nil || pre.UID == nil || pre.ResourceVersion == nil ||
+							*pre.UID != candidate.UID || *pre.ResourceVersion != candidate.ResourceVersion {
+							t.Fatalf("candidate rollback must bind the checked object identity: %#v", pre)
+						}
+						retained = candidate.DeepCopy()
+						retained.Spec.BaseRefs = []infernexv1alpha1.NamedRef{{Name: "operator-change"}}
+						if mutation == "replacement" {
+							if err := c.Delete(ctx, candidate); err != nil {
+								t.Fatal(err)
+							}
+							retained.UID, retained.ResourceVersion = "replacement-candidate", ""
+							if err := c.Create(ctx, retained); err != nil {
+								t.Fatal(err)
+							}
+						} else if err := c.Update(ctx, retained); err != nil {
+							t.Fatal(err)
+						}
+						// Simulate API precondition enforcement, including UID, which
+						// the controller-runtime fake client does not enforce.
+						if retained.UID == *pre.UID && retained.ResourceVersion == *pre.ResourceVersion {
+							t.Fatal("test mutation did not change the protected identity")
+						}
+						return apierrors.NewConflict(infernexv1alpha1.GroupVersion.WithResource("infernexservices").GroupResource(), obj.GetName(), errors.New("delete precondition failed"))
+					},
+				}).Build()
+			controller := &Controller{client: kubeClient}
+			err := controller.deleteOwnedCandidate(ctx, client.ObjectKeyFromObject(candidate), "experiment", "change")
+			if !deleteCalled || !apierrors.IsConflict(err) {
+				t.Fatalf("expected candidate rollback conflict, got %v", err)
+			}
+			current := &infernexv1alpha1.InferNexService{}
+			if err := kubeClient.Get(ctx, client.ObjectKeyFromObject(retained), current); err != nil {
+				t.Fatalf("concurrent candidate was removed: %v", err)
+			}
+			if current.UID != retained.UID || current.Spec.BaseRefs[0].Name != "operator-change" {
+				t.Fatalf("concurrent candidate was changed: %#v", current)
+			}
+		})
+	}
+}
+
 func newTestController(
 	t *testing.T,
 	diagnoser diagnostics.Diagnoser,
@@ -270,6 +479,7 @@ func newTestController(
 			},
 		},
 	}
+	stableBase := &infernexv1alpha1.InferNexServiceConfig{ObjectMeta: metav1.ObjectMeta{Namespace: "templates", Name: "stable-base"}}
 	enabled := true
 	cacheFeature := &infernexv1alpha1.InferNexServiceConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -287,7 +497,7 @@ func newTestController(
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&infernexv1alpha1.InferNexService{}).
-		WithObjects(baseline, feature, cacheFeature).
+		WithObjects(baseline, feature, cacheFeature, stableBase).
 		Build()
 	planStore := NewMemoryStore()
 	controller, err := New(

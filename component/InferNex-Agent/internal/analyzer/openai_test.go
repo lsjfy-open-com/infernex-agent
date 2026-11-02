@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/observer"
 	"gitcode.com/openFuyao/InferNex/component/InferNex-Agent/internal/supervisor"
@@ -78,5 +79,34 @@ func TestOpenAIRejectsCredentialBearingURL(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "user information") {
 		t.Fatalf("error = %v, want user information rejection", err)
+	}
+}
+
+func TestOpenAIAnalyzeRetriesWarmingEndpoint(t *testing.T) {
+	attempts := 0
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		attempts++
+		response.Header().Set("Content-Type", "application/json")
+		if attempts < 3 {
+			response.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = response.Write([]byte(`{"error":{"message":"model warming"}}`))
+			return
+		}
+		_, _ = response.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ready"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenAI(OpenAIConfig{
+		BaseURL: server.URL, Model: "ops-model", MaxRetries: 3, RetryDelay: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := client.Analyze(context.Background(), supervisor.AnalysisRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 3 || result.Content != "ready" {
+		t.Fatalf("attempts=%d result=%#v", attempts, result)
 	}
 }

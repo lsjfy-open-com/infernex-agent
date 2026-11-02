@@ -1,0 +1,4 @@
+# Updating this file requests an InferNex Agent prerelease from the
+# develop branch. Keep the workflow default version aligned.
+version=0.5.0-alpha.22
+request=6

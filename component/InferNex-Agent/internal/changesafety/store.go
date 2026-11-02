@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -40,6 +42,9 @@ type Target struct {
 	Kind       string `json:"kind"`
 	Namespace  string `json:"namespace"`
 	Name       string `json:"name"`
+	// UID is populated after creation. Older journals and unapplied plans may
+	// omit it; consumers must still verify change ownership in that case.
+	UID types.UID `json:"uid,omitempty"`
 }
 
 // ChangeRecord is an append-only description of one Agent mutation. Before is

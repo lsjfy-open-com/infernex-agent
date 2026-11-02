@@ -1,0 +1,12 @@
+{
+  "version": "infernex.openfuyao.io/v1alpha1",
+  "image": "registry.example.com/inference/demo-server@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  "cpu": "8",
+  "memory": "32Gi",
+  "extendedResources": {
+    "huawei.com/Ascend910": 2
+  },
+  "nodeSelector": {
+    "kubernetes.io/os": "linux"
+  }
+}

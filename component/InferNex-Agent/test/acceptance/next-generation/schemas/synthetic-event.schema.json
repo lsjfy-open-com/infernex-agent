@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/lsjfy-open-com/infernex-agent/blob/develop/component/InferNex-Agent/test/acceptance/next-generation/schemas/synthetic-event.schema.json",
+  "title": "InferNex next-generation synthetic acceptance event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "event",
+    "event_id",
+    "trace_id",
+    "request_id",
+    "clock",
+    "ingested_at",
+    "observed_at",
+    "rank",
+    "record_sha256",
+    "schema_version",
+    "source",
+    "synthetic"
+  ],
+  "properties": {
+    "schema_version": {"const": "infernex.synthetic.acceptance.event/v1"},
+    "synthetic": {"const": true},
+    "case_id": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "event_id": {"type": "string", "pattern": "^[a-z0-9-]+:[0-9]{3}$"},
+    "trace_id": {"type": "string", "pattern": "^trace-[a-z0-9-]+$"},
+    "request_id": {"type": "string", "pattern": "^request-[a-z0-9-]+$"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "ingested_at": {"type": "string", "format": "date-time"},
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["basis", "uncertainty_ms"],
+      "properties": {
+        "basis": {"const": "synthetic-synchronized"},
+        "uncertainty_ms": {"type": "number", "minimum": 0}
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "generator", "kind", "original_log"],
+      "properties": {
+        "kind": {"const": "synthetic-fixture"},
+        "generator": {"const": "generate.py"},
+        "format": {"const": "structured-jsonl"},
+        "original_log": {"const": false}
+      }
+    },
+    "rank": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["global", "local", "peer"],
+      "properties": {
+        "global": {"type": "integer", "minimum": 0},
+        "local": {"type": "integer", "minimum": 0},
+        "peer": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attributes", "category", "measurement", "name", "outcome", "phase"],
+      "properties": {
+        "category": {"enum": ["runtime", "transport", "evidence"]},
+        "name": {"type": "string"},
+        "phase": {"enum": ["submit_wait", "transfer", "remote_complete", "observation"]},
+        "outcome": {"enum": ["ok", "delayed", "missing", "blocked"]},
+        "measurement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["unit", "value"],
+          "properties": {
+            "value": {"type": ["integer", "number", "null"]},
+            "unit": {"enum": ["ms", "bytes", "count", "state"]}
+          }
+        },
+        "attributes": {"type": "object"}
+      }
+    },
+    "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

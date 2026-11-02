@@ -1,0 +1,14 @@
+# Test-only CPU baseline. The node image is supplied explicitly by the command in
+# README.md so this file does not silently drift to Kind's default image.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: infernex-nextgen-acceptance
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "infernex.io/acceptance=test-only,infernex.io/accelerator=none"
+

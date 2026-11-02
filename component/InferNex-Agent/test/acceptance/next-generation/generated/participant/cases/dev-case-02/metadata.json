@@ -1,0 +1,11 @@
+{
+  "case_id": "dev-case-02",
+  "event_count": 8,
+  "evidence_scope": "CPU/stdlib fixture only; no real cluster or hardware capture",
+  "proposal_ids": [
+    "A7",
+    "B9"
+  ],
+  "synthetic": true,
+  "title": "开发样例 02"
+}
